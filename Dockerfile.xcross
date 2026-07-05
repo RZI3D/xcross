@@ -1,0 +1,214 @@
+# syntax=docker/dockerfile:1.7
+#
+# Ubuntu 24.04 / Swift 6.3 container (linux/arm64) that runs `xcross flutter run`
+# to build, install, and hot-reload a Flutter iOS app on a physically connected
+# iPhone — from Linux, no Xcode.
+#
+# xcross drives xtool for the generic iOS work (devices / install / auth / sdk)
+# and re-implements the Flutter build + iOS 17 CoreDevice launch pipeline itself.
+#
+# xtool provisioning (choose at build time):
+#   USE_PREBUILT_XTOOL=0 (default)  build ORIGINAL upstream xtool from source
+#                                   (github.com/xtool-org/xtool) + libimobiledevice
+#                                   + libxadi. Authentic, but ~20–45 min.
+#   USE_PREBUILT_XTOOL=1 (fast)     use the prebuilt aarch64 xtool binary +
+#                                   arm64-runtime-libs shipped in this repo.
+#                                   Skips ALL from-source builds; minutes.
+#
+# Baked in either way:
+#   - pymobiledevice3                → iOS 17+ RSD tunnel + one-shot launch calls
+#   - Flutter (arm64, from git) + prefetched iOS engine artifacts
+#   - a natively-compiled `xcross` executable
+#
+# NATIVE arm64 only. Build/run with `--arch arm64` (Apple `container`) or
+# `--platform linux/arm64` (docker). Do NOT use Rosetta.
+#
+# ---------------------------------------------------------------------------
+# Build — fast path (prebuilt xtool):
+#   container build --arch arm64 --build-arg USE_PREBUILT_XTOOL=1 \
+#     -f Dockerfile.xcross -t xcross:arm64 .
+# Build — upstream xtool from source (default):
+#   container build --arch arm64 --memory 16G -f Dockerfile.xcross -t xcross:arm64 .
+#
+# See scripts/xcross-ios-container.sh and XCROSS_DOCKER.md for running on device.
+# ---------------------------------------------------------------------------
+
+ARG SWIFT_IMAGE=swift:6.3-noble
+# 0 = build upstream xtool from source; 1 = use the repo's prebuilt binary.
+ARG USE_PREBUILT_XTOOL=0
+
+# ===========================================================================
+# build-base: toolchain + headers shared by every build stage
+# ===========================================================================
+FROM ${SWIFT_IMAGE} AS build-base
+
+RUN . /etc/os-release && test "$VERSION_ID" = "24.04"
+RUN test "$(uname -m)" = "aarch64" \
+    || { echo "ERROR: Dockerfile.xcross must be built on linux/arm64 (aarch64). Got: $(uname -m)." >&2; exit 1; }
+
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        ca-certificates build-essential clang git \
+        autoconf automake libtool-bin libssl-dev pkg-config libxml2 \
+        curl libcurl4-openssl-dev zip unzip xz-utils gzip \
+        liblzma-dev zlib1g-dev python3 file \
+    && rm -rf /var/lib/apt/lists/*
+
+# ===========================================================================
+# build-limd: libimobiledevice stack (source path only)
+# ===========================================================================
+FROM build-base AS build-limd
+RUN mkdir -p /prefix
+
+ADD --keep-git-dir=true https://github.com/libimobiledevice/libplist.git#2.6.0 /libplist
+RUN cd /libplist && ./autogen.sh --prefix /usr --without-cython \
+    && make -j"$(nproc)" && make install && make install DESTDIR=/prefix
+
+ADD --keep-git-dir=true https://github.com/libimobiledevice/libimobiledevice-glue.git#1.3.1 /libimobiledevice-glue
+RUN cd /libimobiledevice-glue && ./autogen.sh --prefix /usr \
+    && make -j"$(nproc)" && make install && make install DESTDIR=/prefix
+
+ADD --keep-git-dir=true https://github.com/libimobiledevice/libusbmuxd.git#2.1.0 /libusbmuxd
+RUN cd /libusbmuxd && ./autogen.sh --prefix /usr \
+    && make -j"$(nproc)" && make install && make install DESTDIR=/prefix
+
+ADD --keep-git-dir=true https://github.com/libimobiledevice/libtatsu.git#1.0.4 /libtatsu
+RUN cd /libtatsu && ./autogen.sh --prefix /usr \
+    && make -j"$(nproc)" && make install && make install DESTDIR=/prefix
+
+ADD --keep-git-dir=true https://github.com/libimobiledevice/libimobiledevice.git#master /libimobiledevice
+RUN cd /libimobiledevice && ./autogen.sh --prefix /usr --without-cython \
+    && make -j"$(nproc)" && make install && make install DESTDIR=/prefix
+
+# ===========================================================================
+# build-xadi: libxadi (source path only)
+# ===========================================================================
+FROM build-base AS build-xadi
+RUN mkdir -p /prefix/usr/lib
+RUN curl -fsS https://dlang.org/install.sh | bash -s ldc
+ADD https://github.com/xtool-org/xadi.git#main /xadi
+RUN cd /xadi \
+    && /bin/bash -c 'source $(/root/dlang/install.sh ldc -a) && dub build --build=release' \
+    && cp -r bin/libxadi.so /prefix/usr/lib/libxadi.so
+
+# ===========================================================================
+# xtool-source: ORIGINAL upstream xtool, built from source (source path only)
+# ===========================================================================
+FROM build-base AS xtool-source
+COPY --from=build-limd /prefix/usr /usr
+ARG XTOOL_REF=main
+ADD --keep-git-dir=true https://github.com/xtool-org/xtool.git#${XTOOL_REF} /src-xtool
+RUN cd /src-xtool \
+    && swift build -c release --product xtool --disable-index-store --skip-update \
+    && install -Dm755 "$(swift build -c release --product xtool --show-bin-path)/xtool" /out/xtool \
+    && echo "upstream xtool built OK"
+
+# ===========================================================================
+# deps-0: provider = upstream-from-source
+# ===========================================================================
+FROM build-base AS deps-0
+COPY --from=build-limd /prefix/usr /usr
+COPY --from=build-xadi /prefix/usr /usr
+COPY --from=xtool-source /out/xtool /usr/local/bin/xtool
+RUN ldconfig \
+    && ldd /usr/local/bin/xtool | (grep -i "not found" && exit 1 || true) \
+    && xtool --help >/dev/null \
+    && echo "xtool (source) OK"
+
+# ===========================================================================
+# deps-1: provider = prebuilt binary + shipped runtime libs (fast path)
+# ===========================================================================
+FROM build-base AS deps-1
+COPY arm64-runtime-libs/ /usr/lib/
+COPY xtool-aarch64 /usr/local/bin/xtool
+RUN chmod +x /usr/local/bin/xtool \
+    && ldconfig \
+    && ldd /usr/local/bin/xtool | (grep -i "not found" && exit 1 || true) \
+    && xtool --help >/dev/null \
+    && echo "xtool (prebuilt) OK"
+
+# ===========================================================================
+# runtime: select provider via USE_PREBUILT_XTOOL, then add flutter + xcross
+# ===========================================================================
+FROM deps-${USE_PREBUILT_XTOOL} AS runtime
+
+# pymobiledevice3: iOS 17+ RSD tunnel daemon + one-shot launch calls. Installed
+# system-wide so root (tunneld) can import it too.
+RUN DEBIAN_FRONTEND=noninteractive apt-get update \
+    && apt-get install -y --no-install-recommends \
+        python3-pip python3-venv usbmuxd libimobiledevice-utils socat iproute2 \
+    && pip3 install --break-system-packages --no-cache-dir -U pymobiledevice3 \
+    && rm -rf /var/lib/apt/lists/*
+
+# --- Flutter (arm64, bootstrapped from git) ---
+ARG FLUTTER_VERSION=3.44.2
+ENV FLUTTER_ROOT=/opt/flutter
+ENV PATH=/opt/flutter/bin:/opt/flutter/bin/cache/dart-sdk/bin:${PATH}
+RUN git clone --depth 1 --branch "$FLUTTER_VERSION" \
+        https://github.com/flutter/flutter.git /opt/flutter \
+    && git config --global --add safe.directory /opt/flutter \
+    && flutter --version \
+    && flutter precache --universal --no-android --no-ios --no-web \
+        --no-linux --no-windows --no-fuchsia \
+    && dart --version
+
+# Guard against flutter#156309 (linux-arm64 frontend_server shipped as x86_64).
+RUN set -eux; \
+    snap=""; \
+    for n in frontend_server_aot.dart.snapshot frontend_server.dart.snapshot; do \
+      cand="/opt/flutter/bin/cache/dart-sdk/bin/snapshots/$n"; \
+      if [ -f "$cand" ]; then snap="$cand"; break; fi; \
+    done; \
+    test -n "$snap" || { echo "ERROR: frontend_server snapshot not found" >&2; exit 1; }; \
+    file "$snap"; \
+    if file "$snap" | grep -q 'ELF'; then \
+      file "$snap" | grep -Eq 'aarch64|ARM aarch64' \
+        || { echo "ERROR: frontend_server is not aarch64 (flutter#156309): $(file "$snap")" >&2; exit 1; }; \
+    fi
+
+# Prefetch iOS engine artifacts (target-iOS) + common patched SDK.
+RUN set -eux; \
+    engine_hash="$(cat /opt/flutter/bin/internal/engine.version 2>/dev/null || cat /opt/flutter/bin/cache/engine.stamp)"; \
+    test -n "$engine_hash"; \
+    engine_root=/opt/flutter/bin/cache/artifacts/engine; \
+    download_zip() { \
+      url="$1"; dest="$2"; name="$3"; \
+      mkdir -p "$dest"; \
+      curl -fL --retry 5 --retry-all-errors --retry-connrefused --retry-delay 2 \
+        -o "/tmp/$name.zip" "$url"; \
+      unzip -q -o "/tmp/$name.zip" -d "$dest"; \
+      rm "/tmp/$name.zip"; \
+    }; \
+    download_zip \
+      "https://storage.googleapis.com/flutter_infra_release/flutter/${engine_hash}/ios/artifacts.zip" \
+      "$engine_root/ios" ios-artifacts; \
+    download_zip \
+      "https://storage.googleapis.com/flutter_infra_release/flutter/${engine_hash}/flutter_patched_sdk.zip" \
+      "$engine_root/common" flutter-patched-sdk; \
+    download_zip \
+      "https://storage.googleapis.com/flutter_infra_release/flutter/${engine_hash}/linux-arm64/artifacts.zip" \
+      "$engine_root/linux-arm64" linux-arm64-artifacts; \
+    test -d "$engine_root/ios/Flutter.xcframework"; \
+    test -d "$engine_root/common/flutter_patched_sdk"; \
+    test -f "$engine_root/linux-arm64/vm_isolate_snapshot.bin"
+
+# --- Build xcross (natively compiled Dart executable) ---
+COPY xcross/ /opt/xcross-src/
+RUN cd /opt/xcross-src \
+    && dart pub get \
+    && dart compile exe bin/xcross.dart -o /usr/local/bin/xcross \
+    && chmod +x /usr/local/bin/xcross \
+    && xcross flutter build --help >/dev/null \
+    && echo "xcross OK"
+
+ENV APPIMAGE_EXTRACT_AND_RUN=1
+
+# Physical-device access: libusbmuxd + pymobiledevice3 reach the iPhone through
+# a usbmuxd socket forwarded from the (macOS) host over TCP. Override at runtime.
+ENV USBMUXD_SOCKET_ADDRESS=host.docker.internal:27015
+
+COPY scripts/xcross-run.sh /usr/local/bin/xcross-run
+RUN chmod +x /usr/local/bin/xcross-run
+
+WORKDIR /workspace
+CMD ["/usr/local/bin/xcross-run"]

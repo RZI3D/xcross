@@ -1,0 +1,33 @@
+.git
+.build
+.swiftpm
+.dart_tool
+**/.dart_tool
+**/build
+# ...but xcross's source lives in lib/src/build — never exclude that.
+!xcross/lib/src/build
+!xcross/lib/src/build/**
+**/.fvm/versions
+**/.idea
+**/.vscode
+DerivedData
+*.xip
+*.ipa
+*.app
+*.xcarchive
+*.xcframework
+*.zip
+*.tar
+*.tar.gz
+*.tar.xz
+
+# Large non-source trees not needed by Dockerfile.xcross. NOTE: arm64-runtime-libs
+# and xtool-aarch64 ARE kept in context — the USE_PREBUILT_XTOOL=1 fast-path
+# copies them. xtool/limd/xadi (source path) are fetched over the network.
+darwin.artifactbundle
+.build-macos
+.xtool-linux-build
+.xtool-sdk-build
+.kn-ios-arm64-overlay
+dist
+*.log
