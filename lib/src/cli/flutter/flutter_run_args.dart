@@ -38,7 +38,7 @@ class FlutterRunArgs {
   )
   final String target;
 
-  @CliOption(help: 'Build a custom app flavor (limited support).')
+  @CliOption(help: 'Build a custom app flavor (sets FLUTTER_APP_FLAVOR).')
   final String? flavor;
 
   @CliOption(

@@ -51,7 +51,7 @@ ArgParser _$populateFlutterRunArgsParser(ArgParser parser) => parser
   )
   ..addOption(
     'flavor',
-    help: 'Build a custom app flavor (limited support).',
+    help: 'Build a custom app flavor (sets FLUTTER_APP_FLAVOR).',
   )
   ..addMultiOption(
     'dart-define',

@@ -32,6 +32,7 @@ class FlutterBuildOptions {
   /// `--build-number` → `CFBundleVersion` (default 1 if null).
   final String? buildNumber;
 
-  /// `--flavor` (best-effort; limited support on the Linux debug path).
+  /// `--flavor` — sets the `FLUTTER_APP_FLAVOR` dart-define, readable at
+  /// runtime via `appFlavor` from `package:flutter/services`.
   final String? flavor;
 }

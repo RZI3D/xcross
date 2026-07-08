@@ -34,12 +34,20 @@ class FlutterDebugBundler {
   /// `-D<KEY=VALUE>` flags alongside the built-in vm.profile/vm.product flags.
   final List<String> dartDefines;
 
+  /// `--flavor` value. When set, forwarded to frontend_server as
+  /// `-DFLUTTER_APP_FLAVOR=<flavor>`, mirroring how `package:flutter/services`
+  /// reads `appFlavor` via `String.fromEnvironment('FLUTTER_APP_FLAVOR')`.
+  /// Skipped if [dartDefines] already contains an explicit
+  /// `FLUTTER_APP_FLAVOR=` define (explicit define wins).
+  final String? flavor;
+
   FlutterDebugBundler({
     required this.projectRoot,
     required this.flutterRoot,
     required this.outputDir,
     this.entrypoint = 'lib/main.dart',
     this.dartDefines = const [],
+    this.flavor,
   });
 
   // ---------------------------------------------------------------------------
@@ -155,6 +163,11 @@ class FlutterDebugBundler {
       '--output-dill', outputDill,
       // User-supplied dart-defines forwarded as -D<KEY=VALUE>.
       for (final define in dartDefines) '-D$define',
+      // --flavor → FLUTTER_APP_FLAVOR dart-define, unless already set
+      // explicitly above (explicit define wins).
+      if (flavor != null &&
+          !dartDefines.any((d) => d.startsWith('FLUTTER_APP_FLAVOR=')))
+        '-DFLUTTER_APP_FLAVOR=$flavor',
       resolvedEntrypoint,
     ];
 

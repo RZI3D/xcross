@@ -59,12 +59,7 @@ class FlutterPacker {
     }
 
     if (options.flavor != null) {
-      // Flavor affects resource resolution and signing, neither of which is
-      // fully implemented on the Linux debug path.
-      logWarn(
-        'flavor "${options.flavor}" is not fully supported on the Linux debug '
-        'path; the build will proceed without flavor-specific configuration.',
-      );
+      logStatus('[xcross] building flavor "${options.flavor}"...');
     }
 
     // Step 2 — App.framework (Dart kernel + stub dylib + assets).
@@ -153,6 +148,7 @@ class FlutterPacker {
       outputDir: assembleOut,
       entrypoint: options.target,
       dartDefines: options.dartDefines,
+      flavor: options.flavor,
     ).build();
   }
 
