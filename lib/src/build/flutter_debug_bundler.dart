@@ -22,7 +22,6 @@ import 'package:xcross/src/xtool/darwin_sdk.dart';
 ///   4. Build App stub Mach-O dylib via clang + xtool's ld64.lld.
 ///   5. Write `App.framework/Info.plist`.
 ///
-/// Ported from FlutterDebugBundler.swift.
 class FlutterDebugBundler {
   final String projectRoot;
   final String flutterRoot;

@@ -1,4 +1,3 @@
-// Ported from Sources/XToolSupport/CoreDevice/TunnelDaemon.swift
 import 'dart:io';
 
 import 'package:xcross/src/device/pymd.dart';

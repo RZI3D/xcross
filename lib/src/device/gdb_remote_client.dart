@@ -1,4 +1,3 @@
-// Ported from Sources/XToolSupport/CoreDevice/GDBRemoteClient.swift
 import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';

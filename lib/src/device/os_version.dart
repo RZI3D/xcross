@@ -1,4 +1,3 @@
-// Ported from the iOS version check pattern used in CoreDeviceLauncher.swift
 // (gating iOS 17+ vs pre-17 based on ProductVersion from lockdown info).
 import 'dart:convert';
 

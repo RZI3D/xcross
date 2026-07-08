@@ -1,4 +1,3 @@
-// Ported from Sources/XToolSupport/DebugLauncher.swift
 //
 // The Swift DebugLauncher uses SwiftyMobileDevice (libimobiledevice debugserver)
 // which is NOT available in Dart. We delegate to the original `xtool` binary

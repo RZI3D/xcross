@@ -1,4 +1,3 @@
-// Ported from Sources/XToolSupport/CoreDevice/HotReloadController.swift
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -168,8 +167,7 @@ class HotReloadController {
 
     await vm.streamListen('Isolate');
     final viewIds = await _flutterViewIds();
-    final assetDir =
-        '${_devFsBaseUri ?? _devFsFallbackUri}flutter_assets/';
+    final assetDir = '${_devFsBaseUri ?? _devFsFallbackUri}flutter_assets/';
     const longTimeout = Duration(minutes: 2);
     for (final viewId in viewIds) {
       final runnable = vm.waitForEvent('IsolateRunnable', timeout: longTimeout);

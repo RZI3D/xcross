@@ -14,7 +14,6 @@ import 'package:xcross/src/xtool/darwin_sdk.dart';
 /// ld64.lld to produce the `Runner` executable for an iOS `.app` bundle.
 ///
 /// This is the cross-platform (Linux) equivalent of the Xcode-built Runner.
-/// Ported from FlutterPacker.swift: compileRunnerViaObjC() ~L304-421.
 class RunnerShim {
   /// Compile and link the Runner binary.
   ///

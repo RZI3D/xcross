@@ -1,7 +1,6 @@
 // Port of Sources/PackLib/DarwinSDKLocator.swift
 import 'dart:io';
 
-
 import 'package:path/path.dart' as p;
 
 import 'package:xcross/src/util/errors.dart';
@@ -10,7 +9,6 @@ import 'package:xcross/src/util/errors.dart';
 /// accessors for the parts needed to drive clang/ld invocations directly
 /// (without `xcrun`).
 ///
-/// Ported from DarwinSDKLocator.swift.
 class DarwinSdk {
   /// Bundle root, e.g. `~/.swiftpm/swift-sdks/darwin.artifactbundle`.
   final String bundle;

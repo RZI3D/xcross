@@ -15,7 +15,6 @@ import 'package:xcross/src/util/logging.dart';
 /// `bin/cache/artifacts/engine/ios/`. On Linux, Flutter skips iOS artifacts,
 /// so we fetch them ourselves from `storage.googleapis.com`.
 ///
-/// Ported from IOSEngineCache.swift.
 class IosEngineCache {
   final String flutterRoot;
 

@@ -26,7 +26,6 @@ import 'package:xcross/src/xtool/darwin_sdk.dart';
 ///   3. Compile the ObjC Runner shim via [RunnerShim].
 ///   4. Assemble the `.app` bundle and write `Info.plist`.
 ///
-/// Ported from FlutterPacker.swift.
 class FlutterPacker {
   final String projectRoot;
   final PackSchema schema;

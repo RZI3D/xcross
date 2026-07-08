@@ -1,4 +1,3 @@
-// Ported from Sources/XToolSupport/CoreDeviceLauncher.swift
 import 'dart:async';
 import 'dart:io';
 

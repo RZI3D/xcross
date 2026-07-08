@@ -1,4 +1,3 @@
-// Ported from Sources/XToolSupport/CoreDevice/DartVMServiceClient.swift
 import 'dart:async';
 import 'dart:convert';
 

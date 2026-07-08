@@ -1,4 +1,3 @@
-// Ported from Sources/XToolSupport/CoreDevice/Pymd.swift
 import 'dart:convert';
 import 'dart:io';
 
@@ -116,14 +115,21 @@ abstract final class Pymd {
     // Tried in order: system-wide with --break-system-packages, then without,
     // then --user variants (no sudo needed).
     const pipInstallBreak = [
-      '-m', 'pip', 'install', '--break-system-packages', '-U', 'pymobiledevice3', // ignore: lines_longer_than_80_chars
+      '-m', 'pip', 'install', '--break-system-packages', '-U',
+      'pymobiledevice3', // ignore: lines_longer_than_80_chars
     ];
     const pipInstall = ['-m', 'pip', 'install', '-U', 'pymobiledevice3'];
     const pipInstallUserBreak = [
-      '-m', 'pip', 'install', '--user', '--break-system-packages', '-U', 'pymobiledevice3', // ignore: lines_longer_than_80_chars
+      '-m', 'pip', 'install', '--user', '--break-system-packages', '-U',
+      'pymobiledevice3', // ignore: lines_longer_than_80_chars
     ];
     const pipInstallUser = [
-      '-m', 'pip', 'install', '--user', '-U', 'pymobiledevice3',
+      '-m',
+      'pip',
+      'install',
+      '--user',
+      '-U',
+      'pymobiledevice3',
     ];
 
     return <List<String>>[
@@ -160,8 +166,7 @@ abstract final class Pymd {
     ];
     final result = await _run(args);
     // stdout line: "Process launched with pid 12345"  Pymd.swift:167
-    final match =
-        _processLaunchedPidPattern.firstMatch(result.stdout);
+    final match = _processLaunchedPidPattern.firstMatch(result.stdout);
     if (match != null) {
       final pid = int.tryParse(match.group(1)!);
       if (pid != null) return pid;
