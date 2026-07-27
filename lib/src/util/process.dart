@@ -45,8 +45,9 @@ abstract final class ProcessRunner {
 
   /// Run [executable], throwing [XcrossError] on a non-zero exit code.
   ///
-  /// When [inheritStdio] is true the child shares this process's stdio (useful
-  /// for interactive tools like `xtool install`); otherwise output is captured
+  /// When [inheritStdio] is true the child shares this process's stdio via
+  /// [ProcessStartMode.inheritStdio] (needed for interactive prompts like
+  /// `xtool install` certificate revocation). Otherwise output is captured
   /// and the stderr is included in the thrown error.
   static Future<void> runChecked(
     String executable,
@@ -61,14 +62,19 @@ abstract final class ProcessRunner {
     logStatus('[$prefix] running: ${commandLine(executable, arguments)}');
 
     if (inheritStdio) {
-      final code = await _runStreaming(
+      // Must use inheritStdio (not piped stdout/stderr): xtool writes
+      // confirmation prompts without a trailing newline and reads stdin.
+      // Piping + LineSplitter hid the prompt and left stdin disconnected,
+      // so install hung at "certificates must be revoked".
+      final process = await Process.start(
         executable,
         arguments,
-        prefix: prefix,
         workingDirectory: workingDirectory,
         environment: environment,
         includeParentEnvironment: includeParentEnvironment,
+        mode: ProcessStartMode.inheritStdio,
       );
+      final code = await process.exitCode;
       if (code != 0) {
         throw XcrossError(
             'command failed ($code): ${commandLine(executable, arguments)}');
@@ -91,26 +97,6 @@ abstract final class ProcessRunner {
     }
   }
 
-  static Future<int> _runStreaming(
-    String executable,
-    List<String> arguments, {
-    required String prefix,
-    String? workingDirectory,
-    Map<String, String>? environment,
-    bool includeParentEnvironment = true,
-  }) async {
-    final process = await Process.start(
-      executable,
-      arguments,
-      workingDirectory: workingDirectory,
-      environment: environment,
-      includeParentEnvironment: includeParentEnvironment,
-    );
-    _pipePrefixed(process.stdout, prefix, sink: stdout);
-    _pipePrefixed(process.stderr, prefix, sink: stderr);
-    return process.exitCode;
-  }
-
   static String _labelForExecutable(String executable) {
     final normalized = executable.replaceAll(String.fromCharCode(92), '/');
     final base = normalized.split('/').last;
@@ -128,14 +114,4 @@ abstract final class ProcessRunner {
     return "'${s.replaceAll("'", r"'\''")}'";
   }
 
-  static void _pipePrefixed(
-    Stream<List<int>> stream,
-    String prefix, {
-    required IOSink sink,
-  }) {
-    stream
-        .transform(utf8.decoder)
-        .transform(const LineSplitter())
-        .listen((line) => sink.writeln('[$prefix] $line'));
-  }
 }

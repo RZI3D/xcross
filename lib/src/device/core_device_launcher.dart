@@ -113,7 +113,13 @@ abstract final class CoreDeviceLauncher {
     try {
       if (!await Pymd.ensureInstalled()) return;
       await TunnelDaemon().ensureRunning();
-      final tunnel = await Tunneld.discoverTunnel(udid: udid);
+      // Best-effort only — don't burn the full 60s discovery before install
+      // when tunneld has no device yet (common on first run / flaky usbipd).
+      final tunnel = await Tunneld.discoverTunnel(
+        udid: udid,
+        timeout: const Duration(seconds: 8),
+        pollInterval: const Duration(milliseconds: 800),
+      );
       final resolved = await _resolveBundleId(bundleId);
       final pid = await Pymd.processIdForBundleId(
         rsdHost: tunnel.address,
@@ -298,13 +304,19 @@ abstract final class CoreDeviceLauncher {
     required void Function() requestStop,
   }) async {
     // Only run if stdin is a TTY. CoreDeviceLauncher.swift:291
-    if (!stdin.hasTerminal) return;
+    if (!stdin.hasTerminal) {
+      logWarn(
+          "stdin is not a TTY — hot reload keys ('r'/'R') are unavailable");
+      return;
+    }
 
-    try {
-      stdin
-        ..echoMode = false
-        ..lineMode = false;
-    } catch (_) {}
+    // Raw mode is required so a single keypress is delivered without Enter.
+    // lineMode first, then echoMode — some terminals reject the reverse order.
+    // Never swallow failures: silent cooked mode looks like "keys do nothing".
+    if (!_enableRawStdin()) {
+      logWarn(
+          "could not enable raw stdin — press Enter after 'r'/'R', or check TTY");
+    }
 
     final done = Completer<void>();
     void finish() {
@@ -342,11 +354,30 @@ abstract final class CoreDeviceLauncher {
     await done.future;
     poll.cancel();
     await sub.cancel();
+    _restoreCookedStdin();
+  }
+
+  /// Put stdin into cbreak/raw-ish mode for single-key hot reload. Returns
+  /// whether both mode flags were applied successfully.
+  ///
+  /// Order matches Flutter tools: echoMode then lineMode when enabling;
+  /// reverse when restoring (important on Windows / some PTYs).
+  static bool _enableRawStdin() {
     try {
-      stdin
-        ..echoMode = true
-        ..lineMode = true;
-    } catch (_) {}
+      stdin.echoMode = false;
+      stdin.lineMode = false;
+      return true;
+    } on Object catch (e) {
+      logWarn('stdin raw mode failed: $e');
+      return false;
+    }
+  }
+
+  static void _restoreCookedStdin() {
+    try {
+      stdin.lineMode = true;
+      stdin.echoMode = true;
+    } on Object catch (_) {}
   }
 
   /// Handle a single raw [bytes] chunk from stdin inside [_runKeypressLoop].
@@ -362,27 +393,28 @@ abstract final class CoreDeviceLauncher {
     required void Function() markBusy,
     required void Function() clearBusy,
   }) async {
-    if (isStopped()) {
-      return finish();
-    }
-    final ch = bytes.isNotEmpty ? bytes[0] : 0;
-    if (ch == DeviceConstants.keyQ ||
-        ch == DeviceConstants.keyCtrlC ||
-        ch == DeviceConstants.keyCtrlD) {
-      requestStop();
-      return finish();
-    }
-    // Ignore reload/restart keys while one is already in flight so presses
-    // don't overlap and corrupt frontend_server state.
-    if (getBusy()) return;
-    if (ch == DeviceConstants.keyR) {
-      markBusy();
-      await _handleHotReload(hotReload);
-      clearBusy();
-    } else if (ch == DeviceConstants.keyBigR) {
-      markBusy();
-      await _handleHotRestart(hotReload);
-      clearBusy();
+    for (final ch in bytes) {
+      if (isStopped()) {
+        return finish();
+      }
+      if (ch == DeviceConstants.keyQ ||
+          ch == DeviceConstants.keyCtrlC ||
+          ch == DeviceConstants.keyCtrlD) {
+        requestStop();
+        return finish();
+      }
+      // Ignore reload/restart keys while one is already in flight so presses
+      // don't overlap and corrupt frontend_server state.
+      if (getBusy()) continue;
+      if (ch == DeviceConstants.keyR) {
+        markBusy();
+        await _handleHotReload(hotReload);
+        clearBusy();
+      } else if (ch == DeviceConstants.keyBigR) {
+        markBusy();
+        await _handleHotRestart(hotReload);
+        clearBusy();
+      }
     }
   }
 

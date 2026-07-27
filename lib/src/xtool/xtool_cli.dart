@@ -160,7 +160,8 @@ class XtoolCli {
   /// `xtool install <path> [--udid <udid>] [--usb|--wifi]`.
   ///
   /// Signs (using saved `xtool auth` credentials) and installs a `.app` or
-  /// `.ipa`. Inherits stdio so progress is visible.
+  /// `.ipa`. Inherits stdio so progress and interactive prompts (e.g.
+  /// certificate revocation confirmation) work.
   Future<void> install(
     String appOrIpaPath, {
     String? udid,

@@ -286,13 +286,42 @@ abstract final class Pymd {
     logStatus(
       '[pymobiledevice3] running: ${ProcessRunner.commandLine(executable, arguments)}',
     );
-    final result = await ProcessRunner.run(executable, arguments);
+    final result = await ProcessRunner.run(
+      executable,
+      arguments,
+      environment: usbmuxEnvironment(),
+    );
     if (result.exitCode != 0) {
       final msg = result.stderr.isNotEmpty ? result.stderr : result.stdout;
       throw XcrossError(
           'pymobiledevice3 failed (exit ${result.exitCode}):\n$msg');
     }
     return result;
+  }
+
+  /// Env for child pymobiledevice3 processes.
+  ///
+  /// On Linux, pymobiledevice3 defaults to TCP `127.0.0.1:27015` (Apple Mobile
+  /// Device Service). With usbipd that port is closed, so point at the local
+  /// unix socket when it exists and the caller hasn't set the env already.
+  static Map<String, String> usbmuxEnvironment() {
+    final env = Map<String, String>.from(Platform.environment);
+    final existing = env['USBMUXD_SOCKET_ADDRESS'];
+    if (existing != null && existing.isNotEmpty) return env;
+    const unix = '/var/run/usbmuxd';
+    if (File(unix).existsSync()) {
+      env['USBMUXD_SOCKET_ADDRESS'] = unix;
+    }
+    return env;
+  }
+
+  /// Absolute usbmux address to pass through `sudo env …` (never empty).
+  static String? resolvedUsbmuxAddress() {
+    final fromEnv = Platform.environment['USBMUXD_SOCKET_ADDRESS'];
+    if (fromEnv != null && fromEnv.isNotEmpty) return fromEnv;
+    const unix = '/var/run/usbmuxd';
+    if (File(unix).existsSync()) return unix;
+    return null;
   }
 
   // Pymd.swift:251
