@@ -4,6 +4,7 @@ import 'package:args/command_runner.dart';
 import 'package:completion/completion.dart';
 import 'package:xcross/src/cli/completion_command.dart';
 import 'package:xcross/src/cli/flutter/flutter_command.dart';
+import 'package:xcross/src/cli/prepare_command.dart';
 import 'package:xcross/src/util/errors.dart';
 
 /// Build the top-level `xcross` command runner.
@@ -13,6 +14,7 @@ CommandRunner<void> buildRunner() {
     'Build, run, and hot-reload Flutter iOS apps from Linux without Xcode.',
   )
     ..addCommand(FlutterCommand())
+    ..addCommand(PrepareCommand())
     ..addCommand(CompletionCommand());
 }
 

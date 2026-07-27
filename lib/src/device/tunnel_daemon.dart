@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:xcross/src/device/pymd.dart';
 import 'package:xcross/src/util/errors.dart';
 import 'package:xcross/src/util/logging.dart';
+import 'package:xcross/src/util/sudo.dart';
 
 /// Manages the `pymobiledevice3 remote tunneld` daemon lifecycle.
 ///
@@ -37,20 +38,21 @@ class TunnelDaemon {
 
     // Need to start it ourselves — requires root. TunnelDaemon.swift:71
     final inv = await Pymd.resolve();
-    final sudo = await _which('sudo');
+    final sudo = await Sudo.resolve();
     final usbmux = Pymd.resolvedUsbmuxAddress();
 
     // Cache sudo credentials interactively first, then start the long-lived
     // daemon with piped stdio (never inheritStdio — that steals `r`/`R`/`q`
     // from the hot-reload keypress loop for the whole session).
-    if (sudo != null) {
-      await _cacheSudoCredentials(sudo);
-    }
+    await Sudo.cacheCredentials(
+      manualHint: 'Start tunneld manually:\n'
+          '    sudo pymobiledevice3 remote tunneld',
+    );
 
     // Build: [sudo -n] [env USBMUXD_SOCKET_ADDRESS=…] <exe> … remote tunneld
     // sudo strips the env by default; without the unix socket path,
     // Linux pymobiledevice3 targets 127.0.0.1:27015 and fails under usbipd.
-    // `-n` is safe here because `_cacheSudoCredentials` just refreshed the
+    // `-n` is safe here because `Sudo.cacheCredentials` just refreshed the
     // timestamp (or we are already root / passwordless).
     final argv = <String>[
       if (sudo != null) ...[sudo, '-n'],
@@ -120,27 +122,6 @@ class TunnelDaemon {
     );
   }
 
-  /// Prompt once via `sudo -v` (inheritStdio) so the subsequent non-interactive
-  /// `sudo -n … tunneld` can start without holding the TTY open.
-  static Future<void> _cacheSudoCredentials(String sudo) async {
-    logStatus(
-      '[pymobiledevice3] confirming sudo access '
-      '(you may be asked for your password once)…',
-    );
-    final proc = await Process.start(
-      sudo,
-      const ['-v'],
-      mode: ProcessStartMode.inheritStdio,
-    );
-    final code = await proc.exitCode;
-    if (code != 0) {
-      throw XcrossError(
-        'sudo authentication failed (exit $code). Start tunneld manually:\n'
-        '    sudo pymobiledevice3 remote tunneld',
-      );
-    }
-  }
-
   /// Tear down only the daemon WE started. Safe to call multiple times.
   /// TunnelDaemon.swift:122
   void stop() {
@@ -153,7 +134,7 @@ class TunnelDaemon {
     logStatus('[xtool] stopping RSD tunnel daemon…');
 
     // The daemon runs under sudo (root); escalate via sudo kill. TunnelDaemon.swift:135
-    _which('sudo').then((sudo) {
+    Sudo.resolve().then((sudo) {
       if (sudo != null) {
         Process.run(sudo, ['kill', '-TERM', '${proc.pid}']);
       } else {
@@ -180,16 +161,5 @@ class TunnelDaemon {
     } catch (_) {
       return false;
     }
-  }
-
-  static Future<String?> _which(String name) async {
-    final pathEnv = Platform.environment['PATH'] ?? '';
-    for (final dir in pathEnv.split(':')) {
-      if (dir.isEmpty) continue;
-      final f = File('$dir/$name');
-      final fExists = f.existsSync();
-      if (fExists) return f.path;
-    }
-    return null;
   }
 }

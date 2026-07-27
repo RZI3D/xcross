@@ -59,14 +59,18 @@ abstract final class Tunneld {
     if (lastUnreachable) {
       throw XcrossError(
         'Cannot reach the tunneld REST API on 127.0.0.1:49151.\n\n'
-        'Start it (in another terminal, leave it running):\n\n'
+        'Run:\n\n'
+        '    xcross prepare\n\n'
+        'Or start it manually (in another terminal, leave it running):\n\n'
         '    sudo pymobiledevice3 remote tunneld',
       );
     }
     final target = udid != null ? 'for device $udid' : 'for any device';
     throw XcrossError(
       'No RSD tunnel $target yet (tunneld returned empty).\n\n'
-      'In another terminal run (iOS 17.4+ / 18 / 26):\n\n'
+      'Run:\n\n'
+      '    xcross prepare\n\n'
+      'Or in another terminal (iOS 17.4+ / 18 / 26):\n\n'
       '    sudo pymobiledevice3 lockdown start-tunnel\n\n'
       'Or mount the Developer Disk Image first:\n\n'
       '    sudo pymobiledevice3 mounter auto-mount\n\n'

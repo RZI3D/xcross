@@ -62,6 +62,9 @@ dart compile exe bin/xcross.dart -o /usr/local/bin/xcross
 ## Quick start
 
 ```sh
+# One-time / after reconnect: mount DDI + start RSD tunnel (needs sudo)
+xcross prepare
+
 # Flutter: build + install + hot reload on device
 cd my_flutter_app
 xcross flutter run -u <UDID>       # r = reload, R = restart, q = quit
@@ -92,6 +95,22 @@ xcross flutter build               # → build/xtool-ios/<AppName>.app
 
 
 ## Commands
+
+
+
+### `xcross prepare`
+
+Mount the Developer Disk Image and start the iOS 17+ RSD tunnel(s). Needs sudo once (password prompt). Leaves long-lived tunnel processes running.
+
+Automates:
+
+```sh
+sudo pymobiledevice3 mounter auto-mount
+sudo pymobiledevice3 lockdown start-tunnel
+# also ensures: sudo pymobiledevice3 remote tunneld
+```
+
+Run after plugging in the phone (or after WSL/usbipd reconnect) before `xcross flutter run`.
 
 
 
@@ -200,7 +219,7 @@ Key files: `bin/xcross.dart` (entrypoint), `lib/src/cli/runner.dart` (command wi
 
 - **Debug only.** Release / AOT needs the macOS `flutter_tools assemble` path.
 - `--sign` **alone does nothing** — signing happens at `xtool install`.
-- **iOS 17+ needs** `pymobiledevice3` **+ root** for the RSD tunnel. Mount the DDI: `sudo pymobiledevice3 mounter auto-mount`.
+- **iOS 17+ needs** `pymobiledevice3` **+ root** for the RSD tunnel. Run `xcross prepare` (or mount manually: `sudo pymobiledevice3 mounter auto-mount`).
 - **Install a Darwin SDK first:** `xtool sdk install <Xcode.xip>`.
 - **Multiple devices?** A TTY prompts with a numbered picker; CI/piped runs fail fast — pass `-u/--udid` or `-d`.
 - **JIT stays attached** — detaching kills the app (`CS_DEBUGGED`).
