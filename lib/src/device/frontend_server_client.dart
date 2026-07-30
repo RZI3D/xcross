@@ -100,6 +100,15 @@ class FrontendServerClient {
     return _readResultBoundary();
   }
 
+  /// Reset the incremental compiler so the NEXT [recompile] emits a full
+  /// kernel component written to `--output-dill` (instead of a delta written to
+  /// `<output-dill>.incremental.dill`).
+  ///
+  /// Required before a hot restart: `_flutter.runInView` needs a complete
+  /// program as `mainScript`. Handing it a delta leaves the new isolate unable
+  /// to load, so it never becomes runnable and the restart hangs.
+  Future<void> reset() => _send('reset\n');
+
   /// Commit the latest output as the next incremental baseline.
   Future<void> accept() => _send('accept\n');
 

@@ -121,20 +121,23 @@ class HotReloadController {
   /// (rather than the RPC's own return, which on-device can exceed the default
   /// timeout).
   Future<void> restart() async {
-    // Force a full recompile if nothing changed, so runInView gets a dill.
-    var changed = _sources.changedFileUris();
-    if (changed.isEmpty) {
-      changed = [for (final p in _sources.dartFiles()) Uri.file(p).toString()];
-    }
+    final changed = _sources.changedFileUris();
     _cachedRootIsolate = null; // a new isolate comes up after runInView
-    final dill = await _frontend.recompile(invalidated: changed);
+    // MUST reset before recompiling: without it frontend_server emits an
+    // incremental delta (to `<output-dill>.incremental.dill`), and runInView
+    // cannot boot an isolate from a partial program — it just never becomes
+    // runnable, which reads as a dead hang.
+    await _frontend.reset();
+    final dill = await _timed(
+        'restart-recompile', () => _frontend.recompile(invalidated: changed));
     // Alternate the devFS file name so runInView always loads a fresh URI —
     // runInView will not reload an identical URI, so a stable filename makes
     // every second hot restart a silent no-op that still reports success.
     _restartCount++;
     final fileName =
         _restartCount.isEven ? 'main.dart.dill' : 'main.dart.swap.dill';
-    final targetUri = await _uploadDill(dill, fileName: fileName);
+    final targetUri = await _timed(
+        'restart-devfs-upload', () => _uploadDill(dill, fileName: fileName));
     await _frontend.accept();
 
     await vm.streamListen('Isolate');
@@ -145,16 +148,24 @@ class HotReloadController {
       // ORDER MATTERS: `events` is a broadcast stream, so the subscription must
       // exist before runInView fires or the event is missed.
       final runnable = vm.waitForEvent('IsolateRunnable', timeout: longTimeout);
-      await vm.call(
-        '_flutter.runInView',
-        params: {
-          'viewId': viewId,
-          'mainScript': targetUri,
-          'assetDirectory': assetDir,
-        },
-        timeout: longTimeout,
+      await _timed(
+        'runInView',
+        () => vm.call(
+          '_flutter.runInView',
+          params: {
+            'viewId': viewId,
+            'mainScript': targetUri,
+            'assetDirectory': assetDir,
+          },
+          timeout: longTimeout,
+        ),
       );
-      await runnable;
+      // waitForEvent swallows its timeout and yields {} — surface that instead
+      // of reporting a restart that never happened.
+      if ((await _timed('await-IsolateRunnable', () => runnable)).isEmpty) {
+        throw XcrossError(
+            'isolate never became runnable after runInView (${longTimeout.inMinutes}m)');
+      }
     }
   }
 
@@ -227,8 +238,10 @@ class HotReloadController {
       req.headers.contentType = ContentType('application', 'octet-stream');
       req.contentLength = gz.length;
       req.add(gz);
-      final resp = await req.close();
-      await resp.drain<void>();
+      // Bound the PUT: without this a stalled devFS handler on the device hangs
+      // the whole session with no output.
+      final resp = await req.close().timeout(const Duration(seconds: 120));
+      await resp.drain<void>().timeout(const Duration(seconds: 30));
       if (resp.statusCode < 200 || resp.statusCode >= 300) {
         throw XcrossError('devFS upload failed: HTTP ${resp.statusCode}');
       }
