@@ -93,32 +93,15 @@ class DapFraming {
           '');
 }
 
-/// Collects the lines [LineSplitter.startChunkedConversion] emits so callers
-/// can inspect them after each [StringConversionSink.add] call.
-///
-/// Chunk boundaries are arbitrary, so the vm-service marker — and the URI
-/// that follows it on the same line — can straddle them; `LineSplitter`'s
-/// chunked conversion holds the trailing partial line until it's completed
-/// by a later chunk, same as the hand-rolled reassembly it replaces.
-class _LineCollector implements Sink<String> {
-  final List<String> lines = [];
-
-  @override
-  void add(String data) => lines.add(data);
-
-  @override
-  void close() {}
-}
-
 /// Minimal debug adapter: translates the VS Code toolbar into the `r`/`R`/`q`
 /// keypress protocol that [SessionConsole] already speaks over the child's
 /// stdin. No breakpoints, no stepping, no variables — the child owns the
 /// VM Service.
 class XcrossDap {
   final DapFraming _framing = DapFraming();
-  final _LineCollector _lineCollector = _LineCollector();
-  late final StringConversionSink _lineSink =
-      const LineSplitter().startChunkedConversion(_lineCollector);
+  // Holds an unterminated line across stdout chunks: the vm-service marker
+  // and its URI can straddle an arbitrary chunk boundary.
+  String _pendingLine = '';
   bool _vmServiceReported = false;
   int _seq = 0;
   Process? _child;
@@ -331,9 +314,8 @@ class XcrossDap {
     _output('stdout', text);
     // Stop reassembling lines once the URI is known: nothing else is parsed.
     if (_vmServiceReported) return;
-    _lineSink.add(text);
-    final lines = List<String>.of(_lineCollector.lines);
-    _lineCollector.lines.clear();
+    final lines = (_pendingLine + text).split('\n');
+    _pendingLine = lines.removeLast();
     for (final line in lines) {
       final start = line.indexOf(DeviceConstants.vmServiceMarker);
       if (start < 0) continue;
