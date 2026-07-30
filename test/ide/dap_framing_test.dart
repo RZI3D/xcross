@@ -54,20 +54,25 @@ void main() {
     });
   });
 
-  group('LineScanner', () {
+  group('line reassembly (LineSplitter chunked conversion)', () {
     const marker = DeviceConstants.vmServiceMarker;
     const uri = 'ws://[fd8a:1122:3344::1]:12345/ws';
     const logLine = '$marker$uri\n';
 
-    /// Mirrors what the DAP does with the child's stdout: reassemble lines,
-    /// then pull the VM Service URI off the marker line.
+    /// Mirrors what the DAP does with the child's stdout: reassemble lines
+    /// via [LineSplitter.startChunkedConversion], then pull the VM Service
+    /// URI off the marker line.
     String? scan(List<String> chunks) {
-      final scanner = LineScanner();
+      final lines = <String>[];
+      final sink =
+          const LineSplitter().startChunkedConversion(_Collector(lines));
       for (final chunk in chunks) {
-        for (final line in scanner.feed(chunk)) {
+        sink.add(chunk);
+        for (final line in lines) {
           final start = line.indexOf(marker);
           if (start >= 0) return line.substring(start + marker.length).trim();
         }
+        lines.clear();
       }
       return null;
     }
@@ -96,4 +101,14 @@ void main() {
       expect(scan(['$marker$uri\r\n']), uri);
     });
   });
+}
+
+/// Appends each chunked-conversion output to [lines] for inspection.
+class _Collector implements Sink<String> {
+  _Collector(this.lines);
+  final List<String> lines;
+  @override
+  void add(String data) => lines.add(data);
+  @override
+  void close() {}
 }

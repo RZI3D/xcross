@@ -93,21 +93,21 @@ class DapFraming {
           '');
 }
 
-/// Reassembles a chunked text stream into complete lines.
+/// Collects the lines [LineSplitter.startChunkedConversion] emits so callers
+/// can inspect them after each [StringConversionSink.add] call.
 ///
-/// Chunk boundaries are arbitrary, so the vm-service marker — and the URI that
-/// follows it on the same line — can straddle them. Scanning each chunk in
-/// isolation would silently miss it, and the only symptom would be a missing
-/// Hot Reload button and no DevTools. Hence its own test.
-class LineScanner {
-  /// The trailing incomplete line, held until its newline arrives.
-  String _partial = '';
+/// Chunk boundaries are arbitrary, so the vm-service marker — and the URI
+/// that follows it on the same line — can straddle them; `LineSplitter`'s
+/// chunked conversion holds the trailing partial line until it's completed
+/// by a later chunk, same as the hand-rolled reassembly it replaces.
+class _LineCollector implements Sink<String> {
+  final List<String> lines = [];
 
-  List<String> feed(String text) {
-    final lines = (_partial + text).split('\n');
-    _partial = lines.removeLast();
-    return lines;
-  }
+  @override
+  void add(String data) => lines.add(data);
+
+  @override
+  void close() {}
 }
 
 /// Minimal debug adapter: translates the VS Code toolbar into the `r`/`R`/`q`
@@ -116,7 +116,9 @@ class LineScanner {
 /// VM Service.
 class XcrossDap {
   final DapFraming _framing = DapFraming();
-  final LineScanner _lines = LineScanner();
+  final _LineCollector _lineCollector = _LineCollector();
+  late final StringConversionSink _lineSink =
+      const LineSplitter().startChunkedConversion(_lineCollector);
   bool _vmServiceReported = false;
   int _seq = 0;
   Process? _child;
@@ -329,7 +331,10 @@ class XcrossDap {
     _output('stdout', text);
     // Stop reassembling lines once the URI is known: nothing else is parsed.
     if (_vmServiceReported) return;
-    for (final line in _lines.feed(text)) {
+    _lineSink.add(text);
+    final lines = List<String>.of(_lineCollector.lines);
+    _lineCollector.lines.clear();
+    for (final line in lines) {
       final start = line.indexOf(DeviceConstants.vmServiceMarker);
       if (start < 0) continue;
       _vmServiceReported = true;

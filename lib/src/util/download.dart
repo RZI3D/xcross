@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:path/path.dart' as p;
 import 'package:xcross/src/util/errors.dart';
 import 'package:xcross/src/util/logging.dart';
 
@@ -92,12 +93,10 @@ abstract final class Downloader {
   /// Best-effort file-name from [url] for display in the progress line.
   static String _labelFromUrl(String url) {
     try {
-      final segs = Uri.parse(url).pathSegments;
-      for (var i = segs.length - 1; i >= 0; i--) {
-        if (segs[i].isNotEmpty) return segs[i];
-      }
-    } catch (_) {}
-    return url;
+      return p.url.basename(Uri.parse(url).path);
+    } catch (_) {
+      return url;
+    }
   }
 }
 
