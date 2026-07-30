@@ -1,17 +1,21 @@
+<div align="center">
 
 # xcross
 
-[Integration Tests](https://github.com/arxdeus/xcross/actions/workflows/integration.yml)
-[Latest release](https://github.com/arxdeus/xcross/releases)
-[Dart SDK](https://dart.dev)
-Platform
-[License: MIT](https://opensource.org/licenses/MIT)
+[![Integration Tests](https://img.shields.io/github/actions/workflow/status/arxdeus/xcross/integration.yml?branch=main&style=flat-square&label=integration)](https://github.com/arxdeus/xcross/actions/workflows/integration.yml)
+[![Latest release](https://img.shields.io/github/v/release/arxdeus/xcross?style=flat-square&label=release)](https://github.com/arxdeus/xcross/releases)
+[![GitHub stars](https://img.shields.io/github/stars/arxdeus/xcross?style=flat-square&label=stars)](https://github.com/arxdeus/xcross/stargazers)
+[![Open issues](https://img.shields.io/github/issues/arxdeus/xcross?style=flat-square)](https://github.com/arxdeus/xcross/issues)
+![Platform](https://img.shields.io/badge/platform-linux-3C873A?style=flat-square&logo=linux&logoColor=white)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square)](https://opensource.org/licenses/MIT)
 
 **Build, run, and hot-reload Flutter iOS apps from Linux - no Xcode, no macOS.**
 
 ⭐ If xcross saves you a Mac, star the repo.
 
 [Install](#install) • [Windows](#windows-via-wsl) • [Quick start](#quick-start) • [Commands](#commands) • [VS Code](#vs-code) • [FAQ](#faq)
+
+</div>
 
 xcross reimplements the Flutter iOS build pipeline and the iOS 17+ CoreDevice launch protocol in pure Dart, and hands signing, install, and device discovery off to [xtool](https://github.com/xtool-org/xtool).
 
@@ -72,7 +76,7 @@ xcross vscode           write .vscode/* for Run & Debug / Hot Reload
 xcross completion       print a shell-completion script
 ```
 
-`xcross flutter build`
+**`xcross flutter build`**
 
 ```
 -t, --target <path>          lib/main.dart
@@ -84,9 +88,7 @@ xcross completion       print a shell-completion script
 -i, --ipa                    .ipa instead of .app
 ```
 
-No `--sign` flag - `xtool` has no standalone sign step, so signing only happens via `xcross flutter run` or `xtool install`.
-
-`xcross flutter run` - shares `--target`/`--dart-define`/`--pub`/`--flavor` with `build`, plus:
+**`xcross flutter run`** - shares `--target`/`--dart-define`/`--pub`/`--flavor` with `build`, plus:
 
 ```
 -d, --device-id     flutter-style
