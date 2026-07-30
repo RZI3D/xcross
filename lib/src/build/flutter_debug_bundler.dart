@@ -1,6 +1,8 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:path/path.dart' as p;
+import 'package:standard_message_codec/standard_message_codec.dart';
 
 import 'package:xcross/src/build/ios_engine_cache.dart';
 import 'package:xcross/src/constants.dart';
@@ -50,9 +52,6 @@ class FlutterDebugBundler {
     this.flavor,
   });
 
-  /// StandardMessageCodec empty map: tag 0x0d (Map) + 4-byte LE length 0.
-  static const _emptyAssetManifestBytes = [0x0d, 0x00, 0x00, 0x00, 0x00];
-
   /// Empty zlib stream: `zlib.compress(b'')` in Python.
   /// CMF=0x78 FLG=0x9c, empty deflate block (BFINAL=1 BTYPE=0, zero length),
   /// Adler-32 of empty input = 0x00000001 big-endian.
@@ -82,11 +81,13 @@ class FlutterDebugBundler {
     await Directory(assetsDir).create(recursive: true);
 
     final appDill = await _runKernelSnapshot(engineCache);
+    final pubspec = PubspecInfo.loadSync(projectRoot);
 
     await Log.logStep('Bundling assets', () async {
       await _copyDataAssets(assetsDir, engineCache, appDill);
-      await _copyMaterialFonts(assetsDir);
-      _writeManifests(assetsDir);
+      final assetManifest = await _copyPubspecAssets(assetsDir, pubspec);
+      final fonts = await _copyFonts(assetsDir, pubspec);
+      _writeManifests(assetsDir, assetManifest, fonts);
     });
 
     await _buildAppStub(appFramework, toolchain);
@@ -215,33 +216,109 @@ class FlutterDebugBundler {
         .copy(p.join(assetsDir, 'isolate_snapshot_data'));
   }
 
-  /// Copy `MaterialIcons-Regular.otf` when the project uses material design.
-  Future<void> _copyMaterialFonts(String assetsDir) async {
-    if (!File(p.join(projectRoot, 'pubspec.yaml')).existsSync()) return;
-    if (!PubspecInfo.loadSync(projectRoot).usesMaterialDesign) return;
+  /// Copy `flutter: assets:` entries into `flutter_assets/`, preserving their
+  /// pubspec-relative paths, and build the `AssetManifest` key → variants map.
+  ///
+  /// ponytail: no density-variant grouping (2x/3x sibling dirs) — every asset
+  /// resolves to exactly its declared path. Add `_AssetDirectoryCache`-style
+  /// variant scanning (see flutter_tools' asset.dart) if that's ever needed.
+  Future<Map<String, List<String>>> _copyPubspecAssets(
+    String assetsDir,
+    PubspecInfo pubspec,
+  ) async {
+    final manifest = <String, List<String>>{};
+    for (final entry in pubspec.assets) {
+      if (entry.endsWith('/')) {
+        final dir = Directory(p.join(projectRoot, entry));
+        if (!dir.existsSync()) {
+          throw XcrossError('pubspec.yaml: asset directory not found: $entry');
+        }
+        // Non-recursive, matching flutter_tools' folder-entry semantics.
+        for (final file in dir.listSync().whereType<File>()) {
+          final key = '$entry${p.basename(file.path)}';
+          await _copyAssetFile(file.path, assetsDir, key);
+          manifest[key] = [key];
+        }
+      } else {
+        final src = p.join(projectRoot, entry);
+        if (!File(src).existsSync()) {
+          throw XcrossError('pubspec.yaml: asset not found: $entry');
+        }
+        await _copyAssetFile(src, assetsDir, entry);
+        manifest[entry] = [entry];
+      }
+    }
+    return manifest;
+  }
 
-    final fontsDir = p.join(assetsDir, 'fonts');
-    await Directory(fontsDir).create(recursive: true);
+  /// Copy `MaterialIcons-Regular.otf` (if material design is used) and any
+  /// `flutter: fonts:` families, returning `FontManifest.json` descriptors.
+  Future<List<Map<String, Object?>>> _copyFonts(
+    String assetsDir,
+    PubspecInfo pubspec,
+  ) async {
+    final fonts = <Map<String, Object?>>[];
 
-    final src = p.join(flutterRoot, 'bin', 'cache', 'artifacts',
-        'material_fonts', 'MaterialIcons-Regular.otf');
-    if (!File(src).existsSync()) return;
+    if (pubspec.usesMaterialDesign) {
+      final src = p.join(flutterRoot, 'bin', 'cache', 'artifacts',
+          'material_fonts', 'MaterialIcons-Regular.otf');
+      if (File(src).existsSync()) {
+        await _copyAssetFile(src, assetsDir, 'fonts/MaterialIcons-Regular.otf');
+        fonts.add(const {
+          'family': 'MaterialIcons',
+          'fonts': [
+            {'asset': 'fonts/MaterialIcons-Regular.otf'},
+          ],
+        });
+      }
+    }
 
-    final dst = p.join(fontsDir, 'MaterialIcons-Regular.otf');
-    if (File(dst).existsSync()) await File(dst).delete();
+    for (final family in pubspec.fonts) {
+      for (final font in family.fonts) {
+        final src = p.join(projectRoot, font.asset);
+        if (!File(src).existsSync()) {
+          throw XcrossError(
+              'pubspec.yaml: font asset not found: ${font.asset}');
+        }
+        await _copyAssetFile(src, assetsDir, font.asset);
+      }
+      fonts.add(family.descriptor);
+    }
+
+    return fonts;
+  }
+
+  /// Copy [src] to `assetsDir/key`, creating parent directories as needed.
+  Future<void> _copyAssetFile(String src, String assetsDir, String key) async {
+    final dst = p.join(assetsDir, key);
+    await Directory(p.dirname(dst)).create(recursive: true);
     await File(src).copy(dst);
   }
 
-  void _writeManifests(String assetsDir) {
-    // AssetManifest.bin — StandardMessageCodec empty map (5 bytes).
-    File(p.join(assetsDir, 'AssetManifest.bin'))
-        .writeAsBytesSync(_emptyAssetManifestBytes);
+  void _writeManifests(
+    String assetsDir,
+    Map<String, List<String>> assetManifest,
+    List<Map<String, Object?>> fonts,
+  ) {
+    // AssetManifest.bin — the exact binary shape flutter_tools produces:
+    // Map<String, List<{"asset": path}>>, StandardMessageCodec-encoded.
+    final binMessage = <String, Object?>{
+      for (final entry in assetManifest.entries)
+        entry.key: [
+          for (final variant in entry.value) {'asset': variant},
+        ],
+    };
+    final binBytes = const StandardMessageCodec().encodeMessage(binMessage)!;
+    File(p.join(assetsDir, 'AssetManifest.bin')).writeAsBytesSync(
+        binBytes.buffer.asUint8List(0, binBytes.lengthInBytes));
 
     // AssetManifest.json — legacy JSON variant still read by some plugins.
-    File(p.join(assetsDir, 'AssetManifest.json')).writeAsStringSync('{}');
+    File(p.join(assetsDir, 'AssetManifest.json'))
+        .writeAsStringSync(jsonEncode(assetManifest));
 
-    // FontManifest.json — empty array (no custom fonts registered).
-    File(p.join(assetsDir, 'FontManifest.json')).writeAsStringSync('[]');
+    // FontManifest.json — registers custom + Material fonts with the engine.
+    File(p.join(assetsDir, 'FontManifest.json'))
+        .writeAsStringSync(jsonEncode(fonts));
 
     // NativeAssetsManifest.json — minimal valid shape expected by the engine.
     File(p.join(assetsDir, 'NativeAssetsManifest.json'))
