@@ -33,13 +33,18 @@ xcross reimplements the Flutter iOS build pipeline and the iOS 17+ CoreDevice la
 
 | Tool                              | Installation                                                                                                  |
 | --------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| Swift (runs `xtool`)              | [swift.org/install/linux](https://www.swift.org/install/linux/)                                               |
+| Swift (runs `xtool`)              | [swift.org/install/linux](https://www.swift.org/install/linux/)[^1]                                           |
 | `xtool`                           | [xtool-org/xtool](https://github.com/xtool-org/xtool)                                                         |
 | Flutter SDK                       | [flutter.dev](https://flutter.dev)                                                                            |
 | Darwin SDK                        | `xtool sdk install <Xcode.xip>` (grab `Xcode.xip` from [xcodereleases.com](https://xcodereleases.com/) first) |
+| `clang`                           | `sudo apt install clang`                                                                                       |
 | Python 3 (runs `pymobiledevice3`) | `sudo apt install python3 python3-pip`                                                                        |
 | `pymobiledevice3`                 | `pip3 install -U pymobiledevice3`                                                                             |
 | `usbmuxd` (USB device access)     | `sudo apt install usbmuxd`                                                                                    |
+| `usbutils` (`lsusb`, for checking the phone shows up at all) | `sudo apt install usbutils`                                                        |
+| `libimobiledevice6, libimobiledevice-utils` (device diagnostics, e.g. `ideviceinfo`) | `sudo apt install libimobiledevice6 libimobiledevice-utils`                                    |
+
+[^1]: The installer lists any missing system packages it needs - install all of them (via `apt`/your distro's package manager) after `swift` installation, or `swift` won't build correctly.
 
 ## Install
 
