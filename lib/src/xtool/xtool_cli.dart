@@ -24,10 +24,8 @@ enum DeviceSearchMode {
 /// these commands, and re-implements only the Flutter-specific build and the
 /// iOS 17+ launch/hot-reload pipeline itself.
 class XtoolCli {
-  XtoolCli({this.executable = 'xtool'});
-
   /// Path to (or name of) the `xtool` binary on PATH.
-  final String executable;
+  static const _executable = 'xtool';
 
   /// `xtool devices [--usb|--wifi] --no-wait`.
   ///
@@ -39,7 +37,7 @@ class XtoolCli {
     final flag = mode.flag;
     if (flag != null) args.add(flag);
     args.add('--no-wait');
-    final result = await ProcessRunner.run(executable, args);
+    final result = await ProcessRunner.run(_executable, args);
     if (result.exitCode != 0) {
       throw XcrossError('`xtool devices` failed:\n${result.stderr}');
     }
@@ -172,7 +170,7 @@ class XtoolCli {
     final step = Log.beginStep('Signing and installing');
     try {
       await ProcessRunner.runChecked(
-        executable,
+        _executable,
         args,
         label: 'xtool',
         tail: step,
@@ -195,7 +193,7 @@ class XtoolCli {
     final cmd = <String>['launch', bundleId, ...args];
     if (udid != null) cmd.addAll(['--udid', udid]);
     await ProcessRunner.runChecked(
-      executable,
+      _executable,
       cmd,
       inheritStdio: true,
       label: 'xtool',

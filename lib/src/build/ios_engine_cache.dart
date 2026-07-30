@@ -1,3 +1,4 @@
+import 'dart:ffi';
 import 'dart:io';
 
 import 'package:archive/archive_io.dart';
@@ -157,19 +158,10 @@ class IosEngineCache {
   /// Mirrors `_HostArtifacts` in flutter_tools.
   static String get _hostEngineCacheDir {
     if (Platform.isLinux) {
-      // Dart doesn't expose CPU arch directly; fall back to env vars.
-      final arch = Platform.environment['PROCESSOR_ARCHITECTURE'] ??
-          Platform.environment['HOSTTYPE'] ??
-          '';
-      return (arch.contains('arm') || arch.contains('aarch64'))
-          ? 'linux-arm64'
-          : 'linux-x64';
+      return Abi.current() == Abi.linuxArm64 ? 'linux-arm64' : 'linux-x64';
     }
     if (Platform.isMacOS) {
-      // Dart 3+ embeds "arm64" in Platform.version on Apple Silicon.
-      final isArm = Platform.version.contains('arm64') ||
-          (Platform.environment['HOSTTYPE'] ?? '').contains('arm64');
-      return isArm ? 'darwin-arm64' : 'darwin-x64';
+      return Abi.current() == Abi.macosArm64 ? 'darwin-arm64' : 'darwin-x64';
     }
     // No arm64 Windows engine variant is published.
     if (Platform.isWindows) {
