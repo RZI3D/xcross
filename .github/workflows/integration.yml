@@ -17,22 +17,10 @@ jobs:
     runs-on: ubuntu-24.04
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Set up Dart
-        uses: dart-lang/setup-dart@v1
+      - name: Setup Flutter
+        uses: arxdeus/github_workflows/actions/flutter_setup@main
         with:
-          sdk: stable
-
-      # stable channel bundles Dart >=3.6.0 required by pubspec.yaml
-      - name: Set up Flutter
-        uses: subosito/flutter-action@v2
-        with:
-          channel: stable
-
-      - name: Resolve Dart dependencies
-        run: dart pub get
+          flutter-version: stable
 
       # Cache-only: no URL fallback here, so CI never depends on a
       # presigned URL that can expire (flaky 404s). Cache is seeded by
