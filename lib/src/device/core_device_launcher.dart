@@ -231,11 +231,20 @@ abstract final class CoreDeviceLauncher {
       return null;
     }
     try {
-      final controller = await _spinUpHotReload(
+      final wsUri = Uri.parse(
+          'ws://${ProcessRunner.bracketHost(tunnelAddress)}:'
+          '${DeviceConstants.vmServicePort}/ws');
+      final vm = await _waitForVmService(wsUri);
+      // `print` and `log()` reach us only over these streams — the debugger
+      // attached to an already-launched process, so it owns no stdio for the
+      // app.
+      await VmServiceOutput.forwardVmServiceOutput(vm);
+      final controller = HotReloadController(
         config: hotReload,
+        vm: vm,
         tunnelAddress: tunnelAddress,
-        vmServicePort: DeviceConstants.vmServicePort,
       );
+      await controller.initialSync();
       Log.logInfo('Hot reload ready '
           '${Log.ansi.subtle('— r reload  ·  R restart  ·  q quit')}');
       return controller;
@@ -243,27 +252,6 @@ abstract final class CoreDeviceLauncher {
       Log.logWarn('hot reload unavailable: $e');
       return null;
     }
-  }
-
-  static Future<HotReloadController> _spinUpHotReload({
-    required HotReloadConfig config,
-    required String tunnelAddress,
-    required int vmServicePort,
-  }) async {
-    final wsUri = Uri.parse(
-        'ws://${ProcessRunner.bracketHost(tunnelAddress)}:$vmServicePort/ws');
-    final vm = await _waitForVmService(wsUri);
-    // `print` and `log()` reach us only over these streams — the debugger
-    // attached to an already-launched process, so it owns no stdio for the app.
-    await VmServiceOutput.forwardVmServiceOutput(vm);
-    final controller = HotReloadController(
-      config: config,
-      vm: vm,
-      tunnelAddress: tunnelAddress,
-      vmServicePort: vmServicePort,
-    );
-    await controller.initialSync();
-    return controller;
   }
 
   /// Poll until the VM Service WebSocket is accepting connections (up to 60 s).

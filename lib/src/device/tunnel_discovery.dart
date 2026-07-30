@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:xcross/src/constants.dart';
+import 'package:xcross/src/device/pymd.dart' show asPort;
 import 'package:xcross/src/models/device/tunnel.dart';
 import 'package:xcross/src/util/errors.dart';
 import 'package:xcross/src/util/logging.dart';
@@ -160,11 +161,7 @@ abstract final class TunnelDiscovery {
         json['tunnel-address'] ?? json['address'] ?? json['tunnel_address'];
     final portObj = json['tunnel-port'] ?? json['port'] ?? json['tunnel_port'];
     final addr = addrObj is String ? addrObj : null;
-    final port = switch (portObj) {
-      final int p => p,
-      final String p => int.tryParse(p),
-      _ => null,
-    };
+    final port = asPort(portObj);
     if (addr == null || port == null) return null;
     Log.logTrace('found RSD tunnel: $addr:$port');
     return Tunnel(address: addr, port: port);

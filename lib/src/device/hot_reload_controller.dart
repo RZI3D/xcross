@@ -18,10 +18,9 @@ class HotReloadController {
   HotReloadController({
     required this.config,
     required this.vm,
-    required this.tunnelAddress,
-    required int vmServicePort,
-  })  : _httpBase =
-            'http://${ProcessRunner.bracketHost(tunnelAddress)}:$vmServicePort/',
+    required String tunnelAddress,
+  })  : _httpBase = 'http://${ProcessRunner.bracketHost(tunnelAddress)}:'
+            '${DeviceConstants.vmServicePort}/',
         _frontend = FrontendServerClient(config),
         _sources = SourceWatcher(config);
 
@@ -31,7 +30,6 @@ class HotReloadController {
 
   final HotReloadConfig config;
   final DartVmServiceClient vm;
-  final String tunnelAddress;
   final String _httpBase;
   final FrontendServerClient _frontend;
   final SourceWatcher _sources;

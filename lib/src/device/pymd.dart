@@ -11,9 +11,14 @@ class PymdInvocation {
   const PymdInvocation(this.executable, this.prefixArgs);
   final String executable;
   final List<String> prefixArgs;
-
-  List<String> args(List<String> extra) => [...prefixArgs, ...extra];
 }
+
+/// Coerce an `int` or parseable `String` port value into `int?`.
+int? asPort(Object? value) => switch (value) {
+      final int p => p,
+      final String s => int.tryParse(s),
+      _ => null,
+    };
 
 /// One-shot invocations of `pymobiledevice3` for DVT ProcessControl,
 /// RSD service discovery, and the installed-app list.
@@ -209,11 +214,7 @@ abstract final class Pymd {
     if (entry is! Map) throw XcrossError('rsd-info: Services.$service missing');
 
     // Port can be String or int across pymobiledevice3 versions.
-    final port = switch (entry['Port']) {
-      final int p => p,
-      final String s => int.tryParse(s),
-      _ => null,
-    };
+    final port = asPort(entry['Port']);
     if (port != null) return port;
     throw XcrossError('rsd-info: Services.$service.Port unparseable');
   }
@@ -261,7 +262,7 @@ abstract final class Pymd {
   static Future<CapturedProcess> run(List<String> args) async {
     final inv = await resolve();
     final executable = inv.executable;
-    final arguments = inv.args(args);
+    final arguments = [...inv.prefixArgs, ...args];
     Log.logTrace(
       '[pymobiledevice3] running: '
       '${ProcessRunner.commandLine(executable, arguments)}',
@@ -288,10 +289,8 @@ abstract final class Pymd {
     final env = Map<String, String>.from(Platform.environment);
     final existing = env['USBMUXD_SOCKET_ADDRESS'];
     if (existing != null && existing.isNotEmpty) return env;
-    const unix = '/var/run/usbmuxd';
-    if (File(unix).existsSync()) {
-      env['USBMUXD_SOCKET_ADDRESS'] = unix;
-    }
+    final addr = resolvedUsbmuxAddress();
+    if (addr != null) env['USBMUXD_SOCKET_ADDRESS'] = addr;
     return env;
   }
 
