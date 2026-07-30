@@ -8,6 +8,7 @@ import 'package:xcross/src/cli/flutter/flutter_command.dart';
 import 'package:xcross/src/cli/ide/dap_command.dart';
 import 'package:xcross/src/cli/ide/vscode_command.dart';
 import 'package:xcross/src/cli/prepare_command.dart';
+import 'package:xcross/src/cli/setup_command.dart';
 import 'package:xcross/src/util/errors.dart';
 import 'package:xcross/src/util/logging.dart';
 
@@ -39,9 +40,20 @@ abstract final class XcrossCli {
     )
       ..addCommand(FlutterCommand())
       ..addCommand(PrepareCommand())
+      ..addCommand(SetupCommand())
       ..addCommand(DapCommand())
       ..addCommand(VscodeCommand())
       ..addCommand(CompletionCommand());
+  }
+
+  /// One-line credits banner printed before every command dispatch.
+  static void _printCredits() {
+    final a = Log.ansi;
+    Log.logStatus(
+      '${a.bold}${a.magenta}xcross${a.none}'
+      '${a.subtle(', made by')} ${a.bold}${a.cyan}arxdeus${a.none}'
+      ' ${a.subtle('· github.com/arxdeus')}',
+    );
   }
 
   /// Entry point used by `bin/xcross.dart`.
@@ -61,6 +73,11 @@ abstract final class XcrossCli {
     } on FormatException {
       // Not our error to report — dispatch below produces the real message.
     }
+
+    // Skip the credits line for `completion`: its stdout is appended verbatim
+    // to a shell rc file (or is the runtime completion hook above, which never
+    // reaches here), so any extra text would corrupt it.
+    if (args.isEmpty || args.first != 'completion') _printCredits();
 
     try {
       await runner.run(args);
