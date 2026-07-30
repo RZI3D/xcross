@@ -44,13 +44,14 @@ mixin CommonFlutterOptions on Command<void> {
   bool get pub => argResults!.flag('pub');
 }
 
-/// `xcross flutter build` — build a Flutter iOS `.app` (optionally sign / ipa).
+/// `xcross flutter build` — build a Flutter iOS `.app` (optionally ipa).
 ///
 /// xcross is debug-only and cannot sign: the original xtool has no standalone
-/// sign command, so signing only happens at install time. Accepts the xtool
-/// `--ipa` flag plus the official `flutter build ios` flags (`-t/--target`,
-/// `-D/--dart-define`, `--dart-define-from-file`, `--[no-]pub`, `--build-name`,
-/// `--build-number`, `--flavor`).
+/// sign command, so signing only happens at install time (`xcross flutter
+/// run` / `xtool install`). Accepts the xtool `--ipa` flag plus the official
+/// `flutter build ios` flags (`-t/--target`, `-D/--dart-define`,
+/// `--dart-define-from-file`, `--[no-]pub`, `--build-name`, `--build-number`,
+/// `--flavor`).
 class FlutterBuildCommand extends Command<void> with CommonFlutterOptions {
   FlutterBuildCommand() {
     addCommonFlutterOptions();
@@ -62,12 +63,6 @@ class FlutterBuildCommand extends Command<void> with CommonFlutterOptions {
       ..addOption(
         'build-number',
         help: 'Version code (CFBundleVersion).',
-      )
-      ..addFlag(
-        'sign',
-        abbr: 's',
-        help: 'Unsupported — xcross signs at install time, not build time.',
-        negatable: false,
       )
       ..addFlag(
         'ipa',
@@ -86,21 +81,10 @@ class FlutterBuildCommand extends Command<void> with CommonFlutterOptions {
 
   String? get _buildName => argResults!.option('build-name');
   String? get _buildNumber => argResults!.option('build-number');
-  bool get _sign => argResults!.flag('sign');
   bool get _ipa => argResults!.flag('ipa');
 
   @override
   Future<void> run() async {
-    if (_sign) {
-      // Upstream xtool has no standalone "sign" command; signing happens at
-      // install time. Fail before building rather than after.
-      throw UsageException(
-        'xcross cannot sign a .app: the original xtool has no standalone sign '
-            'command.',
-        'Use `xcross flutter run` or `xtool install <app>` to sign + install.',
-      );
-    }
-
     final options = await FlutterBuildOptions.resolve(
       target: target,
       dartDefine: dartDefine,
