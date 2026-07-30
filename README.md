@@ -114,7 +114,7 @@ infoPath: ios/Runner/Info.plist   # optional
 
 No file? Defaults to `com.example`.
 
-## VS Code
+## VS Code / VS Codium / Cursor / Windsurf / Void / Trae
 
 ```sh
 xcross vscode
@@ -122,6 +122,7 @@ xcross vscode
 
 Writes `.vscode/launch.json`, `settings.json`, and a small DAP shim. Press F5 - it builds, signs, installs, and launches; the Hot Reload/Restart buttons drive the same `r`/`R` as the CLI, and DevTools works over the same VM Service connection.
 
+- Works the same in any VS Code fork with the Dart-Code extension installed - Cursor, Windsurf, Trae, VSCodium, code-server, ...
 - Multiple iPhones → set `"args": ["--udid", "<UDID>"]` in `launch.json`.
 - Only the DAP shim gets overwritten each run - existing `launch.json`/`settings.json` are left alone (a merge snippet is printed instead).
 - Run the *installed* `xcross`, not `dart run bin/xcross.dart vscode` - the shim bakes in that binary's path.
@@ -139,6 +140,18 @@ Dart's [`dart compile` cross-compilation](https://dart.dev/tools/dart-compile#cr
 <summary>Does it support the simulator?</summary>
 
 No - arm64 device builds only, minimum iOS 13.
+</details>
+
+<details>
+<summary>Does it support JetBrains IDEs (IntelliJ / Android Studio)?</summary>
+
+Not yet - only VS Code (and its forks) is supported right now.
+</details>
+
+<details>
+<summary>Does it support Compose Multiplatform (CMP)?</summary>
+
+In progress, but not yet - xcross is Flutter-only for now.
 </details>
 
 <details>
