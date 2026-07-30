@@ -114,19 +114,3 @@ jobs:
           fi
           echo "Runner binary is ARM64 Mach-O — OK"
           echo "::endgroup::"
-
-      - name: Upload Flutter .app artifact
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: flutter-sample-app
-          path: /tmp/flutter_sample/build/xtool-ios/
-          if-no-files-found: warn
-
-      - name: Upload xcross Flutter build log
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: xcross-flutter-build-log
-          path: /tmp/xcross-flutter-build.log
-          if-no-files-found: warn
