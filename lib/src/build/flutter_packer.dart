@@ -5,6 +5,8 @@ import 'package:path/path.dart' as p;
 import 'package:xcross/src/build/flutter_debug_bundler.dart';
 import 'package:xcross/src/build/info_plist.dart';
 import 'package:xcross/src/build/ios_engine_cache.dart';
+import 'package:xcross/src/build/ios_plugin_package.dart';
+import 'package:xcross/src/build/ios_plugins.dart';
 import 'package:xcross/src/build/runner_shim.dart';
 import 'package:xcross/src/constants.dart';
 import 'package:xcross/src/models/config/pack_schema.dart';
@@ -22,8 +24,11 @@ import 'package:xcross/src/xtool/darwin_sdk.dart';
 ///   1. Resolve `FLUTTER_ROOT` and run `flutter pub get`.
 ///   2. Build `App.framework` via [FlutterDebugBundler] (frontend_server
 ///      one-shot + clang stub dylib + xtool's ld64.lld).
-///   3. Compile the ObjC Runner shim via [RunnerShim].
-///   4. Assemble the `.app` bundle and write `Info.plist`.
+///   3. Discover iOS plugins and build the aggregate Swift Package Manager
+///      plugins library via [GeneratedPluginsPackage], if any exist.
+///   4. Compile the ObjC Runner shim via [RunnerShim], linking in the
+///      plugins library when present.
+///   5. Assemble the `.app` bundle and write `Info.plist`.
 class FlutterPacker {
   final String projectRoot;
   final PackSchema schema;
@@ -55,12 +60,17 @@ class FlutterPacker {
     }
 
     final appFramework = await _buildAppFramework(flutterRoot);
-    final runnerResult = await _buildRunnerBinary(flutterRoot);
+    final pluginsLibrary = await _buildPlugins(flutterRoot);
+    final runnerResult = await _buildRunnerBinary(
+      flutterRoot,
+      pluginsLibrary: pluginsLibrary,
+    );
 
     return _assembleAndPersistBundle(
       appFramework: appFramework,
       xcframework: runnerResult.xcframework,
       runnerBinary: runnerResult.runnerBinary,
+      pluginsLibrary: pluginsLibrary,
     );
   }
 
@@ -137,9 +147,49 @@ class FlutterPacker {
     ).build();
   }
 
+  /// Discover the project's iOS plugins and build the aggregate Swift
+  /// Package Manager plugins library, if any exist.
+  ///
+  /// Returns the absolute path to the built dylib, or null when there's
+  /// nothing to build — no plugins at all, or only CocoaPods-only ones
+  /// xcross doesn't support (a warning is logged for those; matching
+  /// Flutter's own tool, this doesn't fail the build).
+  Future<String?> _buildPlugins(String flutterRoot) async {
+    final plugins = await PluginDiscovery.discover(projectRoot);
+    final spmPlugins = <IosPlugin>[];
+    for (final plugin in plugins) {
+      if (plugin.usesSwiftPackageManager) {
+        spmPlugins.add(plugin);
+      } else if (plugin.usesCocoaPods) {
+        Log.logWarn(
+          'Plugin "${plugin.name}" only ships a CocoaPods podspec '
+          '(no ios/${plugin.name}/Package.swift); its native iOS code will '
+          'not be included. xcross only supports Swift Package Manager '
+          'plugins.',
+        );
+      }
+    }
+    if (spmPlugins.isEmpty) return null;
+
+    final xcframework = IosEngineCache(
+      flutterRoot: flutterRoot,
+    ).flutterXcframework;
+
+    final result = await GeneratedPluginsPackage.build(
+      projectRoot: projectRoot,
+      plugins: spmPlugins,
+      flutterXcframework: xcframework,
+      outputDir: p.join(projectRoot, 'build', 'xtool-flutter-plugins'),
+    );
+    return result?.libraryPath;
+  }
+
   /// Compile the ObjC Runner shim and return both the xcframework path and the
   /// linked Runner binary path.
-  Future<RunnerBinaryResult> _buildRunnerBinary(String flutterRoot) async {
+  Future<RunnerBinaryResult> _buildRunnerBinary(
+    String flutterRoot, {
+    String? pluginsLibrary,
+  }) async {
     final xcframework = IosEngineCache(
       flutterRoot: flutterRoot,
     ).flutterXcframework;
@@ -157,6 +207,7 @@ class FlutterPacker {
       sdk: darwin,
       flutterXcframework: xcframework,
       outputDir: p.join(projectRoot, 'build', 'xtool-flutter-runner-bin'),
+      pluginsLibrary: pluginsLibrary,
     );
 
     return RunnerBinaryResult(
@@ -171,6 +222,7 @@ class FlutterPacker {
     required String appFramework,
     required String xcframework,
     required String runnerBinary,
+    String? pluginsLibrary,
   }) async {
     final flutterFramework = p.join(
       xcframework,
@@ -193,6 +245,12 @@ class FlutterPacker {
       p.join(frameworksDir, 'Flutter.framework'),
     );
     await _copyDirectory(appFramework, p.join(frameworksDir, 'App.framework'));
+
+    if (pluginsLibrary != null) {
+      await File(
+        pluginsLibrary,
+      ).copy(p.join(frameworksDir, p.basename(pluginsLibrary)));
+    }
 
     await _copyOptionalRunnerResources(bundleDir);
     await _writeInfoPlist(bundleDir);

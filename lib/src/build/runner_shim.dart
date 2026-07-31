@@ -18,6 +18,13 @@ class RunnerShim {
   /// [sdk]                — Resolved [DarwinSdk] (provides sysroot + ld64.lld).
   /// [flutterXcframework] — Path to `Flutter.xcframework`.
   /// [outputDir]          — Directory where `Runner` binary is written.
+  /// [pluginsLibrary]     — Absolute path to the aggregate Flutter-plugins
+  ///                        dylib (from `GeneratedPluginsPackage.build`), or
+  ///                        null when the project has no Swift Package
+  ///                        Manager plugins. When non-null, Runner.m calls
+  ///                        into it for plugin registration instead of using
+  ///                        an empty local stub, and it's linked directly
+  ///                        into the Runner binary.
   ///
   /// Returns path to the linked `Runner` executable.
   static Future<String> buildRunnerBinary({
@@ -25,6 +32,7 @@ class RunnerShim {
     required DarwinSdk sdk,
     required String flutterXcframework,
     required String outputDir,
+    String? pluginsLibrary,
   }) => Log.logStep('Compiling Runner', () async {
     final clang = await ProcessRunner.locateTool('clang');
     final iosSdk = _resolveIPhoneOsSDK(sdk);
@@ -36,7 +44,9 @@ class RunnerShim {
     final objectPath = p.join(outputDir, 'Runner.o');
     final outputPath = p.join(outputDir, 'Runner');
 
-    await File(sourcePath).writeAsString(_runnerObjcSource);
+    await File(
+      sourcePath,
+    ).writeAsString(_runnerObjcSource(hasPlugins: pluginsLibrary != null));
 
     await _compileObject(
       clang: clang,
@@ -59,6 +69,7 @@ class RunnerShim {
       flutterSlice: flutterSlice,
       subframeworks: subframeworks,
       sdkVersion: sdkVersion,
+      pluginsLibrary: pluginsLibrary,
     );
 
     final outputPathExists = File(outputPath).existsSync();
@@ -111,7 +122,11 @@ class RunnerShim {
     );
   }
 
-  /// Link [objectPath] to [outputPath] via ld64.lld.
+  /// Link [objectPath] to [outputPath] via ld64.lld. When [pluginsLibrary] is
+  /// given, it's passed straight to the linker as an extra input file — its
+  /// absolute path resolves the symbols directly, regardless of where it's
+  /// later embedded for runtime (see [buildRunnerBinary] for the on-device
+  /// loading story, handled via the existing `-rpath` below).
   static Future<void> _linkBinary({
     required String ld64lld,
     required String objectPath,
@@ -120,6 +135,7 @@ class RunnerShim {
     required String flutterSlice,
     required String subframeworks,
     required String sdkVersion,
+    String? pluginsLibrary,
   }) async {
     Log.logTrace('[ld64.lld] link Runner.o → Runner');
     await ProcessRunner.runChecked(
@@ -136,6 +152,7 @@ class RunnerShim {
         '-o',
         outputPath,
         objectPath,
+        if (pluginsLibrary != null) pluginsLibrary,
         '-F',
         flutterSlice,
         '-F',
@@ -195,17 +212,24 @@ class RunnerShim {
   }
 
   /// Minimal ObjC Runner that boots Flutter via FlutterAppDelegate.
-  static const _runnerObjcSource = '''
+  ///
+  /// When [hasPlugins] is false (the common, today's-behaviour case), this is
+  /// byte-identical to the original hardcoded template: a local, empty
+  /// `GeneratedPluginRegistrant` stub, so projects without Swift Package
+  /// Manager plugins are entirely unaffected.
+  ///
+  /// When [hasPlugins] is true, the local stub is replaced by a plain
+  /// `extern` forward declaration of the `@_cdecl`-exported registrant
+  /// symbol from the generated Flutter-plugins dylib (see
+  /// `GeneratedPluginsPackage` in ios_plugin_package.dart) — no
+  /// generated-header or clang-modules setup needed, just a normal C symbol
+  /// resolved at link time by [_linkBinary].
+  static String _runnerObjcSource({required bool hasPlugins}) =>
+      '''
 #import <UIKit/UIKit.h>
 #import <Flutter/Flutter.h>
 
-@interface GeneratedPluginRegistrant : NSObject
-+ (void)registerWithRegistry:(NSObject<FlutterPluginRegistry>*)registry;
-@end
-@implementation GeneratedPluginRegistrant
-+ (void)registerWithRegistry:(NSObject<FlutterPluginRegistry>*)registry {}
-@end
-
+${hasPlugins ? _pluginsExternDeclaration : _emptyPluginRegistrantStub}
 @interface AppDelegate : FlutterAppDelegate <FlutterImplicitEngineDelegate>
 @end
 @implementation AppDelegate
@@ -218,7 +242,7 @@ class RunnerShim {
   return [super application:application didFinishLaunchingWithOptions:launchOptions];
 }
 - (void)didInitializeImplicitFlutterEngine:(NSObject<FlutterImplicitEngineBridge>*)engineBridge {
-  [GeneratedPluginRegistrant registerWithRegistry:engineBridge.pluginRegistry];
+  ${hasPlugins ? '${GeneratedPluginsConstants.registrantSymbol}(engineBridge.pluginRegistry);' : '[GeneratedPluginRegistrant registerWithRegistry:engineBridge.pluginRegistry];'}
 }
 @end
 
@@ -231,4 +255,21 @@ int main(int argc, char * argv[]) {
   @autoreleasepool { return UIApplicationMain(argc, argv, nil, @"AppDelegate"); }
 }
 ''';
+
+  /// Empty registrant stub — today's behaviour, used when there are no Swift
+  /// Package Manager plugins to register.
+  static const _emptyPluginRegistrantStub = '''
+@interface GeneratedPluginRegistrant : NSObject
++ (void)registerWithRegistry:(NSObject<FlutterPluginRegistry>*)registry;
+@end
+@implementation GeneratedPluginRegistrant
++ (void)registerWithRegistry:(NSObject<FlutterPluginRegistry>*)registry {}
+@end
+''';
+
+  /// Forward declaration of the generated Swift registrant's `@_cdecl`
+  /// symbol — plain C linkage, so no header import or `-fmodules` is needed.
+  static const _pluginsExternDeclaration =
+      'extern void ${GeneratedPluginsConstants.registrantSymbol}'
+      '(NSObject<FlutterPluginRegistry>* registry);\n';
 }

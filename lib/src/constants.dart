@@ -59,6 +59,17 @@ abstract final class IosDeploymentConstants {
   static const String minimumOsVersionKey = 'MinimumOSVersion';
 }
 
+/// Constants for the generated Flutter-plugins Swift package (see
+/// `GeneratedPluginsPackage` in ios_plugin_package.dart and `RunnerShim`).
+abstract final class GeneratedPluginsConstants {
+  /// `@_cdecl` symbol the generated Swift registrant exports, and that
+  /// `Runner.m` calls via a plain `extern` forward declaration. Must match
+  /// exactly between the Swift codegen (ios_plugin_package.dart) and the
+  /// ObjC codegen (runner_shim.dart) — they're compiled/linked as separate
+  /// binaries and only connected by this symbol name at link time.
+  static const String registrantSymbol = 'XcrossRegisterGeneratedPlugins';
+}
+
 /// Default values written into an iOS app bundle's Info.plist.
 abstract final class PlistDefaults {
   /// Default CFBundleShortVersionString (FLUTTER_BUILD_NAME).
