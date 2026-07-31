@@ -15,7 +15,6 @@ const _aptPackages = [
   'python3-venv',
   'usbmuxd',
   'usbutils',
-  'libimobiledevice6',
   'libimobiledevice-utils',
   'linux-tools-common',
   'pkg-config',
