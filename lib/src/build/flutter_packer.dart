@@ -68,13 +68,16 @@ class FlutterPacker {
   ///   1. `FLUTTER_ROOT` environment variable.
   ///   2. `<projectRoot>/.fvm/flutter_sdk` symlink (fvm).
   ///   3. `which flutter` → parent of `bin/`.
-  static Future<String> resolveFlutterRoot(
-      {required String projectRoot}) async {
+  static Future<String> resolveFlutterRoot({
+    required String projectRoot,
+  }) async {
     final envRoot = Platform.environment['FLUTTER_ROOT'];
     if (envRoot != null && envRoot.isNotEmpty) return envRoot;
 
     final fvmLink = p.join(projectRoot, '.fvm', 'flutter_sdk');
-    if (Directory(fvmLink).existsSync() || Link(fvmLink).existsSync()) {
+    final fvmLinkExists =
+        Directory(fvmLink).existsSync() || Link(fvmLink).existsSync();
+    if (fvmLinkExists) {
       return Link(fvmLink).resolveSymbolicLinksSync();
     }
 
@@ -86,8 +89,11 @@ class FlutterPacker {
   /// Run `flutter pub get`. Tolerates failures when `package_config.json`
   /// already exists (container builds with ephemeral pub caches).
   Future<void> _runFlutterPubGet(String flutterRoot) {
-    final packageConfig =
-        p.join(projectRoot, '.dart_tool', 'package_config.json');
+    final packageConfig = p.join(
+      projectRoot,
+      '.dart_tool',
+      'package_config.json',
+    );
     return Log.logStep('Resolving dependencies', () async {
       try {
         await ProcessRunner.runChecked(
@@ -100,9 +106,12 @@ class FlutterPacker {
           label: 'flutter',
         );
       } on XcrossError {
-        if (File(packageConfig).existsSync()) {
-          Log.logWarn('Ignoring flutter pub get error because '
-              'package_config.json exists.');
+        final packageConfigExists = File(packageConfig).existsSync();
+        if (packageConfigExists) {
+          Log.logWarn(
+            'Ignoring flutter pub get error because '
+            'package_config.json exists.',
+          );
           return;
         }
         rethrow;
@@ -130,11 +139,10 @@ class FlutterPacker {
 
   /// Compile the ObjC Runner shim and return both the xcframework path and the
   /// linked Runner binary path.
-  Future<RunnerBinaryResult> _buildRunnerBinary(
-    String flutterRoot,
-  ) async {
-    final xcframework =
-        IosEngineCache(flutterRoot: flutterRoot).flutterXcframework;
+  Future<RunnerBinaryResult> _buildRunnerBinary(String flutterRoot) async {
+    final xcframework = IosEngineCache(
+      flutterRoot: flutterRoot,
+    ).flutterXcframework;
 
     final darwin = DarwinSdk.current();
     if (darwin == null) {
@@ -152,7 +160,9 @@ class FlutterPacker {
     );
 
     return RunnerBinaryResult(
-        xcframework: xcframework, runnerBinary: runnerBinary);
+      xcframework: xcframework,
+      runnerBinary: runnerBinary,
+    );
   }
 
   /// Copy all bundle contents into a temp directory, write `Info.plist`, then
@@ -162,8 +172,11 @@ class FlutterPacker {
     required String xcframework,
     required String runnerBinary,
   }) async {
-    final flutterFramework =
-        p.join(xcframework, 'ios-arm64', 'Flutter.framework');
+    final flutterFramework = p.join(
+      xcframework,
+      'ios-arm64',
+      'Flutter.framework',
+    );
 
     // Build the bundle in a temp dir so we can atomically move it to the dest.
     final tmp = await Directory.systemTemp.createTemp('${appName}_app_bundle-');
@@ -176,15 +189,18 @@ class FlutterPacker {
     ProcessRunner.makeExecutable(p.join(bundleDir, 'Runner'));
 
     await _copyDirectory(
-        flutterFramework, p.join(frameworksDir, 'Flutter.framework'));
+      flutterFramework,
+      p.join(frameworksDir, 'Flutter.framework'),
+    );
     await _copyDirectory(appFramework, p.join(frameworksDir, 'App.framework'));
 
     await _copyOptionalRunnerResources(bundleDir);
     await _writeInfoPlist(bundleDir);
 
     final dest = p.join(projectRoot, 'build', 'xtool-ios', '$appName.app');
-    if (Directory(dest).existsSync()) {
-      await Directory(dest).delete(recursive: true);
+    final destDir = Directory(dest);
+    if (destDir.existsSync()) {
+      await destDir.delete(recursive: true);
     }
     await Directory(p.dirname(dest)).create(recursive: true);
     await _copyDirectory(bundleDir, dest);
@@ -204,8 +220,9 @@ class FlutterPacker {
       final src = p.join(runnerDir, rel);
       if (!Directory(src).existsSync()) continue;
       final dst = p.join(bundleDir, p.basename(src));
-      if (Directory(dst).existsSync()) {
-        await Directory(dst).delete(recursive: true);
+      final dstDir = Directory(dst);
+      if (dstDir.existsSync()) {
+        await dstDir.delete(recursive: true);
       }
       await _copyDirectory(src, dst);
     }
@@ -222,8 +239,10 @@ class FlutterPacker {
     // keys see already-substituted values from the template, and before
     // storyboard stripping so $(VAR)-valued storyboard names are resolved
     // before the .storyboardc filesystem probe.
-    plistXml =
-        InfoPlist.expandVars(plistXml, await _buildSubstitutionMap(bundleId));
+    plistXml = InfoPlist.expandVars(
+      plistXml,
+      await _buildSubstitutionMap(bundleId),
+    );
     plistXml = InfoPlist.applyIosRequiredKeys(plistXml, bundleId: bundleId);
     plistXml = InfoPlist.stripUnsatisfiableStoryboards(plistXml, bundleDir);
     plistXml = InfoPlist.normalizeObjCClassNames(plistXml);
@@ -257,8 +276,9 @@ class FlutterPacker {
       'FLUTTER_BUILD_NUMBER': PlistDefaults.bundleVersion,
     };
 
-    final xcconfigFile =
-        File(p.join(projectRoot, 'ios', 'Flutter', 'Generated.xcconfig'));
+    final xcconfigFile = File(
+      p.join(projectRoot, 'ios', 'Flutter', 'Generated.xcconfig'),
+    );
     if (xcconfigFile.existsSync()) {
       subs.addAll(InfoPlist.parseXcconfig(await xcconfigFile.readAsString()));
     }
@@ -295,7 +315,10 @@ class FlutterPacker {
 /// Result of building the ObjC Runner shim: the xcframework used and the
 /// linked Runner binary path.
 class RunnerBinaryResult {
-  const RunnerBinaryResult({required this.xcframework, required this.runnerBinary});
+  const RunnerBinaryResult({
+    required this.xcframework,
+    required this.runnerBinary,
+  });
 
   final String xcframework;
   final String runnerBinary;

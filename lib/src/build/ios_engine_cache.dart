@@ -36,14 +36,26 @@ class IosEngineCache {
 
   /// Host engine cache dir — where Flutter caches the host Dart engine.
   String get _hostEngineDir => p.join(
-      flutterRoot, 'bin', 'cache', 'artifacts', 'engine', _hostEngineCacheDir);
+    flutterRoot,
+    'bin',
+    'cache',
+    'artifacts',
+    'engine',
+    _hostEngineCacheDir,
+  );
 
   /// Path to the Dart frontend_server snapshot. Prefers the AOT variant
   /// (`frontend_server_aot.dart.snapshot`) for speed; falls back to the JIT
   /// variant.
   String get frontendServer {
-    final snapshotsDir =
-        p.join(flutterRoot, 'bin', 'cache', 'dart-sdk', 'bin', 'snapshots');
+    final snapshotsDir = p.join(
+      flutterRoot,
+      'bin',
+      'cache',
+      'dart-sdk',
+      'bin',
+      'snapshots',
+    );
     for (final name in [
       'frontend_server_aot.dart.snapshot',
       'frontend_server.dart.snapshot',
@@ -57,14 +69,14 @@ class IosEngineCache {
 
   /// Patched SDK platform .dill — debug uses `flutter_patched_sdk/`.
   String get patchedSdkRoot => p.join(
-        flutterRoot,
-        'bin',
-        'cache',
-        'artifacts',
-        'engine',
-        'common',
-        'flutter_patched_sdk',
-      );
+    flutterRoot,
+    'bin',
+    'cache',
+    'artifacts',
+    'engine',
+    'common',
+    'flutter_patched_sdk',
+  );
 
   /// Engine hash that pins the artifact set. Read from
   /// `bin/internal/engine.version` (stable/beta) or `bin/cache/engine.stamp`
@@ -91,14 +103,16 @@ class IosEngineCache {
   /// Verify required iOS engine artifacts are present, downloading each set
   /// from `storage.googleapis.com` if missing. Safe to call repeatedly.
   Future<void> ensureArtifactsAvailable() async {
-    if (!Directory(flutterXcframework).existsSync()) {
+    final flutterXcframeworkExists = Directory(flutterXcframework).existsSync();
+    if (!flutterXcframeworkExists) {
       await _downloadIosArtifacts();
     }
     if (!File(vmSnapshotData).existsSync() ||
         !File(isolateSnapshotData).existsSync()) {
       await _downloadHostArtifacts();
     }
-    if (!Directory(patchedSdkRoot).existsSync()) {
+    final patchedSdkRootExists = Directory(patchedSdkRoot).existsSync();
+    if (!patchedSdkRootExists) {
       await _downloadPatchedSdk();
     }
   }
@@ -108,16 +122,24 @@ class IosEngineCache {
     final url =
         '$flutterArtifactBaseUrl/$hash/$_hostEngineCacheDir/artifacts.zip';
     Log.logTrace('downloading Flutter host engine artifacts from $url');
-    await _fetchAndExtract(url, _hostEngineDir, 'host-artifacts-',
-        label: 'Flutter host engine');
+    await _fetchAndExtract(
+      url,
+      _hostEngineDir,
+      'host-artifacts-',
+      label: 'Flutter host engine',
+    );
   }
 
   Future<void> _downloadIosArtifacts() async {
     final hash = await _engineHash();
     final url = '$flutterArtifactBaseUrl/$hash/ios/artifacts.zip';
     Log.logTrace('downloading Flutter iOS engine artifacts from $url');
-    await _fetchAndExtract(url, _engineDir, 'ios-artifacts-',
-        label: 'Flutter iOS engine');
+    await _fetchAndExtract(
+      url,
+      _engineDir,
+      'ios-artifacts-',
+      label: 'Flutter iOS engine',
+    );
   }
 
   Future<void> _downloadPatchedSdk() async {
@@ -125,8 +147,12 @@ class IosEngineCache {
     final leaf = p.basename(patchedSdkRoot);
     final url = '$flutterArtifactBaseUrl/$hash/$leaf.zip';
     Log.logTrace('downloading Flutter patched SDK from $url');
-    await _fetchAndExtract(url, p.dirname(patchedSdkRoot), 'patched-sdk-',
-        label: 'Flutter patched SDK');
+    await _fetchAndExtract(
+      url,
+      p.dirname(patchedSdkRoot),
+      'patched-sdk-',
+      label: 'Flutter patched SDK',
+    );
   }
 
   /// Download [url] into a temp directory, extract into [destDir], then
@@ -144,8 +170,12 @@ class IosEngineCache {
     await Directory(destDir).create(recursive: true);
     final tmp = await Directory.systemTemp.createTemp(tmpPrefix);
     final zipPath = p.join(tmp.path, 'artifacts.zip');
-    await Downloader.downloadToFile(url, File(zipPath),
-        maxAttempts: 5, label: label);
+    await Downloader.downloadToFile(
+      url,
+      File(zipPath),
+      maxAttempts: 5,
+      label: label,
+    );
     // Unzipping hundreds of MB is slow enough to look like a hang on its own.
     await Log.logStep(
       'Extracting $label',

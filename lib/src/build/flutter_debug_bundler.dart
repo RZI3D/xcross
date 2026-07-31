@@ -110,16 +110,24 @@ class FlutterDebugBundler {
 
     _validateKernelDependencies(snapshot, runtime, runtimeName, engineCache);
 
-    final scratch =
-        p.join(projectRoot, 'build', 'xtool-flutter-debug', '.kernel');
+    final scratch = p.join(
+      projectRoot,
+      'build',
+      'xtool-flutter-debug',
+      '.kernel',
+    );
     final scratchDir = Directory(scratch);
     if (scratchDir.existsSync()) await scratchDir.delete(recursive: true);
     await scratchDir.create(recursive: true);
 
     final outputDill = p.join(scratch, 'app.dill');
-    final packageConfig =
-        p.join(projectRoot, '.dart_tool', 'package_config.json');
-    if (!File(packageConfig).existsSync()) {
+    final packageConfig = p.join(
+      projectRoot,
+      '.dart_tool',
+      'package_config.json',
+    );
+    final packageConfigExists = File(packageConfig).existsSync();
+    if (!packageConfigExists) {
       throw XcrossError(
         'FlutterDebugBundler: package_config.json missing at $packageConfig; '
         'run `dart pub get` first.',
@@ -127,8 +135,9 @@ class FlutterDebugBundler {
     }
 
     // Resolve entrypoint — join with projectRoot when relative.
-    final resolvedEntrypoint =
-        p.isAbsolute(entrypoint) ? entrypoint : p.join(projectRoot, entrypoint);
+    final resolvedEntrypoint = p.isAbsolute(entrypoint)
+        ? entrypoint
+        : p.join(projectRoot, entrypoint);
 
     // Compile under the entrypoint's `package:` URI when it has one, as
     // flutter_tools does: this is what sets the kernel's `Library.importUri`,
@@ -177,9 +186,11 @@ class FlutterDebugBundler {
       ),
     );
 
-    if (!File(outputDill).existsSync()) {
+    final outputDillExists = File(outputDill).existsSync();
+    if (!outputDillExists) {
       throw XcrossError(
-          'FlutterDebugBundler: kernel snapshot did not produce $outputDill');
+        'FlutterDebugBundler: kernel snapshot did not produce $outputDill',
+      );
     }
     return outputDill;
   }
@@ -191,17 +202,21 @@ class FlutterDebugBundler {
     String runtimeName,
     IosEngineCache engineCache,
   ) {
-    if (!File(snapshot).existsSync()) {
+    final snapshotExists = File(snapshot).existsSync();
+    if (!snapshotExists) {
       throw XcrossError(
         'FlutterDebugBundler: frontend_server snapshot missing at $snapshot.\n'
         'Run `<FLUTTER_ROOT>/bin/dart --version` once to materialize.',
       );
     }
-    if (!File(runtime).existsSync()) {
+    final runtimeExists = File(runtime).existsSync();
+    if (!runtimeExists) {
       throw XcrossError('FlutterDebugBundler: $runtimeName not at $runtime');
     }
-    if (!File(p.join(engineCache.patchedSdkRoot, 'platform_strong.dill'))
-        .existsSync()) {
+    final platformDillExists = File(
+      p.join(engineCache.patchedSdkRoot, 'platform_strong.dill'),
+    ).existsSync();
+    if (!platformDillExists) {
       throw XcrossError(
         'FlutterDebugBundler: ${engineCache.patchedSdkRoot} is missing\n'
         'platform_strong.dill. Try deleting '
@@ -218,10 +233,12 @@ class FlutterDebugBundler {
     // kernel_blob.bin — Dart kernel for JIT execution.
     await File(appDill).copy(p.join(assetsDir, 'kernel_blob.bin'));
     // Snapshot data files (name remap: .bin suffix dropped, stem changed).
-    await File(engineCache.vmSnapshotData)
-        .copy(p.join(assetsDir, 'vm_snapshot_data'));
-    await File(engineCache.isolateSnapshotData)
-        .copy(p.join(assetsDir, 'isolate_snapshot_data'));
+    await File(
+      engineCache.vmSnapshotData,
+    ).copy(p.join(assetsDir, 'vm_snapshot_data'));
+    await File(
+      engineCache.isolateSnapshotData,
+    ).copy(p.join(assetsDir, 'isolate_snapshot_data'));
   }
 
   /// Copy `flutter: assets:` entries into `flutter_assets/`, preserving their
@@ -249,7 +266,8 @@ class FlutterDebugBundler {
         }
       } else {
         final src = p.join(projectRoot, entry);
-        if (!File(src).existsSync()) {
+        final srcExists = File(src).existsSync();
+        if (!srcExists) {
           throw XcrossError('pubspec.yaml: asset not found: $entry');
         }
         await _copyAssetFile(src, assetsDir, entry);
@@ -268,9 +286,16 @@ class FlutterDebugBundler {
     final fonts = <Map<String, Object?>>[];
 
     if (pubspec.usesMaterialDesign) {
-      final src = p.join(flutterRoot, 'bin', 'cache', 'artifacts',
-          'material_fonts', 'MaterialIcons-Regular.otf');
-      if (File(src).existsSync()) {
+      final src = p.join(
+        flutterRoot,
+        'bin',
+        'cache',
+        'artifacts',
+        'material_fonts',
+        'MaterialIcons-Regular.otf',
+      );
+      final srcExists = File(src).existsSync();
+      if (srcExists) {
         await _copyAssetFile(src, assetsDir, 'fonts/MaterialIcons-Regular.otf');
         fonts.add(const {
           'family': 'MaterialIcons',
@@ -284,9 +309,11 @@ class FlutterDebugBundler {
     for (final family in pubspec.fonts) {
       for (final font in family.fonts) {
         final src = p.join(projectRoot, font.asset);
-        if (!File(src).existsSync()) {
+        final srcExists = File(src).existsSync();
+        if (!srcExists) {
           throw XcrossError(
-              'pubspec.yaml: font asset not found: ${font.asset}');
+            'pubspec.yaml: font asset not found: ${font.asset}',
+          );
         }
         await _copyAssetFile(src, assetsDir, font.asset);
       }
@@ -317,20 +344,24 @@ class FlutterDebugBundler {
         ],
     };
     final binBytes = const StandardMessageCodec().encodeMessage(binMessage)!;
-    File(p.join(assetsDir, 'AssetManifest.bin')).writeAsBytesSync(
-        binBytes.buffer.asUint8List(0, binBytes.lengthInBytes));
+    File(
+      p.join(assetsDir, 'AssetManifest.bin'),
+    ).writeAsBytesSync(binBytes.buffer.asUint8List(0, binBytes.lengthInBytes));
 
     // AssetManifest.json — legacy JSON variant still read by some plugins.
-    File(p.join(assetsDir, 'AssetManifest.json'))
-        .writeAsStringSync(jsonEncode(assetManifest));
+    File(
+      p.join(assetsDir, 'AssetManifest.json'),
+    ).writeAsStringSync(jsonEncode(assetManifest));
 
     // FontManifest.json — registers custom + Material fonts with the engine.
-    File(p.join(assetsDir, 'FontManifest.json'))
-        .writeAsStringSync(jsonEncode(fonts));
+    File(
+      p.join(assetsDir, 'FontManifest.json'),
+    ).writeAsStringSync(jsonEncode(fonts));
 
     // NativeAssetsManifest.json — minimal valid shape expected by the engine.
-    File(p.join(assetsDir, 'NativeAssetsManifest.json'))
-        .writeAsStringSync('{"format-version":[1,0,0],"native-assets":{}}');
+    File(
+      p.join(assetsDir, 'NativeAssetsManifest.json'),
+    ).writeAsStringSync('{"format-version":[1,0,0],"native-assets":{}}');
 
     // NOTICES.Z — empty zlib stream (LicensePage handles empty content fine).
     File(p.join(assetsDir, 'NOTICES.Z')).writeAsBytesSync(_emptyZlibBytes);
@@ -354,8 +385,9 @@ class FlutterDebugBundler {
 
   Future<void> _buildAppStub(String appFramework, Toolchain toolchain) =>
       Log.logStep('Building App.framework', () async {
-        final tmp =
-            await Directory.systemTemp.createTemp('xtool-flutter-stub-');
+        final tmp = await Directory.systemTemp.createTemp(
+          'xtool-flutter-stub-',
+        );
         final stubSource = p.join(tmp.path, 'debug_app.c');
         // Exact stub content emitted by flutter_tools.
         await File(stubSource).writeAsString('static const int Moo = 88;\n');
@@ -377,9 +409,11 @@ class FlutterDebugBundler {
           label: 'clang',
         );
 
-        if (!File(outputBinary).existsSync()) {
+        final outputBinaryExists = File(outputBinary).existsSync();
+        if (!outputBinaryExists) {
           throw XcrossError(
-              'FlutterDebugBundler: clang did not produce $outputBinary');
+            'FlutterDebugBundler: clang did not produce $outputBinary',
+          );
         }
 
         await tmp.delete(recursive: true);
@@ -424,7 +458,8 @@ class FlutterDebugBundler {
   }
 
   void _writeAppFrameworkInfoPlist(String appFramework) {
-    const plist = '<?xml version="1.0" encoding="UTF-8"?>\n'
+    const plist =
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
         '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"'
         ' "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n'
         '<plist version="1.0">\n'

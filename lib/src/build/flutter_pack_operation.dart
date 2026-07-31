@@ -21,14 +21,13 @@ abstract final class FlutterPackOperation {
   ///
   /// Prefers `xtool.yml`, otherwise falls back to the default `com.example`
   /// schema, deletes any prior bundle, then packs.
-  static Future<PackResult> pack({
-    required FlutterBuildOptions options,
-  }) async {
+  static Future<PackResult> pack({required FlutterBuildOptions options}) async {
     final projectRoot = Directory.current.path;
 
     final PackSchema schema;
     final configPath = p.join(projectRoot, 'xtool.yml');
-    if (File(configPath).existsSync()) {
+    final configExists = File(configPath).existsSync();
+    if (configExists) {
       schema = await PackSchema.fromFile(configPath);
     } else {
       schema = PackSchema.defaultSchema();
@@ -39,13 +38,17 @@ abstract final class FlutterPackOperation {
     }
 
     final packer = FlutterPacker(
-        projectRoot: projectRoot, schema: schema, options: options);
+      projectRoot: projectRoot,
+      schema: schema,
+      options: options,
+    );
     final bundleId = schema.idSpecifier.formBundleId(packer.appName);
 
     // Always delete any previous bundle BEFORE packing, otherwise stale
     // binaries from an earlier build get codesigned into the new one.
     final bundleDir = Directory(
-        p.join(projectRoot, 'build', 'xtool-ios', '${packer.appName}.app'));
+      p.join(projectRoot, 'build', 'xtool-ios', '${packer.appName}.app'),
+    );
     if (bundleDir.existsSync()) await bundleDir.delete(recursive: true);
 
     final appPath = await packer.pack();

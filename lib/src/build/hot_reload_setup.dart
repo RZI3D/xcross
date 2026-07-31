@@ -18,22 +18,30 @@ abstract final class HotReloadSetup {
     bool verbose = false,
   }) async {
     final projectRoot = Directory.current.path;
-    final flutterRoot =
-        await FlutterPacker.resolveFlutterRoot(projectRoot: projectRoot);
+    final flutterRoot = await FlutterPacker.resolveFlutterRoot(
+      projectRoot: projectRoot,
+    );
     final engineCache = IosEngineCache(flutterRoot: flutterRoot);
 
     final frontendServer = engineCache.frontendServer;
-    if (!File(frontendServer).existsSync()) {
-      Log.logWarn('frontend_server snapshot missing at $frontendServer; '
-          'hot reload disabled.');
+    final frontendServerExists = File(frontendServer).existsSync();
+    if (!frontendServerExists) {
+      Log.logWarn(
+        'frontend_server snapshot missing at $frontendServer; '
+        'hot reload disabled.',
+      );
       return null;
     }
 
     final sdkRoot = engineCache.patchedSdkRoot;
-    final packageConfig =
-        p.join(projectRoot, '.dart_tool', 'package_config.json');
-    final entrypoint =
-        p.isAbsolute(target) ? target : p.join(projectRoot, target);
+    final packageConfig = p.join(
+      projectRoot,
+      '.dart_tool',
+      'package_config.json',
+    );
+    final entrypoint = p.isAbsolute(target)
+        ? target
+        : p.join(projectRoot, target);
 
     // frontend_server is AOT (dartaotruntime) or a kernel snapshot (dart).
     final dartSdkBin = p.join(flutterRoot, 'bin', 'cache', 'dart-sdk', 'bin');
@@ -42,7 +50,12 @@ abstract final class HotReloadSetup {
 
     // Persistent dill output for incremental reloads.
     final outputDill = p.join(
-        projectRoot, 'build', 'xtool-flutter-debug', '.hotreload', 'app.dill');
+      projectRoot,
+      'build',
+      'xtool-flutter-debug',
+      '.hotreload',
+      'app.dill',
+    );
     await Directory(p.dirname(outputDill)).create(recursive: true);
 
     return HotReloadConfig(
