@@ -69,8 +69,14 @@ abstract final class VmServiceOutput {
     return null;
   }
 
+  /// A `LogRecord`'s unset `error`/`stackTrace` arrive as a Null *instance*
+  /// (`{kind: Null, valueAsString: 'null'}`), not as an absent field — so the
+  /// kind must be checked, or every `log('x')` prints a spurious
+  /// `[log] null` line for each of them.
   static String? _valueAsString(Object? instanceRef) =>
-      instanceRef is Map && instanceRef['valueAsString'] is String
+      instanceRef is Map &&
+              instanceRef['kind'] != 'Null' &&
+              instanceRef['valueAsString'] is String
           ? instanceRef['valueAsString'] as String
           : null;
 }
