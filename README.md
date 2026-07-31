@@ -58,7 +58,7 @@ curl -fsSL https://raw.githubusercontent.com/arxdeus/xcross/main/install.sh | sh
 
 xcross only runs on Linux, so on Windows you need [WSL](https://learn.microsoft.com/windows/wsl/install) plus a forwarded USB connection to the iPhone:
 
-1. Install **iTunes** on Windows - it carries Apple's USB drivers, without which Windows won't enumerate the phone.
+1. Install [**iTunes**](https://support.apple.com/en-us/106372) on Windows - it carries Apple's USB drivers, without which Windows won't enumerate the phone.
 2. Install [usbipd-win](https://github.com/dorssel/usbipd-win) on the Windows host.
 3. In an admin PowerShell: `usbipd list`, then `usbipd bind --busid=<BUSID>` for the Apple Mobile Device entry.
 4. `usbipd attach --wsl --busid=<BUSID>` to forward it into WSL (repeat after every reboot/replug).
