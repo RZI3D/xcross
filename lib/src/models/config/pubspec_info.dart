@@ -17,10 +17,10 @@ class PubspecFontAsset {
 
   /// `FontManifest.json` entry shape: `{"asset": ..., "weight": ..., "style": ...}`.
   Map<String, Object> get descriptor => {
-        'asset': asset,
-        if (weight != null) 'weight': weight!,
-        if (style != null) 'style': style!,
-      };
+    'asset': asset,
+    if (weight != null) 'weight': weight!,
+    if (style != null) 'style': style!,
+  };
 }
 
 /// One `flutter: fonts:` family entry, e.g. `{family: Foo, fonts: [...]}`.
@@ -32,9 +32,9 @@ class PubspecFontFamily {
   final List<PubspecFontAsset> fonts;
 
   Map<String, Object> get descriptor => {
-        'family': family,
-        'fonts': [for (final font in fonts) font.descriptor],
-      };
+    'family': family,
+    'fonts': [for (final font in fonts) font.descriptor],
+  };
 }
 
 /// Relevant fields read from a Flutter project's `pubspec.yaml`.

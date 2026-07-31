@@ -71,9 +71,6 @@ class PackSchema {
     } else {
       throw XcrossError('xtool.yml: Must specify either orgID or bundleID');
     }
-    return PackSchema(
-      idSpecifier: spec,
-      infoPath: doc['infoPath'] as String?,
-    );
+    return PackSchema(idSpecifier: spec, infoPath: doc['infoPath'] as String?);
   }
 }

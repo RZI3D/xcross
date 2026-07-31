@@ -37,14 +37,14 @@ abstract final class Log {
   /// With a [value], [message] becomes a padded label so consecutive facts
   /// line up in a column.
   static void logInfo(String message, [String? value]) => logStatus(
-        '${Glyph.info} '
-        '${value == null ? message : '${message.padRight(13)}$value'}',
-      );
+    '${Glyph.info} '
+    '${value == null ? message : '${message.padRight(13)}$value'}',
+  );
 
   /// A one-off completed action that had no [Step]: `✓ Flutter iOS engine 279 MB`.
   static void logDone(String message, [String? detail]) => logStatus(
-        '${Glyph.ok} ${detail == null ? message : _withDetail(message, detail)}',
-      );
+    '${Glyph.ok} ${detail == null ? message : _withDetail(message, detail)}',
+  );
 
   /// Print [message] verbatim (already carries its own marker). Interrupts any
   /// running spinner so the two never fight over the same line.
@@ -262,8 +262,10 @@ class Step {
     _closed = true;
     if (Log._active == this) Log._active = null;
     _erase();
-    Log._logger.stdout('$mark'
-        '${timed ? Log._withDetail(message, _fmtElapsed(_watch.elapsed)) : message}');
+    Log._logger.stdout(
+      '$mark'
+      '${timed ? Log._withDetail(message, _fmtElapsed(_watch.elapsed)) : message}',
+    );
   }
 
   static String _fmtElapsed(Duration d) {

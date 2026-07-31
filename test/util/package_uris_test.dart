@@ -14,8 +14,9 @@ void main() {
   setUp(() async {
     tmp = await Directory.systemTemp.createTemp('xcross_pkg_uris-');
     await Directory(p.join(tmp.path, '.dart_tool')).create(recursive: true);
-    await File(p.join(tmp.path, '.dart_tool', 'package_config.json'))
-        .writeAsString('''
+    await File(
+      p.join(tmp.path, '.dart_tool', 'package_config.json'),
+    ).writeAsString('''
 {
   "configVersion": 2,
   "packages": [
@@ -69,12 +70,14 @@ void main() {
     );
   });
 
-  test('returns null when the package config is missing or malformed',
-      () async {
-    expect(await PackageUris.load(p.join(tmp.path, 'nope.json')), isNull);
+  test(
+    'returns null when the package config is missing or malformed',
+    () async {
+      expect(await PackageUris.load(p.join(tmp.path, 'nope.json')), isNull);
 
-    final bad = p.join(tmp.path, 'bad.json');
-    await File(bad).writeAsString('not json at all');
-    expect(await PackageUris.load(bad), isNull);
-  });
+      final bad = p.join(tmp.path, 'bad.json');
+      await File(bad).writeAsString('not json at all');
+      expect(await PackageUris.load(bad), isNull);
+    },
+  );
 }

@@ -36,7 +36,8 @@ abstract final class DartDefines {
       final decoded = jsonDecode(content);
       if (decoded is! Map) {
         throw XcrossError(
-            '--dart-define-from-file: $path is not a JSON object');
+          '--dart-define-from-file: $path is not a JSON object',
+        );
       }
       // Dart's default toString keeps JSON true/1/1.5 as bare tokens;
       // jsonEncode here would quote strings and change every emitted define.

@@ -31,21 +31,9 @@ class FlutterRunCommand extends Command<void> with CommonFlutterOptions {
         abbr: 'd',
         help: 'Target device id or name (flutter-style).',
       )
-      ..addOption(
-        'udid',
-        abbr: 'u',
-        help: 'Target device UDID (xtool-style).',
-      )
-      ..addFlag(
-        'usb',
-        help: 'Search USB devices only.',
-        negatable: false,
-      )
-      ..addFlag(
-        'wifi',
-        help: 'Search Wi-Fi devices only.',
-        negatable: false,
-      )
+      ..addOption('udid', abbr: 'u', help: 'Target device UDID (xtool-style).')
+      ..addFlag('usb', help: 'Search USB devices only.', negatable: false)
+      ..addFlag('wifi', help: 'Search Wi-Fi devices only.', negatable: false)
       ..addOption(
         'device-connection',
         help: 'Discovery: attached (USB), wireless (Wi-Fi), or both.',
@@ -89,8 +77,9 @@ class FlutterRunCommand extends Command<void> with CommonFlutterOptions {
   DeviceSearchMode get _searchMode {
     if (argResults!.flag('usb')) return DeviceSearchMode.usb;
     if (argResults!.flag('wifi')) return DeviceSearchMode.wifi;
-    final connection = DeviceConnection.values
-        .byName(argResults!.option('device-connection')!);
+    final connection = DeviceConnection.values.byName(
+      argResults!.option('device-connection')!,
+    );
     return switch (connection) {
       DeviceConnection.attached => DeviceSearchMode.usb,
       DeviceConnection.wireless => DeviceSearchMode.wifi,
@@ -101,9 +90,9 @@ class FlutterRunCommand extends Command<void> with CommonFlutterOptions {
   /// App-level arguments passed to the launched binary (`--route`, then any
   /// `--dart-entrypoint-args`).
   List<String> get _appArguments => [
-        if (_route case final route?) '--route=$route',
-        ..._dartEntrypointArgs,
-      ];
+    if (_route case final route?) '--route=$route',
+    ..._dartEntrypointArgs,
+  ];
 
   @override
   Future<void> run() async {
@@ -119,8 +108,10 @@ class FlutterRunCommand extends Command<void> with CommonFlutterOptions {
     final pack = await FlutterPackOperation.pack(options: options);
 
     final xtool = XtoolCli();
-    final device =
-        await xtool.resolveDevice(selector: _deviceSelector, mode: _searchMode);
+    final device = await xtool.resolveDevice(
+      selector: _deviceSelector,
+      mode: _searchMode,
+    );
     Log.logInfo('Device', '${device.name} ${Log.ansi.subtle(device.udid)}');
 
     // iOS 17+ removed the classic lockdown debugserver: launch (and process
@@ -133,7 +124,9 @@ class FlutterRunCommand extends Command<void> with CommonFlutterOptions {
     // and relaunch don't collide with a live instance.
     if (useCoreDevice) {
       await CoreDeviceLauncher.terminateIfRunning(
-          udid: device.udid, bundleId: pack.bundleId);
+        udid: device.udid,
+        bundleId: pack.bundleId,
+      );
     }
 
     // Renders its own spinner + grey log tail (see [XtoolCli.install]).

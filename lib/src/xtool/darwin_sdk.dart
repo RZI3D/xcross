@@ -23,10 +23,20 @@ class DarwinSdk {
       p.join(home, '.swiftpm', 'swift-sdks', 'darwin.artifactbundle'),
       p.join(home, '.swiftpm', 'swift-sdks', 'darwin.xtoolsdk'),
       // macOS fallback path.
-      p.join(home, 'Library', 'org.swift.swiftpm', 'swift-sdks',
-          'darwin.artifactbundle'),
-      p.join(home, 'Library', 'org.swift.swiftpm', 'swift-sdks',
-          'darwin.xtoolsdk'),
+      p.join(
+        home,
+        'Library',
+        'org.swift.swiftpm',
+        'swift-sdks',
+        'darwin.artifactbundle',
+      ),
+      p.join(
+        home,
+        'Library',
+        'org.swift.swiftpm',
+        'swift-sdks',
+        'darwin.xtoolsdk',
+      ),
     ];
   }
 
@@ -42,8 +52,9 @@ class DarwinSdk {
   /// A version marker file, or the canonical SDK sub-tree, marks a valid
   /// installed bundle.
   static bool _isValidBundle(String candidate) {
-    final versionFileExists =
-        File(p.join(candidate, 'darwin-sdk-version.txt')).existsSync();
+    final versionFileExists = File(
+      p.join(candidate, 'darwin-sdk-version.txt'),
+    ).existsSync();
     if (versionFileExists) {
       return true;
     }
@@ -62,13 +73,13 @@ class DarwinSdk {
   String get ld64lld => p.join(bundle, 'toolset', 'bin', 'ld64.lld');
 
   String _sdksDir(String platform) => p.join(
-        bundle,
-        'Developer',
-        'Platforms',
-        '$platform.platform',
-        'Developer',
-        'SDKs',
-      );
+    bundle,
+    'Developer',
+    'Platforms',
+    '$platform.platform',
+    'Developer',
+    'SDKs',
+  );
 
   /// First versioned iPhoneOSXX.X.sdk found, else first .sdk under the
   /// platform. Throws [XcrossError] if missing.
@@ -90,8 +101,9 @@ class DarwinSdk {
   static String? _firstSdk(String dir, String prefix) {
     final sdkDirExists = Directory(dir).existsSync();
     if (!sdkDirExists) return null;
-    final entries =
-        Directory(dir).listSync().map((e) => p.basename(e.path)).toList();
+    final entries = Directory(
+      dir,
+    ).listSync().map((e) => p.basename(e.path)).toList();
 
     final versioned = entries
         .where(
@@ -102,7 +114,8 @@ class DarwinSdk {
         )
         .firstOrNull;
 
-    final pick = versioned ??
+    final pick =
+        versioned ??
         entries
             .where((e) => e.startsWith(prefix) && e.endsWith('.sdk'))
             .firstOrNull;

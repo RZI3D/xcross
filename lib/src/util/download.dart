@@ -106,8 +106,8 @@ abstract final class Downloader {
 /// server did not send `Content-Length`.
 class _DownloadProgress {
   _DownloadProgress(this.label, this.total)
-      : _stopwatch = Stopwatch()..start(),
-        _isTty = stdout.hasTerminal {
+    : _stopwatch = Stopwatch()..start(),
+      _isTty = stdout.hasTerminal {
     // We draw with raw `\r`; a live spinner on the same line would fight us.
     Log.stopStep();
   }
@@ -135,9 +135,11 @@ class _DownloadProgress {
       final percent = (_received * 100 ~/ total).clamp(0, 100);
       if (percent >= _lastLoggedPercent + 10) {
         _lastLoggedPercent = percent - (percent % 10);
-        Log.logStatus('${Glyph.download} $label '
-            '${Log.ansi.subtle('$percent%  ${_fmtBytes(_received)}'
-                ' / ${_fmtBytes(total)}')}');
+        Log.logStatus(
+          '${Glyph.download} $label '
+          '${Log.ansi.subtle('$percent%  ${_fmtBytes(_received)}'
+          ' / ${_fmtBytes(total)}')}',
+        );
       }
     }
   }
@@ -161,7 +163,9 @@ class _DownloadProgress {
       buf.write('${Log.ansi.cyan}${'━' * filled}${Log.ansi.none}');
       buf.write(Log.ansi.subtle('━' * (_barWidth - filled)));
       buf.write(' ${(fraction * 100).round()}%'.padLeft(5));
-      buf.write(Log.ansi.subtle('  ${_fmtBytes(_received)} / ${_fmtBytes(total)}'));
+      buf.write(
+        Log.ansi.subtle('  ${_fmtBytes(_received)} / ${_fmtBytes(total)}'),
+      );
     } else {
       buf.write(_fmtBytes(_received));
     }

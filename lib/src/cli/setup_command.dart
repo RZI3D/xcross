@@ -49,7 +49,8 @@ class SetupCommand extends Command<void> {
     }
 
     await Sudo.cacheCredentials(
-      manualHint: 'Install manually:\n'
+      manualHint:
+          'Install manually:\n'
           '    sudo apt install ${_aptPackages.join(' ')}',
     );
 

@@ -24,8 +24,10 @@ class VscodeCommand extends Command<void> {
     // now so a changed PATH can't break the editor later.
     final exe = Platform.resolvedExecutable;
     if (p.basenameWithoutExtension(exe) != 'xcross') {
-      Log.logWarn('embedding $exe — run `xcross vscode` from the installed '
-          'binary, not `dart run`, or F5 will not work');
+      Log.logWarn(
+        'embedding $exe — run `xcross vscode` from the installed '
+        'binary, not `dart run`, or F5 will not work',
+      );
     }
     final shim = File(p.join(dir.path, 'xcross_dap.dart'));
     await shim.writeAsString(
@@ -41,17 +43,21 @@ class VscodeCommand extends Command<void> {
     await _writeIfAbsent(p.join(dir.path, 'settings.json'), _settingsJson);
 
     Log.logInfo(
-        'Next',
-        Log.ansi.subtle('open the project in VS Code and press F5, '
-            "then 'Hot Reload' / 'Restart' in the debug toolbar"));
+      'Next',
+      Log.ansi.subtle(
+        'open the project in VS Code and press F5, '
+        "then 'Hot Reload' / 'Restart' in the debug toolbar",
+      ),
+    );
   }
 
   static Future<void> _writeIfAbsent(String path, String content) async {
     final file = File(path);
     if (file.existsSync()) {
       Log.logWarn(
-          '${p.relative(path)} already exists — merge this in yourself:\n'
-          '$content');
+        '${p.relative(path)} already exists — merge this in yourself:\n'
+        '$content',
+      );
       return;
     }
     await file.writeAsString(content);

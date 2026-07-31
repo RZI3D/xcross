@@ -36,9 +36,9 @@ class _XcrossRunner extends CommandRunner<void> {
 abstract final class XcrossCli {
   static CommandRunner<void> buildRunner() {
     return _XcrossRunner(
-      'xcross',
-      'Build, run, and hot-reload Flutter iOS apps from Linux without Xcode.',
-    )
+        'xcross',
+        'Build, run, and hot-reload Flutter iOS apps from Linux without Xcode.',
+      )
       ..addCommand(FlutterCommand())
       ..addCommand(PrepareCommand())
       ..addCommand(SetupCommand())

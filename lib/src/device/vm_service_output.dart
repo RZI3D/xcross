@@ -81,8 +81,8 @@ abstract final class VmServiceOutput {
   /// `[log] null` line for each of them.
   static String? _valueAsString(Object? instanceRef) =>
       instanceRef is Map &&
-              instanceRef['kind'] != 'Null' &&
-              instanceRef['valueAsString'] is String
-          ? instanceRef['valueAsString'] as String
-          : null;
+          instanceRef['kind'] != 'Null' &&
+          instanceRef['valueAsString'] is String
+      ? instanceRef['valueAsString'] as String
+      : null;
 }

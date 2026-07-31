@@ -47,8 +47,10 @@ class SessionConsole {
 
       await _stoppedCompleter.future;
       await drainFuture.timeout(const Duration(seconds: 2), onTimeout: () {});
-      await keypressFuture.timeout(const Duration(seconds: 1),
-          onTimeout: () {});
+      await keypressFuture.timeout(
+        const Duration(seconds: 1),
+        onTimeout: () {},
+      );
     } finally {
       // An uncancelled signal subscription keeps the event loop alive forever;
       // bin/xcross.dart only sets exitCode, so a clean 'q' would never return.
@@ -109,7 +111,8 @@ class SessionConsole {
     // Never swallow failures: silent cooked mode looks like "keys do nothing".
     if (!_enableRawStdin()) {
       Log.logWarn(
-          "could not enable raw stdin — press Enter after 'r'/'R', or check TTY");
+        "could not enable raw stdin — press Enter after 'r'/'R', or check TTY",
+      );
     }
 
     final done = _done = Completer<void>();

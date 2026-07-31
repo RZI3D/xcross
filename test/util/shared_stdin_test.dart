@@ -8,26 +8,28 @@ void main() {
   // With a plain `stdin.listen`, that cancel closes the fd for good and
   // SessionConsole's later listen fires onDone at once — the session quit the
   // instant the app launched and r/R did nothing.
-  test('a second listener still receives events after the first cancels',
-      () async {
-    final source = StreamController<int>();
-    final shared = ProcessRunner.pausingBroadcast(source.stream);
+  test(
+    'a second listener still receives events after the first cancels',
+    () async {
+      final source = StreamController<int>();
+      final shared = ProcessRunner.pausingBroadcast(source.stream);
 
-    final first = shared.listen((_) {});
-    await first.cancel();
+      final first = shared.listen((_) {});
+      await first.cancel();
 
-    var done = false;
-    final seen = <int>[];
-    shared.listen(seen.add, onDone: () => done = true);
+      var done = false;
+      final seen = <int>[];
+      shared.listen(seen.add, onDone: () => done = true);
 
-    source.add(1);
-    source.add(2);
-    await Future<void>.delayed(Duration.zero);
+      source.add(1);
+      source.add(2);
+      await Future<void>.delayed(Duration.zero);
 
-    expect(seen, [1, 2]);
-    expect(done, isFalse, reason: 'source must not have been torn down');
-    await source.close();
-  });
+      expect(seen, [1, 2]);
+      expect(done, isFalse, reason: 'source must not have been torn down');
+      await source.close();
+    },
+  );
 
   test('events sent between listeners are not lost', () async {
     final source = StreamController<int>();

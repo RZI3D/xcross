@@ -16,8 +16,9 @@ void main() {
   // Inside the project: `package:xcross` only resolves for a script that can
   // walk up to this package's .dart_tool/package_config.json.
   setUp(() async {
-    dir = await Directory('${Directory.current.path}/.dart_tool')
-        .createTemp('xcross_fwd');
+    dir = await Directory(
+      '${Directory.current.path}/.dart_tool',
+    ).createTemp('xcross_fwd');
   });
   tearDown(() async {
     await dir.delete(recursive: true);
@@ -45,8 +46,10 @@ $body
   // No exit() here on purpose: main returning must be enough.
 }
 ''');
-    return Process.start(Platform.resolvedExecutable, ['run', script.path],
-        workingDirectory: Directory.current.path);
+    return Process.start(Platform.resolvedExecutable, [
+      'run',
+      script.path,
+    ], workingDirectory: Directory.current.path);
   }
 
   Future<int?> waitForExit(Process child) async {
@@ -88,7 +91,10 @@ $body
     child.stdin.writeln();
     await child.stdin.flush();
 
-    expect(await waitForExit(child), 0,
-        reason: 'close() did not force the still-connected socket shut');
+    expect(
+      await waitForExit(child),
+      0,
+      reason: 'close() did not force the still-connected socket shut',
+    );
   });
 }

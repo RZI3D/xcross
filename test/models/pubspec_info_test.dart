@@ -33,8 +33,10 @@ flutter:
     expect(info.assets, ['assets/data.json', 'assets/images/']);
     expect(info.fonts, hasLength(1));
     expect(info.fonts.single.family, 'Custom');
-    expect(info.fonts.single.fonts.map((f) => f.asset),
-        ['fonts/Custom-Regular.ttf', 'fonts/Custom-Bold.ttf']);
+    expect(info.fonts.single.fonts.map((f) => f.asset), [
+      'fonts/Custom-Regular.ttf',
+      'fonts/Custom-Bold.ttf',
+    ]);
     expect(info.fonts.single.fonts.last.weight, 700);
     expect(info.fonts.single.descriptor, {
       'family': 'Custom',
@@ -59,22 +61,24 @@ flutter:
   // the previous hand-rolled `AssetManifest.bin` bytes didn't decode cleanly
   // (StandardMessageCodec.decodeMessage throws on trailing bytes), so the
   // fix routes through the real codec instead of guessed byte arrays.
-  test('AssetManifest.bin shape encodes and decodes via StandardMessageCodec',
-      () {
-    const codec = StandardMessageCodec();
-    final manifest = {
-      'assets/data.json': [
-        {'asset': 'assets/data.json'},
-      ],
-    };
+  test(
+    'AssetManifest.bin shape encodes and decodes via StandardMessageCodec',
+    () {
+      const codec = StandardMessageCodec();
+      final manifest = {
+        'assets/data.json': [
+          {'asset': 'assets/data.json'},
+        ],
+      };
 
-    final bytes = codec.encodeMessage(manifest)!;
-    final decoded = codec.decodeMessage(bytes); // throws if corrupted
+      final bytes = codec.encodeMessage(manifest)!;
+      final decoded = codec.decodeMessage(bytes); // throws if corrupted
 
-    expect(decoded, {
-      'assets/data.json': [
-        {'asset': 'assets/data.json'},
-      ],
-    });
-  });
+      expect(decoded, {
+        'assets/data.json': [
+          {'asset': 'assets/data.json'},
+        ],
+      });
+    },
+  );
 }

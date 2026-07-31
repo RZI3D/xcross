@@ -27,16 +27,17 @@ class FlutterBuildOptions {
     String? buildName,
     String? buildNumber,
     String? flavor,
-  }) async =>
-      FlutterBuildOptions(
-        target: target,
-        dartDefines:
-            await DartDefines.mergeDartDefines(dartDefineFromFile, dartDefine),
-        pub: pub,
-        buildName: buildName,
-        buildNumber: buildNumber,
-        flavor: flavor,
-      );
+  }) async => FlutterBuildOptions(
+    target: target,
+    dartDefines: await DartDefines.mergeDartDefines(
+      dartDefineFromFile,
+      dartDefine,
+    ),
+    pub: pub,
+    buildName: buildName,
+    buildNumber: buildNumber,
+    flavor: flavor,
+  );
 
   /// `-t/--target` entrypoint (default `lib/main.dart`).
   final String target;

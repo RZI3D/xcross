@@ -60,10 +60,7 @@ class FlutterBuildCommand extends Command<void> with CommonFlutterOptions {
         'build-name',
         help: 'Version name (CFBundleShortVersionString).',
       )
-      ..addOption(
-        'build-number',
-        help: 'Version code (CFBundleVersion).',
-      )
+      ..addOption('build-number', help: 'Version code (CFBundleVersion).')
       ..addFlag(
         'ipa',
         abbr: 'i',
@@ -97,8 +94,9 @@ class FlutterBuildCommand extends Command<void> with CommonFlutterOptions {
 
     final result = await FlutterPackOperation.pack(options: options);
 
-    final finalPath =
-        _ipa ? await IpaPackager.package(result.appPath) : result.appPath;
+    final finalPath = _ipa
+        ? await IpaPackager.package(result.appPath)
+        : result.appPath;
     Log.logDone('Wrote $finalPath');
   }
 }

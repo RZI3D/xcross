@@ -31,14 +31,16 @@ void main() {
   /// Reads frames from the peer, auto-answering our `registerService` call so
   /// tests can get straight to the inbound request.
   Stream<Map<String, Object?>> peerFrames(WebSocket ws) => ws
-          .map((raw) => jsonDecode(raw as String) as Map<String, Object?>)
-          .where((frame) {
+      .map((raw) => jsonDecode(raw as String) as Map<String, Object?>)
+      .where((frame) {
         if (frame['method'] == 'registerService') {
-          ws.add(jsonEncode({
-            'jsonrpc': '2.0',
-            'id': frame['id'],
-            'result': {'type': 'Success'},
-          }));
+          ws.add(
+            jsonEncode({
+              'jsonrpc': '2.0',
+              'id': frame['id'],
+              'result': {'type': 'Success'},
+            }),
+          );
           return false;
         }
         return true;
@@ -58,19 +60,21 @@ void main() {
       return {
         'type': 'Success',
         'result': {
-          'kernelBytes': base64Encode([1, 2, 3])
+          'kernelBytes': base64Encode([1, 2, 3]),
         },
       };
     });
 
     // A string id on purpose: JSON-RPC ids need not be ints, and assuming so is
     // how the reply gets mis-routed.
-    ws.add(jsonEncode({
-      'jsonrpc': '2.0',
-      'id': 'vm-1',
-      'method': 'compileExpression',
-      'params': {'expression': 'Platform.isAndroid', 'isStatic': false},
-    }));
+    ws.add(
+      jsonEncode({
+        'jsonrpc': '2.0',
+        'id': 'vm-1',
+        'method': 'compileExpression',
+        'params': {'expression': 'Platform.isAndroid', 'isStatic': false},
+      }),
+    );
 
     final reply = await replyFrame.timeout(const Duration(seconds: 5));
     expect(reply['id'], 'vm-1');
@@ -80,75 +84,96 @@ void main() {
     expect(received?['expression'], 'Platform.isAndroid');
   });
 
-  test('reports a compile failure as an error response, never silence',
-      () async {
-    final ws = await socket;
-    final frames = peerFrames(ws).asBroadcastStream();
+  test(
+    'reports a compile failure as an error response, never silence',
+    () async {
+      final ws = await socket;
+      final frames = peerFrames(ws).asBroadcastStream();
 
-    final replyFrame = frames.first;
-    await client.registerService('compileExpression', 'xcross',
-        (params) async => throw StateError('no such library'));
+      final replyFrame = frames.first;
+      await client.registerService(
+        'compileExpression',
+        'xcross',
+        (params) async => throw StateError('no such library'),
+      );
 
-    ws.add(jsonEncode({
-      'jsonrpc': '2.0',
-      'id': 7,
-      'method': 'compileExpression',
-      'params': <String, Object?>{},
-    }));
+      ws.add(
+        jsonEncode({
+          'jsonrpc': '2.0',
+          'id': 7,
+          'method': 'compileExpression',
+          'params': <String, Object?>{},
+        }),
+      );
 
-    final reply = await replyFrame.timeout(const Duration(seconds: 5));
-    final error = reply['error']! as Map<String, Object?>;
-    // 113 = kExpressionCompilationError, which the VM forwards to the caller.
-    expect(error['code'], 113);
-    expect((error['data']! as Map)['details'], contains('no such library'));
-  });
+      final reply = await replyFrame.timeout(const Duration(seconds: 5));
+      final error = reply['error']! as Map<String, Object?>;
+      // 113 = kExpressionCompilationError, which the VM forwards to the caller.
+      expect(error['code'], 113);
+      expect((error['data']! as Map)['details'], contains('no such library'));
+    },
+  );
 
-  test('answers an unregistered method rather than leaving the VM waiting',
-      () async {
-    final ws = await socket;
-    final frames = peerFrames(ws).asBroadcastStream();
+  test(
+    'answers an unregistered method rather than leaving the VM waiting',
+    () async {
+      final ws = await socket;
+      final frames = peerFrames(ws).asBroadcastStream();
 
-    ws.add(jsonEncode({
-      'jsonrpc': '2.0',
-      'id': 9,
-      'method': 'somethingElse',
-      'params': <String, Object?>{},
-    }));
+      ws.add(
+        jsonEncode({
+          'jsonrpc': '2.0',
+          'id': 9,
+          'method': 'somethingElse',
+          'params': <String, Object?>{},
+        }),
+      );
 
-    final reply = await frames.first.timeout(const Duration(seconds: 5));
-    expect((reply['error']! as Map)['code'], -32601);
-  });
+      final reply = await frames.first.timeout(const Duration(seconds: 5));
+      expect((reply['error']! as Map)['code'], -32601);
+    },
+  );
 
-  test('still routes notifications and replies (classification regression)',
-      () async {
-    final ws = await socket;
-    final frames = peerFrames(ws).asBroadcastStream();
+  test(
+    'still routes notifications and replies (classification regression)',
+    () async {
+      final ws = await socket;
+      final frames = peerFrames(ws).asBroadcastStream();
 
-    // A notification must reach `events`, not be mistaken for a request.
-    final event = client.events.first;
-    ws.add(jsonEncode({
-      'jsonrpc': '2.0',
-      'method': 'streamNotify',
-      'params': {
-        'streamId': 'Stdout',
-        'event': {
-          'kind': 'WriteEvent',
-          'bytes': base64Encode([65])
-        },
-      },
-    }));
-    expect((await event.timeout(const Duration(seconds: 5)))['streamId'],
-        'Stdout');
+      // A notification must reach `events`, not be mistaken for a request.
+      final event = client.events.first;
+      ws.add(
+        jsonEncode({
+          'jsonrpc': '2.0',
+          'method': 'streamNotify',
+          'params': {
+            'streamId': 'Stdout',
+            'event': {
+              'kind': 'WriteEvent',
+              'bytes': base64Encode([65]),
+            },
+          },
+        }),
+      );
+      expect(
+        (await event.timeout(const Duration(seconds: 5)))['streamId'],
+        'Stdout',
+      );
 
-    // And an ordinary reply must still resolve our own call.
-    final pending = client.call('getVM');
-    final request = await frames.first.timeout(const Duration(seconds: 5));
-    ws.add(jsonEncode({
-      'jsonrpc': '2.0',
-      'id': request['id'],
-      'result': {'type': 'VM', 'name': 'probe'},
-    }));
-    expect(
-        (await pending.timeout(const Duration(seconds: 5)))['name'], 'probe');
-  });
+      // And an ordinary reply must still resolve our own call.
+      final pending = client.call('getVM');
+      final request = await frames.first.timeout(const Duration(seconds: 5));
+      ws.add(
+        jsonEncode({
+          'jsonrpc': '2.0',
+          'id': request['id'],
+          'result': {'type': 'VM', 'name': 'probe'},
+        }),
+      );
+      expect(
+        (await pending.timeout(const Duration(seconds: 5)))['name'],
+        'probe',
+      );
+    },
+  );
 }

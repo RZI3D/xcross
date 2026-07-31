@@ -17,13 +17,13 @@ abstract final class Sudo {
     final sudo = await resolve();
     if (sudo == null) return;
 
-    Log.logInfo('Confirming sudo access '
-        '${Log.ansi.subtle('— you may be asked for your password once')}');
-    final proc = await Process.start(
-      sudo,
-      const ['-v'],
-      mode: ProcessStartMode.inheritStdio,
+    Log.logInfo(
+      'Confirming sudo access '
+      '${Log.ansi.subtle('— you may be asked for your password once')}',
     );
+    final proc = await Process.start(sudo, const [
+      '-v',
+    ], mode: ProcessStartMode.inheritStdio);
     final code = await proc.exitCode;
     if (code != 0) {
       final hint = manualHint ?? 'Retry with an interactive sudo session.';

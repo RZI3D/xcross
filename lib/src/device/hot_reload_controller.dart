@@ -19,10 +19,11 @@ class HotReloadController {
     required this.config,
     required this.vm,
     required String tunnelAddress,
-  })  : _httpBase = 'http://${ProcessRunner.bracketHost(tunnelAddress)}:'
-            '${DeviceConstants.vmServicePort}/',
-        _frontend = FrontendServerClient(config),
-        _sources = SourceWatcher(config);
+  }) : _httpBase =
+           'http://${ProcessRunner.bracketHost(tunnelAddress)}:'
+           '${DeviceConstants.vmServicePort}/',
+       _frontend = FrontendServerClient(config),
+       _sources = SourceWatcher(config);
 
   /// Fallback devFS base URI used when `_createDevFs` does not return one.
   static const _devFsFallbackUri =
@@ -96,9 +97,9 @@ class HotReloadController {
   /// over VM versions (`typeDefaults` is recent), and an absent one is empty,
   /// not an error.
   static List<String> _stringList(Object? value) => switch (value) {
-        final List<Object?> list => list.whereType<String>().toList(),
-        _ => const [],
-      };
+    final List<Object?> list => list.whereType<String>().toList(),
+    _ => const [],
+  };
 
   Future<void> close() async {
     await _frontend.close();
@@ -133,26 +134,33 @@ class HotReloadController {
     }
 
     final dill = await _timed(
-        'recompile', () => _frontend.recompile(invalidated: changed));
+      'recompile',
+      () => _frontend.recompile(invalidated: changed),
+    );
     final targetUri = await _timed('devfs-upload', () => _uploadDill(dill));
 
     final isolateId = await _rootIsolateIdCached();
     if (isolateId == null) throw XcrossError('no Flutter isolate to reload');
 
     final ok = await _timed('reloadSources', () async {
-      final report = await vm.call('reloadSources', params: {
-        'isolateId': isolateId,
-        'force': false,
-        'rootLibUri': targetUri,
-      });
+      final report = await vm.call(
+        'reloadSources',
+        params: {
+          'isolateId': isolateId,
+          'force': false,
+          'rootLibUri': targetUri,
+        },
+      );
       return report['success'] == true;
     });
     if (ok) {
       await _frontend.accept();
       await _timed('reassemble', () async {
         try {
-          await vm
-              .call('ext.flutter.reassemble', params: {'isolateId': isolateId});
+          await vm.call(
+            'ext.flutter.reassemble',
+            params: {'isolateId': isolateId},
+          );
         } catch (_) {}
       });
     } else {
@@ -174,15 +182,20 @@ class HotReloadController {
     // runnable, which reads as a dead hang.
     await _frontend.reset();
     final dill = await _timed(
-        'restart-recompile', () => _frontend.recompile(invalidated: changed));
+      'restart-recompile',
+      () => _frontend.recompile(invalidated: changed),
+    );
     // Alternate the devFS file name so runInView always loads a fresh URI —
     // runInView will not reload an identical URI, so a stable filename makes
     // every second hot restart a silent no-op that still reports success.
     _restartCount++;
-    final fileName =
-        _restartCount.isEven ? 'main.dart.dill' : 'main.dart.swap.dill';
+    final fileName = _restartCount.isEven
+        ? 'main.dart.dill'
+        : 'main.dart.swap.dill';
     final targetUri = await _timed(
-        'restart-devfs-upload', () => _uploadDill(dill, fileName: fileName));
+      'restart-devfs-upload',
+      () => _uploadDill(dill, fileName: fileName),
+    );
     await _frontend.accept();
 
     await vm.streamListen('Isolate');
@@ -209,7 +222,8 @@ class HotReloadController {
       // of reporting a restart that never happened.
       if ((await _timed('await-IsolateRunnable', () => runnable)).isEmpty) {
         throw XcrossError(
-            'isolate never became runnable after runInView (${longTimeout.inMinutes}m)');
+          'isolate never became runnable after runInView (${longTimeout.inMinutes}m)',
+        );
       }
     }
   }
@@ -233,9 +247,9 @@ class HotReloadController {
   }
 
   Future<List<String>> _flutterViewIds() async => [
-        for (final v in await _flutterViews())
-          if (v case {'id': final String id}) id,
-      ];
+    for (final v in await _flutterViews())
+      if (v case {'id': final String id}) id,
+  ];
 
   Future<void> _createDevFs() async {
     Future<Map<String, dynamic>> tryCreate() =>
@@ -247,8 +261,10 @@ class HotReloadController {
     } catch (e) {
       if (e.toString().contains('already exists')) {
         try {
-          await vm.call('_deleteDevFS',
-              params: {'fsName': DeviceConstants.devFsName});
+          await vm.call(
+            '_deleteDevFS',
+            params: {'fsName': DeviceConstants.devFsName},
+          );
         } catch (_) {}
         data = await tryCreate();
       } else {
@@ -263,8 +279,10 @@ class HotReloadController {
   ///
   /// contentLength must stay exact and the body must not be re-encoded or
   /// chunked — the VM Service devFS handler reads exactly contentLength bytes.
-  Future<String> _uploadDill(String dillPath,
-      {String fileName = 'main.dart.dill'}) async {
+  Future<String> _uploadDill(
+    String dillPath, {
+    String fileName = 'main.dart.dill',
+  }) async {
     final baseUri = _devFsBaseUri ?? _devFsFallbackUri;
     final targetUri = '$baseUri$fileName';
     final raw = await File(dillPath).readAsBytes();

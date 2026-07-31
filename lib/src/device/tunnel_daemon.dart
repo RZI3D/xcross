@@ -34,7 +34,8 @@ class TunnelDaemon {
     // daemon with piped stdio (never inheritStdio — that steals `r`/`R`/`q`
     // from the hot-reload keypress loop for the whole session).
     await Sudo.cacheCredentials(
-      manualHint: 'Start tunneld manually:\n'
+      manualHint:
+          'Start tunneld manually:\n'
           '    sudo pymobiledevice3 remote tunneld',
     );
 
@@ -80,12 +81,14 @@ class TunnelDaemon {
     final logSink = logFile.openWrite(mode: FileMode.append);
     proc.stdout.listen(logSink.add, onError: (_) {});
     proc.stderr.listen(logSink.add, onError: (_) {});
-    unawaited(proc.exitCode.then((_) async {
-      try {
-        await logSink.flush();
-        await logSink.close();
-      } catch (_) {}
-    }));
+    unawaited(
+      proc.exitCode.then((_) async {
+        try {
+          await logSink.flush();
+          await logSink.close();
+        } catch (_) {}
+      }),
+    );
 
     _process = proc;
     _ownsDaemon = true;

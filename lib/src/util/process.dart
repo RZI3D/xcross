@@ -109,7 +109,8 @@ abstract final class ProcessRunner {
       final code = await process.exitCode;
       if (code != 0) {
         throw XcrossError(
-            'command failed ($code): ${commandLine(executable, arguments)}');
+          'command failed ($code): ${commandLine(executable, arguments)}',
+        );
       }
       return;
     }
@@ -165,16 +166,13 @@ abstract final class ProcessRunner {
 
     StreamSubscription<List<int>>? input;
     try {
-      input = sharedStdin.listen(
-        (bytes) {
-          try {
-            process.stdin.add(bytes);
-          } on Object catch (_) {
-            // Child already gone; nothing left to feed.
-          }
-        },
-        onError: (Object _) {},
-      );
+      input = sharedStdin.listen((bytes) {
+        try {
+          process.stdin.add(bytes);
+        } on Object catch (_) {
+          // Child already gone; nothing left to feed.
+        }
+      }, onError: (Object _) {});
     } on Object catch (e) {
       // Unavailable stdin is not fatal: the child simply gets no input,
       // exactly as before this streaming path existed.
@@ -249,8 +247,8 @@ abstract final class ProcessRunner {
   /// Strip IPv6 brackets so [Socket.connect] receives a raw host string.
   static String unbracketHost(String host) =>
       host.startsWith('[') && host.endsWith(']')
-          ? host.substring(1, host.length - 1)
-          : host;
+      ? host.substring(1, host.length - 1)
+      : host;
 
   /// Retry [attempt] every [interval] until it yields a non-null value or
   /// [timeout] elapses. Exceptions from [attempt] are swallowed and retried.

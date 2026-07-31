@@ -12,11 +12,11 @@ enum DeviceSearchMode {
   wifi;
 
   String? get flag => switch (this) {
-        DeviceSearchMode.usb => '--usb',
-        // Upstream xtool's SearchMode flag is `--network` (not `--wifi`).
-        DeviceSearchMode.wifi => '--network',
-        DeviceSearchMode.all => null,
-      };
+    DeviceSearchMode.usb => '--usb',
+    // Upstream xtool's SearchMode flag is `--network` (not `--wifi`).
+    DeviceSearchMode.wifi => '--network',
+    DeviceSearchMode.all => null,
+  };
 }
 
 /// Wrapper around the original (upstream) `xtool` binary. xcross delegates the
@@ -53,11 +53,13 @@ class XtoolCli {
     for (final line in output.split(_newlinePattern)) {
       final match = _deviceLine.firstMatch(line.trim());
       if (match == null) continue;
-      devices.add(Device(
-        name: match.group(1)!.trim(),
-        type: ConnectionType.parse(match.group(2)!),
-        udid: match.group(3)!,
-      ));
+      devices.add(
+        Device(
+          name: match.group(1)!.trim(),
+          type: ConnectionType.parse(match.group(2)!),
+          udid: match.group(3)!,
+        ),
+      );
     }
     return devices;
   }
@@ -128,8 +130,9 @@ class XtoolCli {
         if (n != null && n >= 1 && n <= list.length) {
           return list[n - 1];
         }
-        stdout
-            .writeln('Invalid choice "$raw". Enter a number 1-${list.length}.');
+        stdout.writeln(
+          'Invalid choice "$raw". Enter a number 1-${list.length}.',
+        );
       }
     } finally {
       if (priorEcho != null) _trySet(() => stdin.echoMode = priorEcho);

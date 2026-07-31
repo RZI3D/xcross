@@ -117,8 +117,10 @@ abstract final class InfoPlist {
   /// Overwrite an existing `<key>K</key><string>…</string>` pair, or insert a
   /// new one before `</dict>` if the key is absent.
   static String _setPlistKey(String xml, String key, String value) {
-    final pattern =
-        RegExp('<key>$key</key>\\s*<string>[^<]*</string>', dotAll: true);
+    final pattern = RegExp(
+      '<key>$key</key>\\s*<string>[^<]*</string>',
+      dotAll: true,
+    );
     final replacement = '<key>$key</key>\n\t<string>$value</string>';
     if (xml.contains('<key>$key</key>')) {
       return xml.replaceFirst(pattern, replacement);
@@ -153,32 +155,23 @@ abstract final class InfoPlist {
     String keepIfCompiled(Match m) =>
         hasCompiled(m.group(1)!) ? m.group(0)! : '';
 
-    var result = xml.replaceAllMapped(
-      _uiMainStoryboardPattern,
-      keepIfCompiled,
-    );
+    var result = xml.replaceAllMapped(_uiMainStoryboardPattern, keepIfCompiled);
 
-    result = result.replaceAllMapped(
-      _uiLaunchStoryboardPattern,
-      (m) {
-        if (hasCompiled(m.group(1)!)) {
-          return m.group(0)!;
-        }
-        // Replace with UILaunchScreen programmatic launch screen if absent.
-        // Reads the pre-launch-strip snapshot of `result` on purpose: hoisting
-        // this check or chaining the replaceAllMapped calls changes which
-        // snapshot is inspected and can emit a duplicate UILaunchScreen.
-        if (!result.contains('UILaunchScreen')) {
-          return '<key>UILaunchScreen</key>\n\t<dict/>';
-        }
-        return '';
-      },
-    );
+    result = result.replaceAllMapped(_uiLaunchStoryboardPattern, (m) {
+      if (hasCompiled(m.group(1)!)) {
+        return m.group(0)!;
+      }
+      // Replace with UILaunchScreen programmatic launch screen if absent.
+      // Reads the pre-launch-strip snapshot of `result` on purpose: hoisting
+      // this check or chaining the replaceAllMapped calls changes which
+      // snapshot is inspected and can emit a duplicate UILaunchScreen.
+      if (!result.contains('UILaunchScreen')) {
+        return '<key>UILaunchScreen</key>\n\t<dict/>';
+      }
+      return '';
+    });
 
-    result = result.replaceAllMapped(
-      _uiSceneStoryboardPattern,
-      keepIfCompiled,
-    );
+    result = result.replaceAllMapped(_uiSceneStoryboardPattern, keepIfCompiled);
 
     return result;
   }
@@ -188,15 +181,12 @@ abstract final class InfoPlist {
   /// prefix, so `Runner.SceneDelegate` from the stock template would fail
   /// `NSClassFromString`.
   static String normalizeObjCClassNames(String xml) {
-    return xml.replaceAllMapped(
-      _objcClassNamePattern,
-      (m) {
-        final name = m.group(2)!;
-        final dot = name.lastIndexOf('.');
-        final unqualified = dot >= 0 ? name.substring(dot + 1) : name;
-        return '${m.group(1)}$unqualified${m.group(3)}';
-      },
-    );
+    return xml.replaceAllMapped(_objcClassNamePattern, (m) {
+      final name = m.group(2)!;
+      final dot = name.lastIndexOf('.');
+      final unqualified = dot >= 0 ? name.substring(dot + 1) : name;
+      return '${m.group(1)}$unqualified${m.group(3)}';
+    });
   }
 
   static final _uiMainStoryboardPattern = RegExp(
@@ -218,7 +208,8 @@ abstract final class InfoPlist {
   );
 
   /// Minimal plist used when the project has no `ios/Runner/Info.plist`.
-  static const fallback = '<?xml version="1.0" encoding="UTF-8"?>\n'
+  static const fallback =
+      '<?xml version="1.0" encoding="UTF-8"?>\n'
       '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"'
       ' "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n'
       '<plist version="1.0">\n'

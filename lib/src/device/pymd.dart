@@ -15,16 +15,17 @@ class PymdInvocation {
 
 /// Coerce an `int` or parseable `String` port value into `int?`.
 int? asPort(Object? value) => switch (value) {
-      final int p => p,
-      final String s => int.tryParse(s),
-      _ => null,
-    };
+  final int p => p,
+  final String s => int.tryParse(s),
+  _ => null,
+};
 
 /// One-shot invocations of `pymobiledevice3` for DVT ProcessControl,
 /// RSD service discovery, and the installed-app list.
 abstract final class Pymd {
-  static final _processLaunchedPidPattern =
-      RegExp(r'Process launched with pid (\d+)');
+  static final _processLaunchedPidPattern = RegExp(
+    r'Process launched with pid (\d+)',
+  );
   static final _digitsPattern = RegExp(r'\d+');
 
   static PymdInvocation? _cached;
@@ -47,7 +48,8 @@ abstract final class Pymd {
     }
 
     // Fallback: python3 -m pymobiledevice3.
-    final py = await ProcessRunner.which('python3') ??
+    final py =
+        await ProcessRunner.which('python3') ??
         await ProcessRunner.which('python');
     if (py == null) throw XcrossError(_notFoundMessage);
 
@@ -75,7 +77,8 @@ abstract final class Pymd {
 
     final step = Log.beginStep('Installing pymobiledevice3 (one-time)');
 
-    final py = await ProcessRunner.which('python3') ??
+    final py =
+        await ProcessRunner.which('python3') ??
         await ProcessRunner.which('python');
     if (py == null) {
       step.fail();
@@ -202,8 +205,13 @@ abstract final class Pymd {
     required int rsdPort,
     required String service,
   }) async {
-    final result =
-        await run(['remote', 'rsd-info', '--rsd', rsdHost, '$rsdPort']);
+    final result = await run([
+      'remote',
+      'rsd-info',
+      '--rsd',
+      rsdHost,
+      '$rsdPort',
+    ]);
     final dynamic root = jsonDecode(result.stdout);
     if (root is! Map) throw XcrossError('rsd-info: expected JSON object');
     final services = root['Services'];
@@ -241,10 +249,14 @@ abstract final class Pymd {
     } on XcrossError {
       return null;
     }
-    final pid =
-        int.tryParse(_digitsPattern.firstMatch(result.stdout)?.group(0) ?? '');
+    final pid = int.tryParse(
+      _digitsPattern.firstMatch(result.stdout)?.group(0) ?? '',
+    );
     // pymobiledevice3 prints `0` when the bundle id isn't running.
-    return switch (pid) { null || 0 => null, _ => pid };
+    return switch (pid) {
+      null || 0 => null,
+      _ => pid,
+    };
   }
 
   /// Kill the process with device [pid] via DVT ProcessControl.
@@ -253,8 +265,15 @@ abstract final class Pymd {
     required int rsdPort,
     required int pid,
   }) async {
-    await run(
-        ['developer', 'dvt', 'kill', '--rsd', rsdHost, '$rsdPort', '$pid']);
+    await run([
+      'developer',
+      'dvt',
+      'kill',
+      '--rsd',
+      rsdHost,
+      '$rsdPort',
+      '$pid',
+    ]);
   }
 
   /// Run arbitrary pymobiledevice3 [args], returning captured output.
@@ -275,7 +294,8 @@ abstract final class Pymd {
     if (result.exitCode != 0) {
       final msg = result.stderr.isNotEmpty ? result.stderr : result.stdout;
       throw XcrossError(
-          'pymobiledevice3 failed (exit ${result.exitCode}):\n$msg');
+        'pymobiledevice3 failed (exit ${result.exitCode}):\n$msg',
+      );
     }
     return result;
   }

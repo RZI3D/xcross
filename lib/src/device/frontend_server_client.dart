@@ -70,8 +70,9 @@ class FrontendServerClient {
       config.outputDill,
     ];
 
-    await Directory(File(config.outputDill).parent.path)
-        .create(recursive: true);
+    await Directory(
+      File(config.outputDill).parent.path,
+    ).create(recursive: true);
 
     Log.logTrace('[frontend_server] running: ${config.dart} ${args.join(' ')}');
     final proc = await Process.start(config.dart, args);
@@ -111,9 +112,9 @@ class FrontendServerClient {
       _packageUris?.toPackageUri(uri)?.toString() ?? uri.toString();
 
   Future<String> compile() => _serialized(() async {
-        await _send('compile $_entrypointUri\n');
-        return _readResultBoundary();
-      });
+    await _send('compile $_entrypointUri\n');
+    return _readResultBoundary();
+  });
 
   Future<String> recompile({required List<String> invalidated}) =>
       _serialized(() => _recompile(invalidated));
@@ -121,8 +122,9 @@ class FrontendServerClient {
   Future<String> _recompile(List<String> invalidated) async {
     // Hex-encoded microsecond timestamp used as the boundary token that wraps
     // the invalidated-file list in the frontend_server recompile protocol.
-    final boundaryToken =
-        DateTime.now().microsecondsSinceEpoch.toRadixString(16);
+    final boundaryToken = DateTime.now().microsecondsSinceEpoch.toRadixString(
+      16,
+    );
     final sb = StringBuffer()
       ..write('recompile $_entrypointUri $boundaryToken\n');
     for (final uri in invalidated) {
@@ -165,33 +167,32 @@ class FrontendServerClient {
     required String? klass,
     required String? method,
     required bool isStatic,
-  }) =>
-      _serialized(() async {
-        // Line protocol: the header, the expression, then five lists each
-        // terminated by the boundary token, then the context. Order and count
-        // are fixed — a missing terminator desynchronises the compiler.
-        final key = DateTime.now().microsecondsSinceEpoch.toRadixString(16);
-        final sb = StringBuffer()
-          ..writeln('compile-expression $key')
-          ..writeln(expression);
-        for (final list in [
-          definitions,
-          definitionTypes,
-          typeDefinitions,
-          typeBounds,
-          typeDefaults,
-        ]) {
-          list.forEach(sb.writeln);
-          sb.writeln(key);
-        }
-        sb
-          ..writeln(libraryUri)
-          ..writeln(klass ?? '')
-          ..writeln(method ?? '')
-          ..writeln(isStatic);
-        await _send(sb.toString());
-        return File(await _readResultBoundary()).readAsBytes();
-      });
+  }) => _serialized(() async {
+    // Line protocol: the header, the expression, then five lists each
+    // terminated by the boundary token, then the context. Order and count
+    // are fixed — a missing terminator desynchronises the compiler.
+    final key = DateTime.now().microsecondsSinceEpoch.toRadixString(16);
+    final sb = StringBuffer()
+      ..writeln('compile-expression $key')
+      ..writeln(expression);
+    for (final list in [
+      definitions,
+      definitionTypes,
+      typeDefinitions,
+      typeBounds,
+      typeDefaults,
+    ]) {
+      list.forEach(sb.writeln);
+      sb.writeln(key);
+    }
+    sb
+      ..writeln(libraryUri)
+      ..writeln(klass ?? '')
+      ..writeln(method ?? '')
+      ..writeln(isStatic);
+    await _send(sb.toString());
+    return File(await _readResultBoundary()).readAsBytes();
+  });
 
   Future<void> close() async {
     // ORDER MATTERS: `quit` must be flushed before kill() or the write is

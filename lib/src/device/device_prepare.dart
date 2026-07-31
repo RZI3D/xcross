@@ -35,7 +35,8 @@ abstract final class DevicePrepare {
     }
 
     await Sudo.cacheCredentials(
-      manualHint: 'Start prepare steps manually:\n'
+      manualHint:
+          'Start prepare steps manually:\n'
           '    sudo pymobiledevice3 mounter auto-mount\n'
           '    sudo pymobiledevice3 lockdown start-tunnel',
     );
@@ -44,8 +45,10 @@ abstract final class DevicePrepare {
     await TunnelDaemon().ensureRunning();
     await _ensureLockdownTunnel();
 
-    Log.logDone('Device ready '
-        '${Log.ansi.subtle('— DDI mounted, tunneld and lockdown tunnel up')}');
+    Log.logDone(
+      'Device ready '
+      '${Log.ansi.subtle('— DDI mounted, tunneld and lockdown tunnel up')}',
+    );
     Log.logInfo('Next', Log.ansi.subtle('xcross flutter run -u <UDID>'));
   }
 
@@ -138,20 +141,22 @@ abstract final class DevicePrepare {
           .transform(const LineSplitter())
           .listen(onLine, onError: (_) {});
     }
-    unawaited(proc.exitCode.then((code) async {
-      try {
-        await logSink.flush();
-        await logSink.close();
-      } catch (_) {}
-      if (!ready.isCompleted) {
-        ready.completeError(
-          XcrossError(
-            'lockdown start-tunnel exited early (code $code). '
-            'See $logPath',
-          ),
-        );
-      }
-    }));
+    unawaited(
+      proc.exitCode.then((code) async {
+        try {
+          await logSink.flush();
+          await logSink.close();
+        } catch (_) {}
+        if (!ready.isCompleted) {
+          ready.completeError(
+            XcrossError(
+              'lockdown start-tunnel exited early (code $code). '
+              'See $logPath',
+            ),
+          );
+        }
+      }),
+    );
 
     try {
       await ready.future.timeout(const Duration(seconds: 60));

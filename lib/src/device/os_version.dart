@@ -42,17 +42,21 @@ abstract final class OsVersion {
       if (version is! String) return null;
       return _majorFromVersionString(version);
     } catch (e) {
-      Log.logWarn('Could not determine device OS version via pymobiledevice3: $e');
+      Log.logWarn(
+        'Could not determine device OS version via pymobiledevice3: $e',
+      );
       return null;
     }
   }
 
   static Future<int?> _majorFromIdeviceinfo(String udid) async {
     try {
-      final result = await ProcessRunner.run(
-        'ideviceinfo',
-        ['-u', udid, '-k', 'ProductVersion'],
-      );
+      final result = await ProcessRunner.run('ideviceinfo', [
+        '-u',
+        udid,
+        '-k',
+        'ProductVersion',
+      ]);
       if (result.exitCode != 0) {
         final msg = result.stderr.trim().isNotEmpty
             ? result.stderr.trim()

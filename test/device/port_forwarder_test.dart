@@ -30,7 +30,9 @@ void main() {
       addTearDown(forwarder.close);
 
       final client = await Socket.connect(
-          InternetAddress.loopbackIPv4, forwarder.localPort);
+        InternetAddress.loopbackIPv4,
+        forwarder.localPort,
+      );
       // Newline-terminated so the reader below sees a complete line without
       // waiting for EOF.
       client.write('getVersion\n');
@@ -73,33 +75,42 @@ void main() {
       // A still-listening ServerSocket keeps the Dart event loop alive, which
       // would hang `xcross flutter run` after the session ends.
       await expectLater(
-        Socket.connect(InternetAddress.loopbackIPv4, port,
-            timeout: const Duration(seconds: 2)),
+        Socket.connect(
+          InternetAddress.loopbackIPv4,
+          port,
+          timeout: const Duration(seconds: 2),
+        ),
         throwsA(isA<SocketException>()),
       );
     });
 
-    test('a refused device connection drops the client, not the listener',
-        () async {
-      // Simulate the VM Service being gone: point at a closed port.
-      final dead = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
-      final deadPort = dead.port;
-      await dead.close();
+    test(
+      'a refused device connection drops the client, not the listener',
+      () async {
+        // Simulate the VM Service being gone: point at a closed port.
+        final dead = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+        final deadPort = dead.port;
+        await dead.close();
 
-      final forwarder = await PortForwarder.start(
-        deviceHost: InternetAddress.loopbackIPv4.address,
-        devicePort: deadPort,
-      );
-      addTearDown(forwarder.close);
+        final forwarder = await PortForwarder.start(
+          deviceHost: InternetAddress.loopbackIPv4.address,
+          devicePort: deadPort,
+        );
+        addTearDown(forwarder.close);
 
-      final client = await Socket.connect(
-          InternetAddress.loopbackIPv4, forwarder.localPort);
-      // Our side closes the client; the forwarder itself must survive so a
-      // later retry (DevTools reconnecting) still works.
-      expect(await client.isEmpty, isTrue);
-      final second = await Socket.connect(
-          InternetAddress.loopbackIPv4, forwarder.localPort);
-      second.destroy();
-    });
+        final client = await Socket.connect(
+          InternetAddress.loopbackIPv4,
+          forwarder.localPort,
+        );
+        // Our side closes the client; the forwarder itself must survive so a
+        // later retry (DevTools reconnecting) still works.
+        expect(await client.isEmpty, isTrue);
+        final second = await Socket.connect(
+          InternetAddress.loopbackIPv4,
+          forwarder.localPort,
+        );
+        second.destroy();
+      },
+    );
   });
 }

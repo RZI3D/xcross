@@ -44,13 +44,13 @@ abstract final class CoreDeviceLauncher {
 
     final resolvedBundleId = await _resolveBundleId(bundleId);
     final debugproxyPort = await _resolveDebugproxyPort(tunnel);
-    final appArgs = _buildAppArgs(
-      arguments: arguments,
-      hotReload: hotReload,
-    );
+    final appArgs = _buildAppArgs(arguments: arguments, hotReload: hotReload);
 
     final pid = await _launchSuspended(
-        tunnel: tunnel, bundleId: resolvedBundleId, appArgs: appArgs);
+      tunnel: tunnel,
+      bundleId: resolvedBundleId,
+      appArgs: appArgs,
+    );
 
     // ORDER MATTERS: connect -> start -> attach -> resume. The GDB client has a
     // single-slot exchange completer, so an RPC issued after resume() can be
@@ -106,8 +106,10 @@ abstract final class CoreDeviceLauncher {
         deviceHost: tunnelAddress,
         devicePort: DeviceConstants.vmServicePort,
       );
-      Log.logInfo(DeviceConstants.vmServiceMarker,
-          'ws://127.0.0.1:${forwarder.localPort}/ws');
+      Log.logInfo(
+        DeviceConstants.vmServiceMarker,
+        'ws://127.0.0.1:${forwarder.localPort}/ws',
+      );
       return forwarder;
     } on Object catch (e) {
       Log.logWarn('could not publish the VM Service on loopback: $e');
@@ -141,9 +143,13 @@ abstract final class CoreDeviceLauncher {
       );
       if (pid == null) return;
       Log.logTrace(
-          'app already running (pid $pid); terminating before install…');
+        'app already running (pid $pid); terminating before install…',
+      );
       await Pymd.killPid(
-          rsdHost: tunnel.address, rsdPort: tunnel.port, pid: pid);
+        rsdHost: tunnel.address,
+        rsdPort: tunnel.port,
+        pid: pid,
+      );
     } on Object catch (e) {
       Log.logWarn('could not check/terminate running app: $e');
     }
@@ -190,23 +196,22 @@ abstract final class CoreDeviceLauncher {
   static List<String> _buildAppArgs({
     required List<String> arguments,
     required HotReloadConfig? hotReload,
-  }) =>
-      [
-        // VM Service must bind IPv6-any (::) — the RSD tunnel is IPv6.
-        if (hotReload != null) ...[
-          '--vm-service-host=::',
-          '--vm-service-port=${DeviceConstants.vmServicePort}',
-          '--disable-service-auth-codes',
-        ],
-        // DAP only: hold the root isolate at startup so the debug adapter can
-        // register breakpoints before main() runs, then resume it — the flag
-        // the reference Flutter adapter passes for the same reason. This is a
-        // VM-level pause, separate from the GDB process resume above; the
-        // interactive CLI has nothing that would resume it, so it stays off.
-        if (hotReload != null && Platform.environment['XCROSS_DAP'] == '1')
-          '--start-paused',
-        '--enable-checked-mode', '--verify-entry-points', ...arguments,
-      ];
+  }) => [
+    // VM Service must bind IPv6-any (::) — the RSD tunnel is IPv6.
+    if (hotReload != null) ...[
+      '--vm-service-host=::',
+      '--vm-service-port=${DeviceConstants.vmServicePort}',
+      '--disable-service-auth-codes',
+    ],
+    // DAP only: hold the root isolate at startup so the debug adapter can
+    // register breakpoints before main() runs, then resume it — the flag
+    // the reference Flutter adapter passes for the same reason. This is a
+    // VM-level pause, separate from the GDB process resume above; the
+    // interactive CLI has nothing that would resume it, so it stays off.
+    if (hotReload != null && Platform.environment['XCROSS_DAP'] == '1')
+      '--start-paused',
+    '--enable-checked-mode', '--verify-entry-points', ...arguments,
+  ];
 
   /// Launch the app suspended and return its device PID.
   static Future<int> _launchSuspended({
@@ -237,13 +242,15 @@ abstract final class CoreDeviceLauncher {
   }) async {
     if (hotReload == null) {
       Log.logInfo(
-          'Streaming app output ${Log.ansi.subtle('— Ctrl-C to stop')}');
+        'Streaming app output ${Log.ansi.subtle('— Ctrl-C to stop')}',
+      );
       return null;
     }
     try {
-      final wsUri =
-          Uri.parse('ws://${ProcessRunner.bracketHost(tunnelAddress)}:'
-              '${DeviceConstants.vmServicePort}/ws');
+      final wsUri = Uri.parse(
+        'ws://${ProcessRunner.bracketHost(tunnelAddress)}:'
+        '${DeviceConstants.vmServicePort}/ws',
+      );
       final vm = await _waitForVmService(wsUri);
       // `print` and `log()` reach us only over these streams — the debugger
       // attached to an already-launched process, so it owns no stdio for the
@@ -255,8 +262,10 @@ abstract final class CoreDeviceLauncher {
         tunnelAddress: tunnelAddress,
       );
       await controller.initialSync();
-      Log.logInfo('Hot reload ready '
-          '${Log.ansi.subtle('— r reload  ·  R restart  ·  q quit')}');
+      Log.logInfo(
+        'Hot reload ready '
+        '${Log.ansi.subtle('— r reload  ·  R restart  ·  q quit')}',
+      );
       return controller;
     } catch (e) {
       Log.logWarn('hot reload unavailable: $e');
@@ -287,8 +296,9 @@ abstract final class CoreDeviceLauncher {
     throw XcrossError('VM Service did not become available');
   }
 
-  static Future<String> _resolveInstalledBundleId(
-      {required String requested}) async {
+  static Future<String> _resolveInstalledBundleId({
+    required String requested,
+  }) async {
     final ids = await Pymd.listInstalledApps();
     if (ids.contains(requested)) return requested;
     var base = requested;
@@ -299,10 +309,9 @@ abstract final class CoreDeviceLauncher {
     final suffix = '.$base';
     // Shortest suffix match wins: on a device carrying several team-prefixed
     // builds of the same app, the longest match resolves to the wrong one.
-    final matches = ids
-        .where((id) => id == base || id.endsWith(suffix))
-        .toList()
-      ..sort((a, b) => a.length.compareTo(b.length));
+    final matches =
+        ids.where((id) => id == base || id.endsWith(suffix)).toList()
+          ..sort((a, b) => a.length.compareTo(b.length));
     return matches.isNotEmpty ? matches.first : requested;
   }
 }

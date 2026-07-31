@@ -22,7 +22,7 @@ class DartVmServiceClient {
 
   /// Handlers for services we registered; the VM calls *into* us for these.
   final Map<String, Future<Map<String, Object?>> Function(Map<String, Object?>)>
-      _services = {};
+  _services = {};
 
   /// Register a service the VM can call back into, e.g. `compileExpression`.
   ///
@@ -60,8 +60,10 @@ class DartVmServiceClient {
   }
 
   /// Connect to the VM Service WebSocket at [url].
-  Future<void> connect(Uri url,
-      {Duration timeout = const Duration(seconds: 30)}) async {
+  Future<void> connect(
+    Uri url, {
+    Duration timeout = const Duration(seconds: 30),
+  }) async {
     try {
       _channel = WebSocketChannel.connect(url);
       await _channel!.ready.timeout(timeout);
@@ -130,11 +132,10 @@ class DartVmServiceClient {
       return;
     }
     if (id is! int) {
-      if (json
-          case {
-            'method': 'streamNotify',
-            'params': final Map<String, dynamic> params,
-          }) {
+      if (json case {
+        'method': 'streamNotify',
+        'params': final Map<String, dynamic> params,
+      }) {
         if (params['event'] case final Map<String, dynamic> event) {
           // On the wire `streamId` is a SIBLING of `event`, not a field of it.
           // Fold it in: `Stdout` and `Stderr` both arrive as `WriteEvent`, so
@@ -170,7 +171,10 @@ class DartVmServiceClient {
   /// the VM waiting forever, and an `evaluate` that never returns reads as a
   /// hang rather than an error.
   Future<void> _handleServerRequest(
-      Object? id, String method, Object? rawParams) async {
+    Object? id,
+    String method,
+    Object? rawParams,
+  ) async {
     Map<String, Object?> body;
     final handler = _services[method];
     if (handler == null) {

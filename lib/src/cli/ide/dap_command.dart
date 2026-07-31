@@ -55,8 +55,12 @@ class DapCommand extends Command<void> {
 ///    that logic (breakpoint sync, pause/resume, stack frames, evaluate) is
 ///    already implemented by [DartDebugAdapter]; this class only needs to
 ///    hand it a URI and translate the toolbar buttons.
-class XcrossDap extends DartDebugAdapter<DartLaunchRequestArguments,
-    DartAttachRequestArguments> {
+class XcrossDap
+    extends
+        DartDebugAdapter<
+          DartLaunchRequestArguments,
+          DartAttachRequestArguments
+        > {
   XcrossDap(ByteStreamServerChannel channel) : super(channel) {
     // Fallback for a pipe that just closes (editor force-quit, crash) without
     // an explicit disconnect/terminate request. [DartDebugAdapter.shutdown]
@@ -124,22 +128,26 @@ class XcrossDap extends DartDebugAdapter<DartLaunchRequestArguments,
     // block forever on a tty nobody can see. Warn, but don't fail: the iOS < 17
     // debugserver path needs no tunneld at all. A half-dead tunneld can accept
     // the socket and never answer, hence the timeout.
-    final tunnelUp = await TunnelDaemon.isReachable()
-        .timeout(const Duration(seconds: 5), onTimeout: () => false);
+    final tunnelUp = await TunnelDaemon.isReachable().timeout(
+      const Duration(seconds: 5),
+      onTimeout: () => false,
+    );
     if (!tunnelUp) {
       sendOutput(
-          'stderr',
-          'xcross: the iOS 17+ RSD tunnel daemon is not reachable.\n'
-              'If this is an iOS 17+ device, run `xcross prepare` once in a '
-              'terminal (it needs sudo).\n');
+        'stderr',
+        'xcross: the iOS 17+ RSD tunnel daemon is not reachable.\n'
+            'If this is an iOS 17+ device, run `xcross prepare` once in a '
+            'terminal (it needs sudo).\n',
+      );
     }
 
     // NEVER forward Dart-Code's `toolArgs`: it injects `-d <deviceId>` and
     // --host-vmservice-port, which makes XtoolCli.resolveDevice throw. Only the
     // user's own `args` from launch.json is passed through.
     final program = launchArgs.program;
-    final target =
-        p.isAbsolute(program) ? p.relative(program, from: cwd) : program;
+    final target = p.isAbsolute(program)
+        ? p.relative(program, from: cwd)
+        : program;
     final extraArgs = launchArgs.args ?? const <String>[];
 
     final child = await Process.start(
@@ -165,10 +173,12 @@ class XcrossDap extends DartDebugAdapter<DartLaunchRequestArguments,
         .listen((text) => sendOutput('stderr', text), onError: _childError);
     // Registered before the response so a child that dies instantly cannot
     // leave a zombie session in the editor.
-    unawaited(child.exitCode.then((code) {
-      handleSessionExited(code);
-      handleSessionTerminate();
-    }));
+    unawaited(
+      child.exitCode.then((code) {
+        handleSessionExited(code);
+        handleSessionTerminate();
+      }),
+    );
 
     sendResponse();
     // flutter.appStart populates Dart-Code's session state (flutterMode,
@@ -197,7 +207,8 @@ class XcrossDap extends DartDebugAdapter<DartLaunchRequestArguments,
   /// already broken — `sourceRequest` still serves those from the VM.
   Future<void> _prepareUriMappings(String cwd) async {
     _packageUris ??= await PackageUris.load(
-        p.join(cwd, '.dart_tool', 'package_config.json'));
+      p.join(cwd, '.dart_tool', 'package_config.json'),
+    );
     orgDartlangSdkMappings.clear();
   }
 
@@ -215,8 +226,9 @@ class XcrossDap extends DartDebugAdapter<DartLaunchRequestArguments,
       if (start < 0) continue;
       _vmServiceReported = true;
       sendEvent(RawEventBody(const {}), eventType: 'flutter.appStarted');
-      final uri =
-          line.substring(start + DeviceConstants.vmServiceMarker.length).trim();
+      final uri = line
+          .substring(start + DeviceConstants.vmServiceMarker.length)
+          .trim();
       if (uri.isNotEmpty) {
         // Connects our OWN VM Service client (independent of the child's,
         // which it uses for hot reload) and turns on breakpoints/stepping/
@@ -283,13 +295,19 @@ class XcrossDap extends DartDebugAdapter<DartLaunchRequestArguments,
     final child = _child;
     if (child == null) return;
     _child = null;
-    await child.exitCode.timeout(const Duration(seconds: 5), onTimeout: () {
-      child.kill();
-      return child.exitCode.timeout(const Duration(seconds: 2), onTimeout: () {
-        child.kill(ProcessSignal.sigkill);
-        return -1;
-      });
-    });
+    await child.exitCode.timeout(
+      const Duration(seconds: 5),
+      onTimeout: () {
+        child.kill();
+        return child.exitCode.timeout(
+          const Duration(seconds: 2),
+          onTimeout: () {
+            child.kill(ProcessSignal.sigkill);
+            return -1;
+          },
+        );
+      },
+    );
   }
 
   void _writeKey(String key) {

@@ -157,8 +157,9 @@ class GdbRemoteClient {
   /// Frame as `$<payload>#<cc>`. The checksum must stay lowercase and exactly
   /// [_checksumWidth] digits wide or the peer rejects the packet.
   Future<void> _sendFramed(String payload) async {
-    final checksum =
-        _checksum(payload).toRadixString(16).padLeft(_checksumWidth, '0');
+    final checksum = _checksum(
+      payload,
+    ).toRadixString(16).padLeft(_checksumWidth, '0');
     await _sendRaw('\$$payload#$checksum');
   }
 

@@ -78,11 +78,17 @@ void main() {
     });
 
     test('repaint rewinds by the previous row count', () {
-      final first =
-          Step.renderBlock(head: 'x', tail: ['a', 'b'], previousRows: 0);
+      final first = Step.renderBlock(
+        head: 'x',
+        tail: ['a', 'b'],
+        previousRows: 0,
+      );
       expect('\n'.allMatches(first), hasLength(3));
-      final second =
-          Step.renderBlock(head: 'x', tail: ['a', 'b'], previousRows: 3);
+      final second = Step.renderBlock(
+        head: 'x',
+        tail: ['a', 'b'],
+        previousRows: 3,
+      );
       expect(second, startsWith('\x1B[3A'));
       expect('\n'.allMatches(second), hasLength(3));
     });
