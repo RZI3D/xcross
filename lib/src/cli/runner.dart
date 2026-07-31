@@ -62,6 +62,18 @@ abstract final class XcrossCli {
 
   /// Entry point used by `bin/xcross.dart`.
   static Future<int> run(List<String> args) async {
+    // xcross drives Linux-only tooling (xtool, usbmuxd, the Flutter Linux SDK),
+    // none of which exists on native Windows. Fail early with a pointer to WSL
+    // instead of dying later on a missing binary.
+    if (Platform.isWindows) {
+      stderr.writeln(
+        'error: xcross does not run on native Windows.\n'
+        'Use WSL: install a Linux distro (`wsl --install`), then run xcross '
+        'from inside it.',
+      );
+      return 1;
+    }
+
     final runner = buildRunner();
 
     // Intercept the shell-driven `xcross completion -- ...` hook and print
