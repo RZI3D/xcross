@@ -13,11 +13,16 @@ abstract final class VmServiceOutput {
   /// carries it. The reference Flutter debug adapter does the same on attach
   /// (see `_subscribeToOutputStreams` in the DAP's `attachRequest`).
   static Future<void> forwardVmServiceOutput(DartVmServiceClient vm) async {
+    // Under `xcross dap` the debug adapter subscribes to Logging itself
+    // (unconditionally, unlike Stdout/Stderr) and renders records with full
+    // untruncated strings — forwarding here too would print every line twice.
+    final ownsLogging = Platform.environment['XCROSS_DAP'] != '1';
+
     // Subscribe before listening: the VM only publishes a stream that has a
     // subscriber, so anything printed before this point is genuinely lost.
     await vm.streamListen('Stdout');
     await vm.streamListen('Stderr');
-    await vm.streamListen('Logging');
+    if (ownsLogging) await vm.streamListen('Logging');
 
     vm.events.listen((event) {
       switch (event['streamId']) {
@@ -26,6 +31,7 @@ abstract final class VmServiceOutput {
         case 'Stderr':
           if (decodeStreamWrite(event) case final text?) stderr.write(text);
         case 'Logging':
+          if (!ownsLogging) break;
           if (formatLogRecord(event) case final text?) stdout.write(text);
       }
     });
