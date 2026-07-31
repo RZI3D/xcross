@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io' show Platform;
 
 import 'package:xcross/src/constants.dart';
 import 'package:xcross/src/device/dart_vm_service_client.dart';
@@ -139,7 +140,8 @@ abstract final class CoreDeviceLauncher {
         bundleId: resolved,
       );
       if (pid == null) return;
-      Log.logTrace('app already running (pid $pid); terminating before install…');
+      Log.logTrace(
+          'app already running (pid $pid); terminating before install…');
       await Pymd.killPid(
           rsdHost: tunnel.address, rsdPort: tunnel.port, pid: pid);
     } on Object catch (e) {
@@ -196,6 +198,13 @@ abstract final class CoreDeviceLauncher {
           '--vm-service-port=${DeviceConstants.vmServicePort}',
           '--disable-service-auth-codes',
         ],
+        // DAP only: hold the root isolate at startup so the debug adapter can
+        // register breakpoints before main() runs, then resume it — the flag
+        // the reference Flutter adapter passes for the same reason. This is a
+        // VM-level pause, separate from the GDB process resume above; the
+        // interactive CLI has nothing that would resume it, so it stays off.
+        if (hotReload != null && Platform.environment['XCROSS_DAP'] == '1')
+          '--start-paused',
         '--enable-checked-mode', '--verify-entry-points', ...arguments,
       ];
 
@@ -227,13 +236,14 @@ abstract final class CoreDeviceLauncher {
     required String tunnelAddress,
   }) async {
     if (hotReload == null) {
-      Log.logInfo('Streaming app output ${Log.ansi.subtle('— Ctrl-C to stop')}');
+      Log.logInfo(
+          'Streaming app output ${Log.ansi.subtle('— Ctrl-C to stop')}');
       return null;
     }
     try {
-      final wsUri = Uri.parse(
-          'ws://${ProcessRunner.bracketHost(tunnelAddress)}:'
-          '${DeviceConstants.vmServicePort}/ws');
+      final wsUri =
+          Uri.parse('ws://${ProcessRunner.bracketHost(tunnelAddress)}:'
+              '${DeviceConstants.vmServicePort}/ws');
       final vm = await _waitForVmService(wsUri);
       // `print` and `log()` reach us only over these streams — the debugger
       // attached to an already-launched process, so it owns no stdio for the
