@@ -42,7 +42,9 @@ xcross reimplements the Flutter iOS build pipeline and the iOS 17+ CoreDevice la
 | `pymobiledevice3`                 | `pip3 install -U pymobiledevice3`                                                                             |
 | `usbmuxd` (USB device access)     | `sudo apt install usbmuxd`                                                                                    |
 | `usbutils` (`lsusb`, for checking the phone shows up at all) | `sudo apt install usbutils`                                                        |
-| `libimobiledevice6, libimobiledevice-utils` (device diagnostics, e.g. `ideviceinfo`) | `sudo apt install libimobiledevice6 libimobiledevice-utils`                                    |
+| `libimobiledevice-utils` (device diagnostics, e.g. `ideviceinfo`) | `sudo apt install libimobiledevice-utils`                                    |
+
+You can install most of these packages via `xcross setup`
 
 [^1]: The installer lists any missing system packages it needs - install all of them (via `apt`/your distro's package manager) after `swift` installation, or `swift` won't build correctly.
 
@@ -65,6 +67,7 @@ xcross only runs on Linux, so on Windows you need [WSL](https://learn.microsoft.
 ## Quick start
 
 ```sh
+xcross setup                     # will install most of the required apt packages
 xcross prepare                   # once per reconnect: mount DDI, start the RSD tunnel
 cd my_flutter_app
 xcross flutter run [-u <UDID>]   # build, install, launch, hot reload
