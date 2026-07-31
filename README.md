@@ -134,7 +134,7 @@ Writes `.vscode/launch.json`, `settings.json`, and a small DAP shim. Press F5 - 
 - Multiple iPhones → set `"args": ["--udid", "<UDID>"]` in `launch.json`.
 - Only the DAP shim gets overwritten each run - existing `launch.json`/`settings.json` are left alone (a merge snippet is printed instead).
 - Run the *installed* `xcross`, not `dart run bin/xcross.dart vscode` - the shim bakes in that binary's path.
-- No breakpoints or stepping - reload/restart/stop only.
+- Breakpoints, stepping, call stack, variables and expression eval all work, backed by a direct Dart VM Service connection (via `package:dds`'s debug adapter).
 
 ## FAQ
 
