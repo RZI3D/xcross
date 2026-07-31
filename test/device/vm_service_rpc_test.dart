@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:test/test.dart';
 import 'package:xcross/src/device/dart_vm_service_client.dart';
+import 'package:xcross/src/util/errors.dart';
 
 /// The VM Service socket carries three message shapes, and the client has to
 /// tell them apart: a notification (method, no id), a request the VM makes OF
@@ -174,6 +175,58 @@ void main() {
         (await pending.timeout(const Duration(seconds: 5)))['name'],
         'probe',
       );
+    },
+  );
+
+  test('a call with no reply times out with an XcrossError', () async {
+    // Peer never answers 'someMethodNobodyAnswers' on purpose.
+    await expectLater(
+      client.call(
+        'someMethodNobodyAnswers',
+        timeout: const Duration(milliseconds: 150),
+      ),
+      throwsA(
+        isA<XcrossError>().having(
+          (e) => e.message,
+          'message',
+          contains('timed out'),
+        ),
+      ),
+    );
+  });
+
+  test(
+    'waitForEvent resolves to an empty map on timeout rather than throwing',
+    () async {
+      final result = await client.waitForEvent(
+        'NoSuchKindEver',
+        timeout: const Duration(milliseconds: 150),
+      );
+      expect(result, isEmpty);
+    },
+  );
+
+  test(
+    'streamListen swallows a peer error, e.g. an already-subscribed stream',
+    () async {
+      final ws = await socket;
+      final requestFrame = ws
+          .map((raw) => jsonDecode(raw as String) as Map<String, Object?>)
+          .first;
+
+      final result = client.streamListen('Isolate');
+
+      final frame = await requestFrame.timeout(const Duration(seconds: 5));
+      expect(frame['method'], 'streamListen');
+      ws.add(
+        jsonEncode({
+          'jsonrpc': '2.0',
+          'id': frame['id'],
+          'error': {'code': 103, 'message': 'Stream already subscribed'},
+        }),
+      );
+
+      await expectLater(result, completes);
     },
   );
 }

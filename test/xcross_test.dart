@@ -17,4 +17,21 @@ void main() {
       expect(devices, isEmpty);
     });
   });
+
+  group('DeviceSearchMode.flag', () {
+    test('usb maps to --usb', () {
+      expect(DeviceSearchMode.usb.flag, '--usb');
+    });
+
+    // Regression check: upstream xtool's SearchMode flag is `--network`,
+    // not `--wifi` — passing the wrong flag would silently fall through to
+    // xtool's default (all) search mode.
+    test('wifi maps to --network, not --wifi', () {
+      expect(DeviceSearchMode.wifi.flag, '--network');
+    });
+
+    test('all has no flag', () {
+      expect(DeviceSearchMode.all.flag, isNull);
+    });
+  });
 }
