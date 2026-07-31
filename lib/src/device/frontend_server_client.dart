@@ -5,6 +5,7 @@ import 'package:async/async.dart';
 import 'package:xcross/src/models/device/hot_reload_config.dart';
 import 'package:xcross/src/util/errors.dart';
 import 'package:xcross/src/util/logging.dart';
+import 'package:xcross/src/util/package_uris.dart';
 
 /// Drives a persistent `frontend_server` subprocess over its stdin/stdout
 /// protocol, producing incremental kernel diffs for hot reload.
@@ -18,6 +19,9 @@ class FrontendServerClient {
   Process? _process;
   IOSink? _sink;
 
+  /// Loaded once in [spawn]; null when there is no readable package config.
+  PackageUris? _packageUris;
+
   /// Persistent pull-based reader. Returning early from `await for` cancels the
   /// subscription, so the second [_readResultBoundary] would throw StateError
   /// on this single-subscription stream. StreamQueue holds the subscription
@@ -30,6 +34,12 @@ class FrontendServerClient {
       '${config.projectRoot}/build/xtool-flutter-debug/.kernel/app.dill';
 
   Future<void> spawn() async {
+    // Must match the URI form the debug build compiled with (see
+    // FlutterDebugBundler): this compiler warm-starts from that same dill, so a
+    // root library named differently would be treated as a new library rather
+    // than an update to the existing one.
+    _packageUris = await PackageUris.load(config.packageConfig);
+
     final isAot = config.frontendServer.contains('_aot');
     final args = <String>[
       if (!isAot) '--disable-dart-dev',
@@ -93,9 +103,15 @@ class FrontendServerClient {
     return result;
   }
 
+  /// The entrypoint as a `package:` URI when it has one, else a `file:` URI.
+  String get _entrypointUri => _compilerUri(Uri.file(config.entrypoint));
+
+  /// `package:` form of [uri] when available, else [uri] unchanged.
+  String _compilerUri(Uri uri) =>
+      _packageUris?.toPackageUri(uri)?.toString() ?? uri.toString();
+
   Future<String> compile() => _serialized(() async {
-        final entrypointUri = Uri.file(config.entrypoint).toString();
-        await _send('compile $entrypointUri\n');
+        await _send('compile $_entrypointUri\n');
         return _readResultBoundary();
       });
 
@@ -103,15 +119,16 @@ class FrontendServerClient {
       _serialized(() => _recompile(invalidated));
 
   Future<String> _recompile(List<String> invalidated) async {
-    final entrypointUri = Uri.file(config.entrypoint).toString();
     // Hex-encoded microsecond timestamp used as the boundary token that wraps
     // the invalidated-file list in the frontend_server recompile protocol.
     final boundaryToken =
         DateTime.now().microsecondsSinceEpoch.toRadixString(16);
     final sb = StringBuffer()
-      ..write('recompile $entrypointUri $boundaryToken\n');
+      ..write('recompile $_entrypointUri $boundaryToken\n');
     for (final uri in invalidated) {
-      sb.write('$uri\n');
+      // Same URI form as the compile above, or the compiler will not match the
+      // file and the edit is silently left out of the reload.
+      sb.write('${_compilerUri(Uri.parse(uri))}\n');
     }
     sb.write('$boundaryToken\n');
     await _send(sb.toString());

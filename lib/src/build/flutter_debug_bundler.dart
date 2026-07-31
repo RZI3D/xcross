@@ -9,6 +9,7 @@ import 'package:xcross/src/constants.dart';
 import 'package:xcross/src/models/config/pubspec_info.dart';
 import 'package:xcross/src/util/errors.dart';
 import 'package:xcross/src/util/logging.dart';
+import 'package:xcross/src/util/package_uris.dart';
 import 'package:xcross/src/util/process.dart';
 import 'package:xcross/src/xtool/darwin_sdk.dart';
 
@@ -129,6 +130,13 @@ class FlutterDebugBundler {
     final resolvedEntrypoint =
         p.isAbsolute(entrypoint) ? entrypoint : p.join(projectRoot, entrypoint);
 
+    // Compile under the entrypoint's `package:` URI when it has one, as
+    // flutter_tools does: this is what sets the kernel's `Library.importUri`,
+    // and that is what a `package:` breakpoint matches. See [PackageUris].
+    final packageUris = await PackageUris.load(packageConfig);
+    final entrypointArg =
+        packageUris?.toCompilerUri(resolvedEntrypoint) ?? resolvedEntrypoint;
+
     // ORDER MATTERS: dartaotruntime takes <snapshot> as its first arg, so
     // `dart`'s --disable-dart-dev must precede it. --sdk-root needs its
     // trailing slash: frontend_server resolves platform_strong.dill by string
@@ -153,7 +161,7 @@ class FlutterDebugBundler {
       if (flavor != null &&
           !dartDefines.any((d) => d.startsWith('FLUTTER_APP_FLAVOR=')))
         '-DFLUTTER_APP_FLAVOR=$flavor',
-      resolvedEntrypoint,
+      entrypointArg,
     ];
 
     await Log.logStep(
