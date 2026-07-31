@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:args/args.dart';
 import 'package:args/command_runner.dart';
+import 'package:cli_util/cli_logging.dart';
 import 'package:completion/completion.dart';
 import 'package:xcross/src/cli/completion_command.dart';
 import 'package:xcross/src/cli/flutter/flutter_command.dart';
@@ -49,11 +50,14 @@ abstract final class XcrossCli {
   /// One-line credits banner printed before every command dispatch.
   static void _printCredits() {
     final a = Log.ansi;
-    Log.logStatus(
-      '${a.bold}${a.magenta}xcross${a.none}'
-      '${a.subtle(', made by')} ${a.bold}${a.cyan}arxdeus${a.none}'
-      ' ${a.subtle('· github.com/arxdeus')}',
-    );
+    if (Ansi.terminalSupportsAnsi) {
+      Log.logStatus(
+        '${a.bold}${a.magenta}xcross${a.none}'
+        '${a.subtle(' - made by')} ${a.bold}${a.cyan}arxdeus${a.none}'
+        ' ${a.subtle('· github.com/arxdeus')}'
+        '\n',
+      );
+    }
   }
 
   /// Entry point used by `bin/xcross.dart`.
