@@ -111,20 +111,25 @@ abstract final class Log {
 /// Every line xcross prints starts with one of these markers, so output reads
 /// as one list instead of a mix of bare text and decorated lines.
 abstract final class Glyph {
+  /// Icon + trailing space, or '' on a terminal that can't render ANSI (the
+  /// icons ride on color codes that would otherwise print as bare symbols).
+  static String _mark(String color, String symbol) =>
+      Log.ansi.useAnsi ? '$color$symbol${Log.ansi.none} ' : '';
+
   /// A fact, or a phase that has just started.
-  static String get info => '${Log.ansi.cyan}›${Log.ansi.none}';
+  static String get info => _mark(Log.ansi.cyan, '›');
 
   /// A phase that finished.
-  static String get ok => '${Log.ansi.green}✓${Log.ansi.none}';
+  static String get ok => _mark(Log.ansi.green, '✓');
 
   /// A phase that failed.
-  static String get bad => '${Log.ansi.red}✗${Log.ansi.none}';
+  static String get bad => _mark(Log.ansi.red, '✗');
 
   /// Something worth knowing, but not fatal.
-  static String get warn => '${Log.ansi.yellow}!${Log.ansi.none}';
+  static String get warn => _mark(Log.ansi.yellow, '!');
 
   /// A transfer in flight.
-  static String get download => '${Log.ansi.cyan}↓${Log.ansi.none}';
+  static String get download => _mark(Log.ansi.cyan, '↓');
 }
 
 /// A single in-progress phase.
@@ -136,7 +141,7 @@ class Step {
     } else {
       // No spinner to watch (piped output, a debug console, `--verbose`), so
       // announce the phase up front — otherwise long steps look like a hang.
-      Log._logger.stdout('${Glyph.info} $label…');
+      Log._logger.stdout('${Glyph.info}$label…');
     }
   }
 
@@ -257,7 +262,7 @@ class Step {
     _closed = true;
     if (Log._active == this) Log._active = null;
     _erase();
-    Log._logger.stdout('$mark '
+    Log._logger.stdout('$mark'
         '${timed ? Log._withDetail(message, _fmtElapsed(_watch.elapsed)) : message}');
   }
 
