@@ -49,7 +49,8 @@ class VscodeCommand extends Command<void> {
   static Future<void> _writeIfAbsent(String path, String content) async {
     final file = File(path);
     if (file.existsSync()) {
-      Log.logWarn('${p.relative(path)} already exists — merge this in yourself:\n'
+      Log.logWarn(
+          '${p.relative(path)} already exists — merge this in yourself:\n'
           '$content');
       return;
     }
@@ -65,7 +66,7 @@ const String _launchJson = r'''
     {
       "name": "xcross: iOS device",
       "type": "dart",
-      "request": "attach",
+      "request": "launch",
       "debuggerType": "flutter",
       "program": "lib/main.dart",
       // VS Code sets no cwd on the adapter process, so state it here rather

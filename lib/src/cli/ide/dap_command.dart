@@ -1,6 +1,7 @@
 // STDOUT DISCIPLINE — invariants for everything in this file:
-//  1. [DapFraming.encode] via [XcrossDap._send] is the ONLY thing here that
-//     touches stdout. A stray byte desynchronises the frame stream for good.
+//  1. [ByteStreamServerChannel] (package:dds) owns stdout framing — it's the
+//     ONLY thing here that touches stdout. A stray byte desynchronises the
+//     frame stream for good.
 //  2. Never call Log.logStatus() on the DAP code path — it writes to fd1. logWarn /
 //     logError go to fd2 and are safe, but an `output` event is better.
 //  3. Never start a child with ProcessStartMode.inheritStdio from this process.
@@ -14,9 +15,12 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:args/command_runner.dart';
+import 'package:dds/dap.dart';
 import 'package:path/path.dart' as p;
+import 'package:vm_service/vm_service.dart' as vm;
 import 'package:xcross/src/constants.dart';
 import 'package:xcross/src/device/tunnel_daemon.dart';
+import 'package:xcross/src/util/package_uris.dart';
 
 /// `xcross dap` — Debug Adapter Protocol server driving `xcross flutter run`.
 ///
@@ -34,210 +38,87 @@ class DapCommand extends Command<void> {
   bool get hidden => true;
 
   @override
-  Future<void> run() => XcrossDap().serve();
+  Future<void> run() {
+    final channel = ByteStreamServerChannel(stdin, stdout, null);
+    XcrossDap(channel);
+    return channel.closed;
+  }
 }
 
-/// `Content-Length` framing for the DAP stdio transport.
+/// A DAP debug adapter that spawns `xcross flutter run` and drives it:
 ///
-/// The length is the BYTE count of the UTF-8 payload, never the string length:
-/// a single non-ASCII character in a message would otherwise shift every
-/// subsequent frame boundary and silently kill the session.
-class DapFraming {
-  final List<int> _buffer = [];
-
-  static List<int> encode(Object? message) {
-    final payload = utf8.encode(jsonEncode(message));
-    return [
-      ...utf8.encode('Content-Length: ${payload.length}\r\n\r\n'),
-      ...payload,
-    ];
+///  - `r`/`R`/`q` keypresses on its stdin for hot reload/restart/quit (the
+///    same protocol [SessionConsole] speaks for the interactive CLI).
+///  - a second, independent connection to the app's Dart VM Service — set up
+///    by [DartDebugAdapter.connectDebugger] once the child prints the VM
+///    Service URI — for real breakpoints/stepping/stack/variables. All of
+///    that logic (breakpoint sync, pause/resume, stack frames, evaluate) is
+///    already implemented by [DartDebugAdapter]; this class only needs to
+///    hand it a URI and translate the toolbar buttons.
+class XcrossDap extends DartDebugAdapter<DartLaunchRequestArguments,
+    DartAttachRequestArguments> {
+  XcrossDap(ByteStreamServerChannel channel) : super(channel) {
+    // Fallback for a pipe that just closes (editor force-quit, crash) without
+    // an explicit disconnect/terminate request. [DartDebugAdapter.shutdown]
+    // already runs on channel-close to notify the client, but does not reap
+    // our child — do that here too. Idempotent with [disconnectImpl] /
+    // [terminateImpl], which normally get there first (this is a no-op then).
+    channel.closed.then((_) => _quitChild());
   }
 
-  /// Append a raw stdin [chunk] and return every message it completes. Chunk
-  /// boundaries are arbitrary: one chunk may carry several frames, or half of
-  /// one.
-  List<Map<String, Object?>> feed(List<int> chunk) {
-    _buffer.addAll(chunk);
-    final messages = <Map<String, Object?>>[];
-    while (true) {
-      // latin1 is 1 byte per char, so the char index IS the byte index, and it
-      // never throws on arbitrary bytes.
-      final headerEnd = latin1.decode(_buffer).indexOf('\r\n\r\n');
-      if (headerEnd < 0) break;
-      final bodyStart = headerEnd + 4;
-      final length =
-          _contentLength(latin1.decode(_buffer.sublist(0, headerEnd)));
-      if (length == null) {
-        // Unparseable header: drop it rather than stall the stream forever.
-        _buffer.removeRange(0, bodyStart);
-        continue;
-      }
-      if (_buffer.length - bodyStart < length) break;
-      final payload = _buffer.sublist(bodyStart, bodyStart + length);
-      _buffer.removeRange(0, bodyStart + length);
-      // One bad payload must not discard the frames already decoded from this
-      // same chunk; the buffer is advanced, so the stream stays in sync.
-      try {
-        messages.add(jsonDecode(utf8.decode(payload)) as Map<String, Object?>);
-      } on Object catch (e) {
-        stderr.writeln('xcross dap: bad payload: $e');
-      }
-    }
-    return messages;
-  }
+  @override
+  final parseLaunchArgs = DartLaunchRequestArguments.fromJson;
+  @override
+  final parseAttachArgs = DartAttachRequestArguments.fromJson;
 
-  static int? _contentLength(String header) =>
-      int.tryParse(RegExp(r'content-length:\s*(\d+)', caseSensitive: false)
-              .firstMatch(header)
-              ?.group(1) ??
-          '');
-}
+  @override
+  bool get supportsRestartRequest => true;
 
-/// Minimal debug adapter: translates the VS Code toolbar into the `r`/`R`/`q`
-/// keypress protocol that [SessionConsole] already speaks over the child's
-/// stdin. No breakpoints, no stepping, no variables — the child owns the
-/// VM Service.
-class XcrossDap {
-  final DapFraming _framing = DapFraming();
+  // Our own child's exitCode (below) is what ends the session; a hot restart
+  // recycles isolates on the SAME VM Service connection, so treating its
+  // (temporary) hiccups as session-ending here would be wrong.
+  @override
+  bool get terminateOnVmServiceClose => false;
+
+  Process? _child;
   // Holds an unterminated line across stdout chunks: the vm-service marker
   // and its URI can straddle an arbitrary chunk boundary.
   String _pendingLine = '';
   bool _vmServiceReported = false;
-  int _seq = 0;
-  Process? _child;
+  PackageUris? _packageUris;
 
-  /// Requests are handled strictly in arrival order; overlapping handlers would
-  /// interleave `r`/`R`/`q` writes.
-  Future<void> _pending = Future<void>.value();
+  /// Re-keys breakpoints from local file paths to `package:` URIs.
+  ///
+  /// `ThreadInfo.resolvePathToUri` consults this hook first, so whatever it
+  /// returns becomes the `scriptUri` of `addBreakpointWithScriptUri` — see
+  /// [PackageUris] for why the `package:` form is the one that reliably binds.
+  /// SDK mappings keep priority; files with no package equivalent (`test/`,
+  /// `bin/`) fall through and keep plain file-URI behaviour.
+  @override
+  Uri? convertUriToOrgDartlangSdk(Uri input) =>
+      super.convertUriToOrgDartlangSdk(input) ??
+      (input.isScheme('file') ? _packageUris?.toPackageUri(input) : null);
 
-  Future<void> serve() async {
-    try {
-      await for (final chunk in stdin) {
-        // A malformed frame must not escape as an unhandled exception and
-        // take the whole session down without a trace.
-        try {
-          for (final message in _framing.feed(chunk)) {
-            // catchError terminates the chain's error state: one failed
-            // dispatch must not poison every later request.
-            _pending = _pending.then((_) => _dispatch(message)).catchError(
-                (Object e) =>
-                    stderr.writeln('xcross dap: dispatch failed: $e'));
-          }
-        } on Object catch (e) {
-          stderr.writeln('xcross dap: dropped malformed message: $e');
-        }
-      }
-    } on Object catch (_) {
-      // stdin errored: same meaning as EOF — the editor is gone.
-    }
-    // Drain whatever is still queued: EOF can arrive while dispatches are
-    // pending, and the process exits as soon as this returns, which would cut
-    // their responses off mid-flight.
-    await _pending;
-    // The editor dropped the pipe: don't leave `xcross flutter run` (and its
-    // frontend_server + RSD tunnel) behind.
-    _writeKey('q');
-    await _reapChild();
-  }
+  @override
+  Future<void> debuggerConnected(vm.VM vmInfo) async {}
 
-  // --- transport -------------------------------------------------------------
+  @override
+  Future<void> attachImpl() =>
+      throw UnimplementedError('xcross dap only supports launch requests.');
 
-  void _send(Map<String, Object?> message) {
-    stdout.add(DapFraming.encode({'seq': ++_seq, ...message}));
-  }
+  // launchAndRespond (below) drives the whole launch instead, so it can send
+  // the DAP response before the async `flutter.appStart` event — see its
+  // comment. DartCliDebugAdapter in package:dds does the same for the same
+  // reason.
+  @override
+  Future<void> launchImpl() =>
+      throw UnsupportedError('Call launchAndRespond() instead.');
 
-  void _event(String event, [Map<String, Object?>? body]) =>
-      _send({'type': 'event', 'event': event, 'body': body ?? const {}});
-
-  void _respond(Map<String, Object?> request, Object? body) => _send({
-        'type': 'response',
-        'request_seq': request['seq'],
-        'success': true,
-        'command': request['command'],
-        'body': body,
-      });
-
-  void _respondError(Map<String, Object?> request, String message) => _send({
-        'type': 'response',
-        'request_seq': request['seq'],
-        'success': false,
-        'command': request['command'],
-        'message': message,
-      });
-
-  void _output(String category, String text) =>
-      _event('output', {'category': category, 'output': text});
-
-  // --- dispatch --------------------------------------------------------------
-
-  Future<void> _dispatch(Map<String, Object?> message) async {
-    if (message['type'] != 'request') return;
-    final command = message['command'];
-    if (command is! String) return;
-    // An exception escaping here would desynchronise framing and kill the
-    // session with no visible cause, so every path answers something.
-    try {
-      switch (command) {
-        case 'initialize':
-          _respond(message, <String, Object?>{
-            'supportsRestartRequest': true,
-            'supportsTerminateRequest': true,
-            'supportsConfigurationDoneRequest': true,
-          });
-          _event('initialized');
-        case 'launch' || 'attach':
-          await _start(message);
-        case 'configurationDone':
-          _respond(message, <String, Object?>{});
-        case 'restart' || 'hotRestart':
-          _writeKey('R');
-          _respond(message, command == 'restart' ? <String, Object?>{} : null);
-        case 'hotReload':
-          _writeKey('r');
-          _respond(message, null);
-        case 'threads':
-          _respond(message, <String, Object?>{'threads': <Object?>[]});
-        case 'setBreakpoints':
-          _respond(message, <String, Object?>{
-            'breakpoints': _breakpointsOf(message)
-                .map((_) => <String, Object?>{'verified': false})
-                .toList(),
-          });
-        case 'setExceptionBreakpoints':
-          _respond(message, <String, Object?>{});
-        // Sent when the user toggles debug settings or DevTools logging. There
-        // is no debugger here to reconfigure, but answering with an error would
-        // surface as a spurious failure in the editor.
-        case 'updateDebugOptions' || 'updateSendLogsToClient':
-          _respond(message, <String, Object?>{});
-        case 'disconnect' || 'terminate':
-          await _shutdown(message);
-        default:
-          _respondError(message, 'Unknown command $command');
-      }
-    } on Object catch (e) {
-      _respondError(message, '$command failed: $e');
-    }
-  }
-
-  static List<Object?> _breakpointsOf(Map<String, Object?> request) {
-    if (request['arguments'] case final Map<String, Object?> args) {
-      if (args['breakpoints'] case final List<Object?> breakpoints) {
-        return breakpoints;
-      }
-    }
-    return const [];
-  }
-
-  // --- session ---------------------------------------------------------------
-
-  Future<void> _start(Map<String, Object?> request) async {
-    final config = request['arguments'] is Map<String, Object?>
-        ? request['arguments']! as Map<String, Object?>
-        : const <String, Object?>{};
-    final cwd = config['cwd'] is String
-        ? config['cwd']! as String
-        : Directory.current.path;
+  @override
+  Future<void> launchAndRespond(void Function() sendResponse) async {
+    final launchArgs = args as DartLaunchRequestArguments;
+    final cwd = launchArgs.cwd ?? Directory.current.path;
+    await _prepareUriMappings(cwd);
 
     // With tunneld down the child reaches `sudo -v` under inheritStdio and can
     // block forever on a tty nobody can see. Warn, but don't fail: the iOS < 17
@@ -246,7 +127,7 @@ class XcrossDap {
     final tunnelUp = await TunnelDaemon.isReachable()
         .timeout(const Duration(seconds: 5), onTimeout: () => false);
     if (!tunnelUp) {
-      _output(
+      sendOutput(
           'stderr',
           'xcross: the iOS 17+ RSD tunnel daemon is not reachable.\n'
               'If this is an iOS 17+ device, run `xcross prepare` once in a '
@@ -256,24 +137,14 @@ class XcrossDap {
     // NEVER forward Dart-Code's `toolArgs`: it injects `-d <deviceId>` and
     // --host-vmservice-port, which makes XtoolCli.resolveDevice throw. Only the
     // user's own `args` from launch.json is passed through.
-    final target = switch (config['program']) {
-      final String program when p.isAbsolute(program) =>
-        p.relative(program, from: cwd),
-      final String program => program,
-      _ => null,
-    };
-    final extraArgs = config['args'] is List
-        ? (config['args']! as List<Object?>).whereType<String>().toList()
-        : const <String>[];
+    final program = launchArgs.program;
+    final target =
+        p.isAbsolute(program) ? p.relative(program, from: cwd) : program;
+    final extraArgs = launchArgs.args ?? const <String>[];
 
     final child = await Process.start(
       Platform.resolvedExecutable,
-      [
-        'flutter',
-        'run',
-        if (target != null) ...['--target', target],
-        ...extraArgs,
-      ],
+      ['flutter', 'run', '--target', target, ...extraArgs],
       workingDirectory: cwd,
       // Tells SessionConsole that a controller owns its stdin pipe, so EOF
       // there means "editor gone, quit" instead of "no keyboard" (CI, docker
@@ -291,27 +162,50 @@ class XcrossDap {
         .listen(_onChildStdout, onError: _childError);
     child.stderr
         .transform(const Utf8Decoder(allowMalformed: true))
-        .listen((text) => _output('stderr', text), onError: _childError);
+        .listen((text) => sendOutput('stderr', text), onError: _childError);
     // Registered before the response so a child that dies instantly cannot
     // leave a zombie session in the editor.
-    unawaited(child.exitCode.then((_) => _event('terminated')));
+    unawaited(child.exitCode.then((code) {
+      handleSessionExited(code);
+      handleSessionTerminate();
+    }));
 
-    _respond(request, <String, Object?>{});
-    // Order matters: Dart-Code only wires the Hot Reload button when appStart
-    // (with supportsRestart) is followed by appStarted.
-    _event('flutter.appStart', <String, Object?>{
-      'appId': 'xcross',
-      'deviceId': 'ios',
-      'mode': 'debug',
-      'supportsRestart': true,
-    });
+    sendResponse();
+    // flutter.appStart populates Dart-Code's session state (flutterMode,
+    // deviceId, hasStarted) that the Hot Reload/Restart toolbar and DevTools
+    // auto-launch key off; flutter.appStarted (sent once the app is actually
+    // up, in _onChildStdout below) is its counterpart.
+    sendEvent(
+      RawEventBody({
+        'appId': 'xcross',
+        'deviceId': 'ios',
+        'mode': 'debug',
+        'supportsRestart': true,
+      }),
+      eventType: 'flutter.appStart',
+    );
+  }
+
+  /// Loads the package mapping [convertUriToOrgDartlangSdk] needs, and drops
+  /// the bogus SDK mapping the base class computed.
+  ///
+  /// [DartDebugAdapter] takes its SDK root from `Platform.resolvedExecutable`,
+  /// assuming it runs on the Dart VM. `xcross dap` is an AOT binary, so that
+  /// resolves to e.g. `/usr/local`; with an unlucky install prefix it would
+  /// rewrite user-code breakpoint URIs into `org-dartlang-sdk:` ones matching
+  /// no script. Dropping it costs only local SDK-source navigation, which was
+  /// already broken — `sourceRequest` still serves those from the VM.
+  Future<void> _prepareUriMappings(String cwd) async {
+    _packageUris ??= await PackageUris.load(
+        p.join(cwd, '.dart_tool', 'package_config.json'));
+    orgDartlangSdkMappings.clear();
   }
 
   void _childError(Object e) =>
-      _output('stderr', 'xcross dap: child stream error: $e\n');
+      sendOutput('stderr', 'xcross dap: child stream error: $e\n');
 
   void _onChildStdout(String text) {
-    _output('stdout', text);
+    sendOutput('stdout', text);
     // Stop reassembling lines once the URI is known: nothing else is parsed.
     if (_vmServiceReported) return;
     final lines = (_pendingLine + text).split('\n');
@@ -320,29 +214,66 @@ class XcrossDap {
       final start = line.indexOf(DeviceConstants.vmServiceMarker);
       if (start < 0) continue;
       _vmServiceReported = true;
-      _event('flutter.appStarted');
-      // Hand the raw on-device VM Service URI to the editor so it can point
-      // DevTools at it. The reference Flutter adapter does exactly this when it
-      // has no debugger of its own connected (flutter_adapter.dart
-      // `_connectDebugger`), so no VM Service connection is needed here.
+      sendEvent(RawEventBody(const {}), eventType: 'flutter.appStarted');
       final uri =
           line.substring(start + DeviceConstants.vmServiceMarker.length).trim();
       if (uri.isNotEmpty) {
-        _event('dart.debuggerUris', <String, Object?>{'vmServiceUri': uri});
+        // Connects our OWN VM Service client (independent of the child's,
+        // which it uses for hot reload) and turns on breakpoints/stepping/
+        // stack/variables/evaluate — all implemented by DartDebugAdapter.
+        // It also emits the `dart.debuggerUris` event for DevTools once
+        // connected, so no need to send that ourselves.
+        unawaited(connectDebugger(Uri.parse(uri)));
       }
       return;
     }
   }
 
+  /// `hotReload`/`hotRestart` are Dart-Code's custom Flutter toolbar
+  /// commands; everything else (updateDebugOptions, updateSendLogsToClient,
+  /// callService, ...) is already handled by [DartDebugAdapter.customRequest].
+  @override
+  Future<void> customRequest(
+    Request request,
+    RawRequestArguments? args,
+    void Function(Object?) sendResponse,
+  ) async {
+    switch (request.command) {
+      case 'hotReload':
+        _writeKey('r');
+        sendResponse(null);
+      case 'hotRestart':
+        _writeKey('R');
+        sendResponse(null);
+      default:
+        await super.customRequest(request, args, sendResponse);
+    }
+  }
+
+  /// Standard DAP restart (the debug toolbar's Restart button, gated on
+  /// [supportsRestartRequest]) — a hot restart, not a process relaunch.
+  @override
+  Future<void> restartRequest(
+    Request request,
+    RestartArguments? args,
+    void Function() sendResponse,
+  ) async {
+    _writeKey('R');
+    sendResponse();
+  }
+
   /// `q` first so [SessionConsole] runs its real cleanup (frontend_server,
   /// debugserver, tunneld), then escalate.
-  Future<void> _shutdown(Map<String, Object?> request) async {
+  Future<void> _quitChild() async {
     _writeKey('q');
-    _respond(request, <String, Object?>{});
     await _reapChild();
-    await stdout.flush();
-    exit(0);
   }
+
+  @override
+  Future<void> disconnectImpl() => _quitChild();
+
+  @override
+  Future<void> terminateImpl() => _quitChild();
 
   // ponytail: signals only the direct child. `xcross flutter run` spawns its
   // build-phase grandchildren (clang, pub, xtool) with inheritStdio, so those
@@ -351,6 +282,7 @@ class XcrossDap {
   Future<void> _reapChild() async {
     final child = _child;
     if (child == null) return;
+    _child = null;
     await child.exitCode.timeout(const Duration(seconds: 5), onTimeout: () {
       child.kill();
       return child.exitCode.timeout(const Duration(seconds: 2), onTimeout: () {
