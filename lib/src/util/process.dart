@@ -122,9 +122,16 @@ abstract final class ProcessRunner {
       environment: environment,
     );
     if (result.exitCode != 0) {
+      // Some tools (e.g. `swift build`) write their actual diagnostics to
+      // stdout and only dynamic-linker/loader noise to stderr — dropping
+      // stdout here silently hid the real error behind harmless warnings.
+      final output = [
+        result.stdout,
+        result.stderr,
+      ].where((s) => s.trim().isNotEmpty).join('\n');
       throw XcrossError(
         'command failed (${result.exitCode}): '
-        '${commandLine(executable, arguments)}\n${result.stderr}',
+        '${commandLine(executable, arguments)}\n$output',
       );
     }
   }

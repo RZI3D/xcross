@@ -80,6 +80,19 @@ abstract final class GeneratedPluginsPackage {
       final swift = await ProcessRunner.locateTool('swift');
       final pluginsDir = p.join(outputDir, 'Plugins');
       final scratchPath = p.join(pluginsDir, '.build');
+      // Real `Flutter.framework` (not our FlutterFramework binary-target
+      // wrapper). Our own aggregate target resolves `import Flutter` via
+      // that wrapper's declared package dependency, but individual
+      // third-party plugin targets often don't declare any such dependency
+      // in their own Package.swift at all — they rely on Xcode's implicit,
+      // project-wide framework search paths to make `import Flutter` resolve
+      // (verified against a real published plugin: its manifest lists zero
+      // dependencies, yet its Swift source does `import Flutter`). A plain
+      // `swift build` has no such implicit project-wide behaviour, so we
+      // reproduce it ourselves with a build-wide `-Xswiftc -F` flag, applied
+      // uniformly to every target's compile step regardless of what that
+      // target's own manifest declares.
+      final flutterFrameworkSlice = p.join(flutterXcframework, 'ios-arm64');
       await ProcessRunner.runChecked(
         swift,
         [
@@ -92,6 +105,32 @@ abstract final class GeneratedPluginsPackage {
           'arm64-apple-ios',
           '--scratch-path',
           scratchPath,
+          '-Xswiftc',
+          '-F',
+          '-Xswiftc',
+          flutterFrameworkSlice,
+          // A plugin class can be marked `@available(iOS 16.0, *)` (etc.)
+          // while its Package.swift's own `platforms:` floor stays lower —
+          // real-world example: flutter_file_manager_ios declares iOS 12 at
+          // the package level but gates its actual plugin class at iOS 16,
+          // since only the underlying feature (not registration itself)
+          // needs the newer OS. Our generated registrant has no per-plugin
+          // `@available`/`#available` annotations (we don't parse Swift
+          // source to learn each plugin's true floor), so without this flag
+          // the call to `PluginClass.register(with:)` fails to compile.
+          // Registration itself is lightweight glue — trusting the plugin
+          // author's own availability gating for the actual feature code is
+          // the right tradeoff here, same as disabling this check is a
+          // common pattern for generated interop shims.
+          //
+          // `-disable-availability-checking` is a frontend-only flag, so it
+          // must go through `-Xfrontend` — passing it as a bare `-Xswiftc`
+          // argument crashes this SwiftPM version outright (a `try!` in its
+          // own arg validation) instead of a normal compiler error.
+          '-Xswiftc',
+          '-Xfrontend',
+          '-Xswiftc',
+          '-disable-availability-checking',
           // Without this, the produced dylib's LC_ID_DYLIB defaults to an
           // absolute build-machine path. The final Runner binary, linked
           // against this dylib in a later pipeline step, would then embed that

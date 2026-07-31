@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:path/path.dart' as p;
 import 'package:standard_message_codec/standard_message_codec.dart';
@@ -343,10 +344,10 @@ class FlutterDebugBundler {
           for (final variant in entry.value) {'asset': variant},
         ],
     };
-    final binBytes = const StandardMessageCodec().encodeMessage(binMessage)!;
-    File(
-      p.join(assetsDir, 'AssetManifest.bin'),
-    ).writeAsBytesSync(binBytes.buffer.asUint8List(0, binBytes.lengthInBytes));
+    final binBytes = const StandardMessageCodec().encodeMessage(binMessage);
+    File(p.join(assetsDir, 'AssetManifest.bin')).writeAsBytesSync(
+      binBytes?.buffer.asUint8List(0, binBytes.lengthInBytes) ?? Uint8List(0),
+    );
 
     // AssetManifest.json — legacy JSON variant still read by some plugins.
     File(

@@ -71,7 +71,7 @@ flutter:
         ],
       };
 
-      final bytes = codec.encodeMessage(manifest)!;
+      final bytes = codec.encodeMessage(manifest);
       final decoded = codec.decodeMessage(bytes); // throws if corrupted
 
       expect(decoded, {
