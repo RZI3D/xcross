@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:path/path.dart' as p;
 import 'package:xcross/src/appstoreconnect/appstoreconnect.dart';
+import 'package:xcross/src/build/info_plist.dart';
 import 'package:xcross/src/device/pymd_device_resolver.dart';
 import 'package:xcross/src/device/pymd_devices.dart';
 import 'package:xcross/src/grandslam/anisette/anisette_data_provider.dart';
@@ -64,7 +65,7 @@ class NativeBackend implements DeviceBackend {
     final configDirectory = p.dirname(configPath);
     DevelopmentProvisioningClient? client;
     AnisetteProvider? anisette;
-    String? outputDir;
+    String? identityId;
     String? identityDir;
     Object? appleSessionFailure;
     Object? ascFailure;
@@ -100,8 +101,8 @@ class NativeBackend implements DeviceBackend {
           );
           client = candidateClient;
           anisette = candidateAnisette;
+          identityId = session.teamId;
           identityDir = p.join(providerRoot, 'identity');
-          outputDir = p.join(providerRoot, 'profiles', bundleId);
         } on Object catch (error) {
           appleSessionFailure = error;
           candidateClient.close();
@@ -125,14 +126,14 @@ class NativeBackend implements DeviceBackend {
           'appstoreconnect-${credentials.issuerId}',
         );
         client = AscClient(credentials);
+        identityId = credentials.issuerId;
         identityDir = p.join(providerRoot, 'identity');
-        outputDir = p.join(providerRoot, 'profiles', bundleId);
       } on Object catch (error) {
         ascFailure = error;
       }
     }
 
-    if (client == null || outputDir == null || identityDir == null) {
+    if (client == null || identityId == null || identityDir == null) {
       final details = [
         if (appleSessionFailure != null) 'Apple ID: $appleSessionFailure',
         if (ascFailure != null) 'App Store Connect: $ascFailure',
@@ -148,10 +149,29 @@ class NativeBackend implements DeviceBackend {
       );
     }
 
+    // xtool-style: qualify with XCR-<identity> so two accounts can share a
+    // project bundle id without racing on a globally unique App ID.
+    final signedBundleId = ProvisioningIdentifiers.qualify(
+      bundleId,
+      identityId,
+    );
+    final outputDir = p.join(
+      p.dirname(identityDir),
+      'profiles',
+      signedBundleId,
+    );
+
     try {
+      await _rewriteBundleIdentifier(appOrIpaPath, signedBundleId);
+      if (signedBundleId != bundleId) {
+        Log.logInfo(
+          'App ID',
+          '$bundleId ${Log.ansi.subtle('→')} $signedBundleId',
+        );
+      }
       final identity = await provisionDevelopmentIdentity(
         client: client,
-        bundleId: bundleId,
+        bundleId: signedBundleId,
         deviceUdids: [udid],
         outputDir: outputDir,
         identityDir: identityDir,
@@ -170,6 +190,22 @@ class NativeBackend implements DeviceBackend {
       client.close();
       anisette?.close();
     }
+  }
+
+  /// Point the built `.app` at the qualified App ID before codesign.
+  static Future<void> _rewriteBundleIdentifier(
+    String appPath,
+    String bundleId,
+  ) async {
+    final plist = File(p.join(appPath, 'Info.plist'));
+    if (!plist.existsSync()) {
+      throw XcrossError('Missing Info.plist in "$appPath"');
+    }
+    final updated = InfoPlist.setBundleIdentifier(
+      await plist.readAsString(),
+      bundleId,
+    );
+    await plist.writeAsString(updated);
   }
 
   static AnisetteProvider _anisetteForSession(GrandSlamSession session) {

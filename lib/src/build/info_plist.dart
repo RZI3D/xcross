@@ -9,6 +9,11 @@ import 'package:xcross/src/constants.dart';
 /// Pure string transforms (plus one filesystem probe for compiled
 /// storyboards); no state, no I/O beyond that probe.
 abstract final class InfoPlist {
+  /// Overwrite `CFBundleIdentifier` (used when qualifying the App ID at
+  /// device-sign time).
+  static String setBundleIdentifier(String plistXml, String bundleId) =>
+      _setPlistKey(plistXml, 'CFBundleIdentifier', bundleId);
+
   /// Overwrite or insert all mandatory iOS bundle keys.
   /// Version strings (CFBundleShortVersionString / CFBundleVersion) are NOT
   /// forced here — they come solely from $(FLUTTER_BUILD_NAME) /
@@ -20,7 +25,7 @@ abstract final class InfoPlist {
   }) {
     var xml = plistXml;
     xml = _setPlistKey(xml, 'CFBundleExecutable', PlistDefaults.executable);
-    xml = _setPlistKey(xml, 'CFBundleIdentifier', bundleId);
+    xml = setBundleIdentifier(xml, bundleId);
     xml = _setPlistKey(xml, 'CFBundlePackageType', 'APPL');
     if (!xml.contains(IosDeploymentConstants.minimumOsVersionKey)) {
       xml = _setPlistKey(

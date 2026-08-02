@@ -2,9 +2,8 @@ import 'dart:io';
 
 import 'package:path/path.dart' as p;
 import 'package:xcross/src/build/flutter_packer.dart';
-import 'package:xcross/src/models/config/pack_schema.dart';
+import 'package:xcross/src/build/ios_bundle_id.dart';
 import 'package:xcross/src/models/flutter/flutter_build_options.dart';
-import 'package:xcross/src/util/logging.dart';
 
 /// The `.app` path and the iOS bundle identifier produced by
 /// [FlutterPackOperation.pack].
@@ -19,30 +18,17 @@ class PackResult {
 abstract final class FlutterPackOperation {
   /// Build the Flutter iOS `.app` for the project in the current directory.
   ///
-  /// Prefers `xcross.yml`, otherwise falls back to the default `com.example`
-  /// schema, deletes any prior bundle, then packs.
+  /// Bundle id comes from `ios/Runner/Info.plist` / `project.pbxproj` (same
+  /// sources Flutter tooling uses). Deletes any prior bundle, then packs.
   static Future<PackResult> pack({required FlutterBuildOptions options}) async {
     final projectRoot = Directory.current.path;
-
-    final PackSchema schema;
-    final configPath = p.join(projectRoot, 'xcross.yml');
-    final configExists = File(configPath).existsSync();
-    if (configExists) {
-      schema = await PackSchema.fromFile(configPath);
-    } else {
-      schema = PackSchema.defaultSchema();
-      Log.logWarn(
-        "Could not locate configuration file 'xcross.yml'. Using default "
-        "configuration with 'com.example' organization ID.",
-      );
-    }
+    final bundleId = IosBundleId.resolve(projectRoot);
 
     final packer = FlutterPacker(
       projectRoot: projectRoot,
-      schema: schema,
+      bundleId: bundleId,
       options: options,
     );
-    final bundleId = schema.idSpecifier.formBundleId(packer.appName);
 
     // Always delete any previous bundle BEFORE packing, otherwise stale
     // binaries from an earlier build get codesigned into the new one.

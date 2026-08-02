@@ -385,6 +385,56 @@ void main() {
     );
   });
 
+  test('tolerates a freshly issued profile slightly ahead of local clock', () async {
+    // Apple's CreationDate is often a few seconds ahead of the machine.
+    final paths = await _writeFixture(
+      temporaryDirectory,
+      'future-skew-profile',
+      privateKeyPem: privateKeyPem,
+      certificatePem: certificatePem,
+      developerCertificates: [certificateDer],
+      creationDate: now.add(const Duration(minutes: 2)),
+      expirationDate: DateTime.utc(2040),
+    );
+
+    final asset = await SigningAsset.load(
+      privateKeyPemPath: paths.key,
+      certificatePemPath: paths.certificate,
+      provisioningProfilePath: paths.profile,
+      now: now,
+      trustedRootCertificates: [certificateDer],
+    );
+    expect(asset.teamIdentifier, isNotEmpty);
+  });
+
+  test('rejects a profile whose CreationDate is far in the future', () async {
+    final paths = await _writeFixture(
+      temporaryDirectory,
+      'far-future-profile',
+      privateKeyPem: privateKeyPem,
+      certificatePem: certificatePem,
+      developerCertificates: [certificateDer],
+      creationDate: now.add(const Duration(minutes: 10)),
+      expirationDate: DateTime.utc(2040),
+    );
+
+    await expectLater(
+      SigningAsset.load(
+        privateKeyPemPath: paths.key,
+        certificatePemPath: paths.certificate,
+        provisioningProfilePath: paths.profile,
+        now: now,
+      ),
+      throwsA(
+        isA<XcrossError>().having(
+          (error) => error.message,
+          'message',
+          contains('not yet valid'),
+        ),
+      ),
+    );
+  });
+
   test('rejects a certificate absent from DeveloperCertificates', () async {
     final paths = await _writeFixture(
       temporaryDirectory,

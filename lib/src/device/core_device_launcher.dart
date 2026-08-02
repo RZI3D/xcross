@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io' show Platform;
 
+import 'package:xcross/src/appstoreconnect/provisioning_identifiers.dart';
 import 'package:xcross/src/constants.dart';
 import 'package:xcross/src/device/dart_vm_service_client.dart';
 import 'package:xcross/src/device/device_transport.dart';
@@ -302,11 +303,7 @@ abstract final class CoreDeviceLauncher {
   }) async {
     final ids = await Pymd.listInstalledApps();
     if (ids.contains(requested)) return requested;
-    var base = requested;
-    if (base.startsWith('XTL-')) {
-      final dot = base.indexOf('.');
-      if (dot >= 0) base = base.substring(dot + 1);
-    }
+    final base = ProvisioningIdentifiers.sanitize(requested);
     final suffix = '.$base';
     // Shortest suffix match wins: on a device carrying several team-prefixed
     // builds of the same app, the longest match resolves to the wrong one.

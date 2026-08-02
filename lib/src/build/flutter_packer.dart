@@ -11,7 +11,6 @@ import 'package:xcross/src/build/ios_plugins.dart';
 import 'package:xcross/src/build/runner_shim.dart';
 import 'package:xcross/src/constants.dart';
 import 'package:xcross/src/darwinsdk/darwin_sdk.dart';
-import 'package:xcross/src/models/config/pack_schema.dart';
 import 'package:xcross/src/models/config/pubspec_info.dart';
 import 'package:xcross/src/models/flutter/flutter_build_options.dart';
 import 'package:xcross/src/util/errors.dart';
@@ -32,7 +31,7 @@ import 'package:xcross/src/util/process.dart';
 ///   5. Assemble the `.app` bundle and write `Info.plist`.
 class FlutterPacker {
   final String projectRoot;
-  final PackSchema schema;
+  final String bundleId;
   final FlutterBuildOptions options;
 
   /// App name read from `pubspec.yaml` `name:` key.
@@ -40,7 +39,7 @@ class FlutterPacker {
 
   FlutterPacker({
     required this.projectRoot,
-    required this.schema,
+    required this.bundleId,
     required this.options,
   }) : appName = PubspecInfo.loadSync(projectRoot).name;
 
@@ -304,7 +303,6 @@ class FlutterPacker {
   /// substitution, mandatory iOS keys, storyboard stripping, and ObjC class
   /// name normalization.
   Future<void> _writeInfoPlist(String bundleDir) async {
-    final bundleId = schema.idSpecifier.formBundleId(appName);
     var plistXml = await _loadPlistTemplate();
 
     // ORDER MATTERS: vars must be expanded before forcing keys so that forced
@@ -313,7 +311,7 @@ class FlutterPacker {
     // before the .storyboardc filesystem probe.
     plistXml = InfoPlist.expandVars(
       plistXml,
-      await _buildSubstitutionMap(bundleId),
+      await _buildSubstitutionMap(),
     );
     plistXml = InfoPlist.applyIosRequiredKeys(plistXml, bundleId: bundleId);
     plistXml = InfoPlist.stripUnsatisfiableStoryboards(plistXml, bundleDir);
@@ -322,11 +320,11 @@ class FlutterPacker {
     await File(p.join(bundleDir, 'Info.plist')).writeAsString(plistXml);
   }
 
-  /// Read `ios/Runner/Info.plist` (or `schema.infoPath`), falling back to
-  /// [InfoPlist.fallback] when neither exists.
+  /// Read `ios/Runner/Info.plist`, falling back to [InfoPlist.fallback].
   Future<String> _loadPlistTemplate() async {
-    final plistPath = schema.infoPath ?? p.join('ios', 'Runner', 'Info.plist');
-    final plistFile = File(p.join(projectRoot, plistPath));
+    final plistFile = File(
+      p.join(projectRoot, 'ios', 'Runner', 'Info.plist'),
+    );
     if (plistFile.existsSync()) return plistFile.readAsString();
     return InfoPlist.fallback;
   }
@@ -337,7 +335,7 @@ class FlutterPacker {
   ///   1. Hard-coded defaults (`1.0.0` / `1`).
   ///   2. `Generated.xcconfig` values from `flutter build` tooling.
   ///   3. Explicit `--build-name` / `--build-number` CLI flags.
-  Future<Map<String, String>> _buildSubstitutionMap(String bundleId) async {
+  Future<Map<String, String>> _buildSubstitutionMap() async {
     final subs = <String, String>{
       'EXECUTABLE_NAME': PlistDefaults.executable,
       'PRODUCT_NAME': PlistDefaults.executable,

@@ -73,7 +73,7 @@ void main() {
       outputDir: temp.path,
     );
 
-    expect(client.registeredBundleName, 'com example my app');
+    expect(client.registeredBundleName, 'xcross com example my app');
     expect(client.createdProfileName, matches(r'^xcross Development \d+$'));
   });
 

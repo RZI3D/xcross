@@ -11,6 +11,7 @@ import 'package:path/path.dart' as p;
 import 'package:xcross/src/appstoreconnect/asc_client.dart';
 import 'package:xcross/src/appstoreconnect/asc_csr.dart';
 import 'package:xcross/src/appstoreconnect/asc_models.dart';
+import 'package:xcross/src/appstoreconnect/provisioning_identifiers.dart';
 import 'package:xcross/src/util/errors.dart';
 import 'package:xcross/src/util/logging.dart';
 
@@ -20,6 +21,7 @@ export 'asc_csr.dart';
 export 'asc_jwt.dart';
 export 'asc_models.dart';
 export 'developer_services_client.dart';
+export 'provisioning_identifiers.dart';
 
 /// Wraps [derBase64] (base64-encoded DER, as returned raw by the
 /// certificates API's `certificateContent`) into a line-wrapped PEM block.
@@ -83,7 +85,7 @@ provisionDevelopmentIdentity({
       await client.findBundleId(bundleId) ??
       await client.registerBundleId(
         identifier: bundleId,
-        name: bundleId.replaceAll(RegExp('[^A-Za-z0-9]+'), ' ').trim(),
+        name: ProvisioningIdentifiers.appName(bundleId),
       );
 
   for (final udid in deviceUdids) {

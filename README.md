@@ -169,18 +169,14 @@ xcross completion       print a shell-completion script
 
 `r` reload · `R` restart · `q` / Ctrl-C / Ctrl-D quit. Multiple devices show a numbered picker in an interactive terminal; pass `-u` for CI or piped runs.
 
-## Configuration
+## Bundle identity
 
-Optional `xcross.yml` at the project root:
+Bundle id is read from the Flutter iOS project (same sources as Flutter tooling on non-macOS):
 
-```yaml
-version: 1
-orgID: com.example                # bundle id = <orgID>.<appName>
-# bundleID: com.you.app           # literal bundle id; wins if both are set
-infoPath: ios/Runner/Info.plist   # optional
-```
+1. Literal `CFBundleIdentifier` in `ios/Runner/Info.plist` (no `$(…)` variables)
+2. Otherwise the first `PRODUCT_BUNDLE_IDENTIFIER` in `ios/Runner.xcodeproj/project.pbxproj`
 
-Without a file, the organization defaults to `com.example`.
+`Info.plist` for the packed `.app` is always taken from `ios/Runner/Info.plist` when present.
 
 ## IDE
 

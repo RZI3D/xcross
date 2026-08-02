@@ -819,20 +819,27 @@ List<Uint8List> _developerCertificates(
   }).toList();
 }
 
+/// Apple's portal clock is often a few seconds ahead of the local machine;
+/// freshly issued profiles then fail a strict `CreationDate` check. Five
+/// minutes covers NTP drift without accepting obviously-future material.
+const _notBeforeSkew = Duration(minutes: 5);
+
 void _checkValidity(
   DateTime now,
   DateTime notBefore,
   DateTime notAfter,
   String context,
 ) {
-  if (now.isBefore(notBefore.toUtc())) {
+  final start = notBefore.toUtc();
+  final end = notAfter.toUtc();
+  if (now.isBefore(start.subtract(_notBeforeSkew))) {
     throw XcrossError(
-      '$context is not yet valid (starts ${notBefore.toUtc().toIso8601String()}).',
+      '$context is not yet valid (starts ${start.toIso8601String()}).',
     );
   }
-  if (now.isAfter(notAfter.toUtc())) {
+  if (now.isAfter(end)) {
     throw XcrossError(
-      '$context expired at ${notAfter.toUtc().toIso8601String()}.',
+      '$context expired at ${end.toIso8601String()}.',
     );
   }
 }
