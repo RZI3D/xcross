@@ -14,13 +14,17 @@ This package as a whole is distributed under LGPLv2.
 | `lib/src/adi_bindings.dart`                        | `lib/provision/adi.d` — the `ADI*_t` function pointer `alias`es and the obfuscated native symbol names (`kq56gsgHG6`, `Sph98paBcz`, etc.) used to `load()` them | 1:1 signature and symbol-name port |
 | `lib/src/adi_client.dart`                          | `lib/provision/adi.d` — `class ADI`'s public methods, and the `ADIError` enum / `toString(ADIError)` message table / `ADIException` | Idiomatic Dart wrapper; native buffers are copy-then-dispose instead of upstream's RAII structs |
 | `lib/src/elf/elf_reader.dart`, `lib/src/elf/elf_loaded_library.dart` | `lib/provision/androidlibrary.d` — the `AndroidLibrary` class: ELF64 header/program-header/section-header/symbol-table parsing, `SHT_RELA` relocation processing (`R_X86_64_RELATIVE`/`GLOB_DAT`/`JUMP_SLOT`/`_64`), and the SysV `.hash` / GNU `.gnu.hash` symbol lookup algorithms (`ElfHashTable`, `GnuHashTable`) | See "What was ported this round" below |
-| `lib/src/loader/native_symbol_stubs.dart`          | `lib/provision/symbols.d` (the fixed 29-symbol stub table, `dlopenWrapper`/`dlsymWrapper`/`dlcloseWrapper`) and `lib/provision/compat/linux.d` (the real-libc pass-through bindings) | Linux only for now — see "Known limitation" below |
+| `lib/src/loader/native_symbol_stubs.dart`          | `lib/provision/symbols.d` (the fixed 29-symbol stub table, `dlopenWrapper`/`dlsymWrapper`/`dlcloseWrapper`) and `lib/provision/compat/linux.d` (the real-libc pass-through bindings) | Linux |
 | `lib/src/loader/loader_posix.dart`, `lib/src/loader/memory_allocator_posix.dart` | Structural equivalent of `AndroidLibrary`'s `mmap`/`mprotect` usage in androidlibrary.d, and the load-order role of `ADILoadLibraryWithPath` | Split per this task's requested architecture: platform-independent ELF core + a small platform-specific memory allocator |
+| `lib/src/loader/memory_allocator_windows.dart` | Structural equivalent of `compat/windows.d`'s `mprotect`/`VirtualProtect` mapping | Host VirtualAlloc allocator for the ELF loader |
+| `lib/src/loader/native_symbol_stubs_windows.dart` | `compat/windows.d` open/stat/path/gettimeofday shims + `symbols.d` stub table | SysV GOT entries via `sysv_abi_bridge` |
+| `lib/src/loader/sysv_abi_bridge.dart` + `src/sysv_abi_bridge.c` + `hook/build.dart` | `compat/general.d` `@sysv` / `androidInvoke` role | Native-assets code asset; identity stub on non-Windows |
+| `lib/src/loader/loader_windows.dart` | Same role as `loader_posix.dart` | Windows ELF load glue |
 
 `lib/provision/compat/general.d` was also fetched and reviewed: on POSIX
 it contributes no behavior of its own (`androidInvoke` is a no-op
 passthrough, `sysv` an empty UDA — both matter only for Windows' distinct
-calling convention). Nothing from it needed porting here.
+calling convention). On Windows, `sysv_abi_bridge` covers that role.
 
 ## Original code (not a port of any upstream file)
 
@@ -34,9 +38,8 @@ calling convention). Nothing from it needed porting here.
 - `lib/src/loader/loader.dart`, `lib/src/loader/memory_allocator.dart` —
   the loader/allocator interfaces themselves (upstream has no equivalent
   abstraction layer; it's a single concrete `AndroidLibrary` class used
-  everywhere). Added so a future Windows implementation
-  (`lib/src/loader/loader_windows.dart`, currently a stub) can reuse the
-  platform-independent ELF core without touching it.
+  everywhere). Split so Linux and Windows implementations can reuse the
+  platform-independent ELF core.
 
 ## What was ported this round (replacing the Phase 1 `dlopen` mistake)
 
@@ -116,7 +119,7 @@ the license terms.
 
 ## Known limitation (flagged for review — read before trusting this with real credentials)
 
-**Linux only.** `PosixNativeLibraryLoader` refuses to construct on
+**Linux and Windows x64.** `PosixNativeLibraryLoader` refuses to construct on
 anything but Linux. The direct pass-through libc bindings in
 `native_symbol_stubs.dart` (`open`, `lstat`, `fstat`, etc.) forward
 straight to the host's real libc, which is safe on Linux (bionic and
@@ -129,17 +132,16 @@ first would risk the exact same class of silent-corruption bug this
 loader exists to avoid — just via `stat`/`open` instead of `pthread_*`.
 Port `compat/macos.d` before re-enabling macOS support.
 
+**Windows** uses `WindowsNativeLibraryLoader` with VirtualAlloc, Windows
+libc/stat shims from `compat/windows.d`, and SysV↔MS ABI trampolines
+(`sysv_abi_bridge`, mirroring upstream `@sysv` / `androidInvoke`). The
+trampolines are a known fragility point: arity mismatches scramble args
+silently. Validate `ADIOTPRequest` / provisioning start before trusting
+credentials.
+
 **Not validated under memory-safety tooling.** This manual ELF loader
 (program header copying, protection flipping, and hand-rolled RELA
-relocation application) has **not** been run against the real extracted
-`libCoreADI.so`/`libstoreservicescore.so` under ASan or valgrind, or on
-any real Linux machine at all — the dev box used to write this is
-Windows, which cannot execute this code path at all (there is no ELF
-loader to test against). Given this handles real Apple ID credential
-provisioning, running the full loader (including the `dlopen` emulation
-path, which has the least amount of real-world precedent to lean on)
-under a memory checker on real Linux hardware, with the real two
-libraries, is required before this package is trusted with real
-credentials — this is now a "confirm the port is correct and
-memory-safe" gate, not the previous phase's "confirm whether `dlopen`
-happens to work" gate.
+relocation application) has **not** been run under ASan or valgrind.
+Given this handles real Apple ID credential provisioning, running the
+full loader under a memory checker with the real two libraries is
+required before this package is trusted with real credentials.

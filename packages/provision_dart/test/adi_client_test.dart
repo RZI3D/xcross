@@ -21,8 +21,8 @@ void main() {
   // NOTICE.md; that remains required before this is trusted with real
   // Apple ID credentials.
   //
-  // Linux only: the loader currently refuses to run on macOS (see
-  // NOTICE.md / native_symbol_stubs.dart).
+  // Linux: PosixNativeLibraryLoader. Windows: covered by
+  // adi_client_windows_test.dart.
   test(
     'native ADI library can be fetched, manually ELF-loaded, and a known symbol resolved',
     () async {

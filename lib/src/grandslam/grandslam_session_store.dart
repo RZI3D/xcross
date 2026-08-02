@@ -29,8 +29,8 @@ class GrandSlamSession {
   final DeveloperServicesLoginToken token;
   final String teamId;
 
-  /// Absolute Android-ADI library path for legacy/non-Windows sessions.
-  /// Windows uses the installed AOSKit bridge and leaves this null.
+  /// Absolute directory containing Android ADI libraries
+  /// (`libCoreADI.so`, `libstoreservicescore.so`) used for Anisette.
   final String? adiLibraryDirectory;
 
   bool get isExpired => token.isExpired;

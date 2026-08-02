@@ -7,7 +7,6 @@ import 'package:xcross/src/device/pymd_device_resolver.dart';
 import 'package:xcross/src/device/pymd_devices.dart';
 import 'package:xcross/src/grandslam/anisette/anisette_data_provider.dart';
 import 'package:xcross/src/grandslam/anisette/anisette_provider.dart';
-import 'package:xcross/src/grandslam/anisette/aoskit_anisette_provider.dart';
 import 'package:xcross/src/grandslam/grandslam_session_store.dart';
 import 'package:xcross/src/models/device/device.dart';
 import 'package:xcross/src/signing/bundle_signer.dart';
@@ -209,15 +208,12 @@ class NativeBackend implements DeviceBackend {
   }
 
   static AnisetteProvider _anisetteForSession(GrandSlamSession session) {
-    if (Platform.isWindows) {
-      return AosKitAnisetteProvider();
-    }
-    if (Platform.isLinux) {
+    if (Platform.isWindows || Platform.isLinux) {
       final adiDir = session.adiLibraryDirectory;
       if (adiDir == null || adiDir.isEmpty) {
         throw XcrossError(
           'Saved Apple ID session is missing adiLibraryDirectory. '
-          'Run xcross auth --apple-id <email> again on Linux.',
+          'Run xcross auth --apple-id <email> again.',
         );
       }
       return AnisetteDataProvider(adiDir);

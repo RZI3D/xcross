@@ -1,27 +1,71 @@
-// TODO(windows): Windows cannot `LoadLibrary` a Linux ELF `.so` at all —
-// unlike the POSIX loader's original (now-removed) `dlopen` mistake,
-// this isn't a "works but unsafe" case, it fails outright, since the
-// Windows PE loader doesn't understand the ELF format. A real Windows
-// implementation needs the SAME manually-relocated ELF loading strategy
-// as `loader_posix.dart` — `../elf/elf_loaded_library.dart` is already
-// platform-independent and can be reused as-is — just with a
-// VirtualAlloc/VirtualProtect-backed `NativeMemoryAllocator`
-// implementation instead of the POSIX mmap/mprotect one, plus a Windows
-// port of `native_symbol_stubs.dart`'s libc/pthread stub table (Windows
-// has no bionic-vs-glibc pthread hazard, but the loaded library's other
-// bionic libc imports would still need equivalent stubs). Not
-// implemented — out of scope for this phase.
+// Windows loader glue: wires the platform-independent ELF loader to a
+// VirtualAlloc-backed allocator and Windows SysV-wrapped symbol stubs.
 
+import 'dart:ffi';
+import 'dart:io';
+
+import '../elf/elf_loaded_library.dart';
 import 'loader.dart';
+import 'memory_allocator_windows.dart';
+import 'native_symbol_stubs_windows.dart';
 
 class WindowsNativeLibraryLoader implements NativeLibraryLoader {
-  const WindowsNativeLibraryLoader();
+  WindowsNativeLibraryLoader() : _allocator = WindowsMemoryAllocator() {
+    if (!Platform.isWindows) {
+      throw UnsupportedError(
+        'WindowsNativeLibraryLoader only runs on Windows.',
+      );
+    }
+    if (Abi.current() != Abi.windowsX64) {
+      throw UnsupportedError(
+        'Windows ADI loader requires windows_x64 (got ${Abi.current()}).',
+      );
+    }
+    _stubs = WindowsNativeSymbolStubs(loadLibraryForDlopen: _loadByPath);
+  }
+
+  final WindowsMemoryAllocator _allocator;
+  late final WindowsNativeSymbolStubs _stubs;
+  final Map<String, ElfLoadedLibrary> _loaded = {};
+  String? _lastLoadDir;
+
+  ElfLoadedLibrary _loadByPath(String path) {
+    final cached = _loaded[path];
+    if (cached != null) return cached;
+
+    var resolvedPath = path;
+    if (!File(resolvedPath).existsSync()) {
+      // Same bare-name sibling fallback as loader_posix.dart.
+      final fallbackDir = _lastLoadDir;
+      final isBareName = !path.contains('/') && !path.contains(r'\');
+      if (fallbackDir != null && isBareName) {
+        final candidate = File('$fallbackDir${Platform.pathSeparator}$path');
+        if (candidate.existsSync()) resolvedPath = candidate.path;
+      }
+    }
+
+    final lib = ElfLoadedLibrary.load(
+      File(resolvedPath).readAsBytesSync(),
+      _allocator,
+      _stubs.resolve,
+    );
+    _loaded[path] = lib;
+    return lib;
+  }
 
   @override
   LoadedNativeLibrary load(String path) {
-    throw UnsupportedError(
-      'provision_dart has no Windows native-library loader yet. See '
-      'loader_windows.dart for what a real implementation needs.',
-    );
+    _lastLoadDir = File(path).parent.path;
+    return _WindowsLoadedLibrary(_loadByPath(path));
   }
+}
+
+class _WindowsLoadedLibrary implements LoadedNativeLibrary {
+  _WindowsLoadedLibrary(this._lib);
+
+  final ElfLoadedLibrary _lib;
+
+  @override
+  Pointer<NativeFunction<T>> lookup<T extends Function>(String symbolName) =>
+      _lib.lookup(symbolName).cast();
 }

@@ -59,7 +59,7 @@ The command prompts for the password and 2FA code, then stores only the resultin
 
 ### Windows (native)
 
-Download `xcross-windows-x64.zip` from [Releases](https://github.com/arxdeus/xcross/releases), extract it, and put that directory on `PATH`. The archive contains `xcross.exe` and the x86 `xcross-aoskit.exe` authentication bridge. Signing runs in process, so no signing executable is bundled. Swift, LLVM, Flutter, and the Apple SDK are host prerequisites and are not bundled.
+Download `xcross-windows-x64.zip` from [Releases](https://github.com/arxdeus/xcross/releases), extract it, and put that directory on `PATH`. The archive contains `xcross.exe`. Signing runs in process, so no signing executable is bundled. Swift, LLVM, Flutter, and the Apple SDK are host prerequisites and are not bundled.
 
 Install Swift and LLVM from an Administrator PowerShell:
 
@@ -76,7 +76,7 @@ xcross setup
 xcross sdk install C:\Downloads\Xcode.xip
 ```
 
-Apple ID authentication additionally needs the desktop/website editions of iTunes and [iCloud](https://secure-appldnld.apple.com/windows/061-91601-20200323-974a39d0-41fc-4761-b571-318b7d9205ed/iCloudSetup.exe), not the Microsoft Store editions. They provide Apple Mobile Device support and the x86 `AOSKit.dll`.
+Apple ID authentication uses the same Android ADI libraries as Linux (`libCoreADI.so` and `libstoreservicescore.so`). On x64, `xcross auth` downloads them from the Apple Music APK into `%APPDATA%\xcross\adi-libs` on first use.
 
 ```powershell
 xcross auth --apple-id you@example.com

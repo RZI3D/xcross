@@ -6,6 +6,7 @@
 
 import 'dart:convert';
 import 'dart:ffi';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:ffi/ffi.dart';
@@ -14,10 +15,19 @@ import 'package:path/path.dart' as p;
 import 'adi_bindings.dart';
 import 'loader/loader.dart';
 import 'loader/loader_posix.dart';
+import 'loader/loader_windows.dart';
 
-// Note: no more DynamicLibrary/dlopen here — `loader` resolves to
-// PosixNativeLibraryLoader by default, which uses the custom ELF loader
-// (see NOTICE.md for why plain dlopen is unsafe for these libraries).
+/// Default loader for the current host: Windows ELF+SysV bridge, or Linux
+/// POSIX mmap loader. See NOTICE.md for why plain dlopen/LoadLibrary is
+/// unsafe for these Android libraries.
+NativeLibraryLoader defaultNativeLibraryLoader() {
+  if (Platform.isWindows) return WindowsNativeLibraryLoader();
+  if (Platform.isLinux) return PosixNativeLibraryLoader();
+  throw UnsupportedError(
+    'provision_dart ADI loader supports Linux and Windows only '
+    '(got ${Platform.operatingSystem}).',
+  );
+}
 
 /// Known ADI native error codes, ported verbatim from the `ADIError` enum
 /// in adi.d.
@@ -194,7 +204,7 @@ class AdiClient {
     String nativeLibraryDir, {
     NativeLibraryLoader? loader,
   }) {
-    final resolvedLoader = loader ?? PosixNativeLibraryLoader();
+    final resolvedLoader = loader ?? defaultNativeLibraryLoader();
     final storeServicesPath = p.join(nativeLibraryDir, 'libstoreservicescore.so');
     final storeServicesCore = resolvedLoader.load(storeServicesPath);
 

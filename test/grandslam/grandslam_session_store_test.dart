@@ -51,7 +51,7 @@ void main() {
     }
   });
 
-  test('round-trips a pathless Windows AOSKit session', () async {
+  test('round-trips a session without adiLibraryDirectory', () async {
     final store = GrandSlamSessionStore(path: sessionPath);
     await store.save(
       GrandSlamSession(

@@ -10,7 +10,6 @@ import 'package:xcross/src/appstoreconnect/developer_services_client.dart';
 import 'package:xcross/src/grandslam/anisette/anisette_data_provider.dart';
 import 'package:xcross/src/grandslam/anisette/anisette_provider.dart';
 import 'package:xcross/src/grandslam/anisette/anisette_state.dart';
-import 'package:xcross/src/grandslam/anisette/aoskit_anisette_provider.dart';
 import 'package:xcross/src/grandslam/app_token_exchange.dart';
 import 'package:xcross/src/grandslam/grandslam_login.dart';
 import 'package:xcross/src/grandslam/grandslam_session_store.dart';
@@ -46,9 +45,10 @@ class AuthCommand extends Command<void> {
         'adi-library-dir',
         valueHelp: 'path',
         help:
-            'Linux: directory containing libCoreADI.so and '
+            'Directory containing libCoreADI.so and '
             'libstoreservicescore.so for Apple ID login. Defaults to '
-            '~/.config/xcross/adi-libs (fetched automatically on x86_64).',
+            'the xcross config adi-libs directory. On x86_64, missing libs '
+            'are fetched from the Apple Music APK.',
       );
   }
 
@@ -137,21 +137,16 @@ class AuthCommand extends Command<void> {
         'On this platform use App Store Connect API key flags.',
       );
     }
-    if (Platform.isWindows && argResults!.wasParsed('adi-library-dir')) {
-      throw XcrossError(
-        '--adi-library-dir is Linux-only. On Windows, Apple ID login uses '
-        'the bundled AOSKit helper with website-edition iTunes/iCloud.',
-      );
-    }
 
-    final resolved = Platform.isWindows
-        ? await _windowsAnisette()
-        : await _linuxAnisette();
-    final anisette = resolved.anisette;
-    final adiLibraryDirectory = resolved.adiLibraryDirectory;
-
+    // Prompt before any await: on Windows, interactive stdin often breaks
+    // after async work (network / ADI fetch), so Apple ID + Password can
+    // paint on one line and appear to ignore typing.
     final username = initialUsername ?? _readRequiredLine('Apple ID: ');
     final password = _readPassword();
+
+    final resolved = await _resolveAdiAnisette();
+    final anisette = resolved.anisette;
+    final adiLibraryDirectory = resolved.adiLibraryDirectory;
     GrandSlamClient? loginClient;
     GrandSlamAppTokenExchange? tokenExchange;
     try {
@@ -224,21 +219,15 @@ class AuthCommand extends Command<void> {
   }
 
   Future<({AnisetteProvider anisette, String? adiLibraryDirectory})>
-  _windowsAnisette() async => (
-    anisette: AosKitAnisetteProvider(),
-    adiLibraryDirectory: null,
-  );
-
-  Future<({AnisetteProvider anisette, String? adiLibraryDirectory})>
-  _linuxAnisette() async {
-    final adiLibraryDir = await _resolveLinuxAdiLibraryDirectory();
+  _resolveAdiAnisette() async {
+    final adiLibraryDir = await _resolveAdiLibraryDirectory();
     return (
       anisette: AnisetteDataProvider(adiLibraryDir),
       adiLibraryDirectory: adiLibraryDir,
     );
   }
 
-  Future<String> _resolveLinuxAdiLibraryDirectory() async {
+  Future<String> _resolveAdiLibraryDirectory() async {
     final configured = argResults!.option('adi-library-dir');
     final adiLibraryDir =
         configured ??
@@ -251,9 +240,11 @@ class AuthCommand extends Command<void> {
       _throwMissingAdiLibs(adiLibraryDir);
     }
 
-    if (Abi.current() != Abi.linuxX64) {
+    final abi = Abi.current();
+    final canAutoFetch = abi == Abi.linuxX64 || abi == Abi.windowsX64;
+    if (!canAutoFetch) {
       throw XcrossError(
-        'Apple ID login on ${Abi.current()} needs matching ADI libraries at '
+        'Apple ID login on $abi needs matching ADI libraries at '
         '"$adiLibraryDir" (libCoreADI.so and libstoreservicescore.so). '
         'Extract them from the Apple Music Android APK for this architecture, '
         'or pass --adi-library-dir.',
@@ -279,6 +270,7 @@ class AuthCommand extends Command<void> {
     }
     while (true) {
       stdout.write('Choice (1-${teams.length}): ');
+      stdout.flush();
       final raw = stdin.readLineSync()?.trim();
       if (raw == null) {
         throw XcrossError('No team selection made (stdin closed).');
@@ -307,6 +299,7 @@ class AuthCommand extends Command<void> {
 
   String _readRequiredLine(String prompt) {
     stdout.write(prompt);
+    stdout.flush();
     final value = stdin.readLineSync()?.trim();
     if (!_present(value)) throw XcrossError('No value entered for $prompt');
     return value!;
@@ -323,6 +316,12 @@ class AuthCommand extends Command<void> {
       throw XcrossError('$valueName prompt requires an interactive terminal.');
     }
 
+    // Write the prompt before touching console modes. On Windows, setting
+    // stdin.echoMode=false first leaves stdout's IOSink "bound to a stream"
+    // so the next stdout.write throws.
+    stdout.write(prompt);
+    stdout.flush();
+
     final bool priorEcho;
     final bool priorLine;
     try {
@@ -334,20 +333,21 @@ class AuthCommand extends Command<void> {
 
     try {
       try {
-        stdin.echoMode = false;
+        // lineMode before echoMode — Windows needs that order for Enter.
         stdin.lineMode = true;
+        stdin.echoMode = false;
       } on Object catch (e) {
         throw XcrossError(
           'Could not disable terminal echo; refusing to read the $valueName: $e',
         );
       }
-      stdout.write(prompt);
       final value = stdin.readLineSync();
-      stdout.writeln();
       return _present(value) ? value : null;
     } finally {
-      _trySet(() => stdin.lineMode = priorLine);
+      // Restore modes before writing again — same Windows stdout bind hazard.
       _trySet(() => stdin.echoMode = priorEcho);
+      _trySet(() => stdin.lineMode = priorLine);
+      stdout.writeln();
     }
   }
 

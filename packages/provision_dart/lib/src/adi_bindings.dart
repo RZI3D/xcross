@@ -7,12 +7,18 @@
 // types, or symbol names without re-checking upstream: the native library
 // exports these functions under obfuscated (but stable) names rather than
 // the documented `ADI*` names used for the Dart field names below.
+//
+// On Windows, looked-up symbols are SysV and must be wrapped with
+// sysvImport before Dart's MS-ABI asFunction can call them (mirrors
+// Provision's androidInvoke / @sysv). On Linux the wrap is an identity.
 
 import 'dart:ffi';
+import 'dart:io';
 
 import 'package:ffi/ffi.dart' show Utf8;
 
 import 'loader/loader.dart';
+import 'loader/sysv_abi_bridge.dart';
 
 // --- Native (C) call signatures, ported from adi.d's `extern(C)` aliases ---
 
@@ -96,98 +102,86 @@ typedef ADIOTPRequestDart = int Function(
   Pointer<Uint32> outOneTimePasswordLength,
 );
 
+Pointer<NativeFunction<T>> _lookup<T extends Function>(
+  LoadedNativeLibrary lib,
+  String symbol,
+  int argc,
+) {
+  final raw = lib.lookup<T>(symbol);
+  if (!Platform.isWindows) return raw;
+  return sysvImport(raw, argc);
+}
+
 /// Raw FFI bindings to the ADI (Apple Device Identity) native functions
 /// exported by `libstoreservicescore.so`, resolved by their obfuscated
 /// (but stable) symbol names.
-///
-/// See `lib/src/adi_client.dart` for an idiomatic Dart wrapper around
-/// these; use that instead of this class directly unless you specifically
-/// need raw pointer access.
 class AdiNativeBindings {
   AdiNativeBindings(LoadedNativeLibrary storeServicesCore)
-      : adiLoadLibraryWithPath = storeServicesCore
-            .lookup<ADILoadLibraryWithPathNative>('kq56gsgHG6')
-            .asFunction<ADILoadLibraryWithPathDart>(),
-        adiSetAndroidId = storeServicesCore
-            .lookup<ADISetAndroidIDNative>('Sph98paBcz')
-            .asFunction<ADISetAndroidIDDart>(),
-        adiSetProvisioningPath = storeServicesCore
-            .lookup<ADISetProvisioningPathNative>('nf92ngaK92')
-            .asFunction<ADISetProvisioningPathDart>(),
-        adiProvisioningErase = storeServicesCore
-            .lookup<ADIProvisioningEraseNative>('p435tmhbla')
-            .asFunction<ADIProvisioningEraseDart>(),
-        adiSynchronize = storeServicesCore
-            .lookup<ADISynchronizeNative>('tn46gtiuhw')
-            .asFunction<ADISynchronizeDart>(),
-        adiProvisioningDestroy = storeServicesCore
-            .lookup<ADIProvisioningDestroyNative>('fy34trz2st')
-            .asFunction<ADIProvisioningDestroyDart>(),
-        adiProvisioningEnd = storeServicesCore
-            .lookup<ADIProvisioningEndNative>('uv5t6nhkui')
-            .asFunction<ADIProvisioningEndDart>(),
-        adiProvisioningStart = storeServicesCore
-            .lookup<ADIProvisioningStartNative>('rsegvyrt87')
-            .asFunction<ADIProvisioningStartDart>(),
-        adiGetLoginCode = storeServicesCore
-            .lookup<ADIGetLoginCodeNative>('aslgmuibau')
-            .asFunction<ADIGetLoginCodeDart>(),
-        adiDispose = storeServicesCore
-            .lookup<ADIDisposeNative>('jk24uiwqrg')
-            .asFunction<ADIDisposeDart>(),
-        adiOtpRequest = storeServicesCore
-            .lookup<ADIOTPRequestNative>('qi864985u0')
-            .asFunction<ADIOTPRequestDart>();
+      : adiLoadLibraryWithPath = _lookup<ADILoadLibraryWithPathNative>(
+          storeServicesCore,
+          'kq56gsgHG6',
+          1,
+        ).asFunction<ADILoadLibraryWithPathDart>(),
+        adiSetAndroidId = _lookup<ADISetAndroidIDNative>(
+          storeServicesCore,
+          'Sph98paBcz',
+          2,
+        ).asFunction<ADISetAndroidIDDart>(),
+        adiSetProvisioningPath = _lookup<ADISetProvisioningPathNative>(
+          storeServicesCore,
+          'nf92ngaK92',
+          1,
+        ).asFunction<ADISetProvisioningPathDart>(),
+        adiProvisioningErase = _lookup<ADIProvisioningEraseNative>(
+          storeServicesCore,
+          'p435tmhbla',
+          1,
+        ).asFunction<ADIProvisioningEraseDart>(),
+        adiSynchronize = _lookup<ADISynchronizeNative>(
+          storeServicesCore,
+          'tn46gtiuhw',
+          7,
+        ).asFunction<ADISynchronizeDart>(),
+        adiProvisioningDestroy = _lookup<ADIProvisioningDestroyNative>(
+          storeServicesCore,
+          'fy34trz2st',
+          1,
+        ).asFunction<ADIProvisioningDestroyDart>(),
+        adiProvisioningEnd = _lookup<ADIProvisioningEndNative>(
+          storeServicesCore,
+          'uv5t6nhkui',
+          5,
+        ).asFunction<ADIProvisioningEndDart>(),
+        adiProvisioningStart = _lookup<ADIProvisioningStartNative>(
+          storeServicesCore,
+          'rsegvyrt87',
+          6,
+        ).asFunction<ADIProvisioningStartDart>(),
+        adiGetLoginCode = _lookup<ADIGetLoginCodeNative>(
+          storeServicesCore,
+          'aslgmuibau',
+          1,
+        ).asFunction<ADIGetLoginCodeDart>(),
+        adiDispose = _lookup<ADIDisposeNative>(
+          storeServicesCore,
+          'jk24uiwqrg',
+          1,
+        ).asFunction<ADIDisposeDart>(),
+        adiOtpRequest = _lookup<ADIOTPRequestNative>(
+          storeServicesCore,
+          'qi864985u0',
+          5,
+        ).asFunction<ADIOTPRequestDart>();
 
-  /// Tells ADI where to find its native libraries (a directory path).
-  /// Ported from `ADILoadLibraryWithPath` (obfuscated symbol `kq56gsgHG6`).
   final ADILoadLibraryWithPathDart adiLoadLibraryWithPath;
-
-  /// Sets the Android ID (device identifier) bytes ADI uses to derive its
-  /// per-device identity. Ported from `ADISetAndroidID` (`Sph98paBcz`).
   final ADISetAndroidIDDart adiSetAndroidId;
-
-  /// Sets the directory ADI persists its provisioning state to (e.g. the
-  /// on-disk `adi.pb`). Ported from `ADISetProvisioningPath` (`nf92ngaK92`).
   final ADISetProvisioningPathDart adiSetProvisioningPath;
-
-  /// Erases all provisioning state for the given `dsId`. Ported from
-  /// `ADIProvisioningErase` (`p435tmhbla`).
   final ADIProvisioningEraseDart adiProvisioningErase;
-
-  /// Re-synchronizes an already-provisioned device against
-  /// server-provided intermediate metadata. Ported from `ADISynchronize`
-  /// (`tn46gtiuhw`).
   final ADISynchronizeDart adiSynchronize;
-
-  /// Destroys an in-progress (started but not finished) provisioning
-  /// session. Ported from `ADIProvisioningDestroy` (`fy34trz2st`).
   final ADIProvisioningDestroyDart adiProvisioningDestroy;
-
-  /// Completes a provisioning session started with [adiProvisioningStart],
-  /// given the server's `ptm`/`tk` response. Ported from
-  /// `ADIProvisioningEnd` (`uv5t6nhkui`).
   final ADIProvisioningEndDart adiProvisioningEnd;
-
-  /// Starts a new provisioning session against server-provided
-  /// intermediate metadata (`spim`). Ported from `ADIProvisioningStart`
-  /// (`rsegvyrt87`).
   final ADIProvisioningStartDart adiProvisioningStart;
-
-  /// Returns `0` if the device (identified by `dsId`) is already
-  /// provisioned, or `-45061` (not provisioned) otherwise. Ported from
-  /// `ADIGetLoginCode` (`aslgmuibau`).
   final ADIGetLoginCodeDart adiGetLoginCode;
-
-  /// Frees a buffer previously allocated by the native library and
-  /// returned through an `out` parameter of another ADI call. Every
-  /// buffer returned by [adiSynchronize], [adiProvisioningStart], or
-  /// [adiOtpRequest] must be released with this. Ported from `ADIDispose`
-  /// (`jk24uiwqrg`).
   final ADIDisposeDart adiDispose;
-
-  /// Requests a one-time password (OTP) and machine identifier for the
-  /// given `dsId`, used to authenticate with Apple's GrandSlam login
-  /// service. Ported from `ADIOTPRequest` (`qi864985u0`).
   final ADIOTPRequestDart adiOtpRequest;
 }
