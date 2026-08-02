@@ -42,6 +42,12 @@ class AuthCommand extends Command<void> {
         help: 'Use Apple ID/password login. If omitted, xcross prompts.',
       )
       ..addOption(
+        'password',
+        help:
+            'Apple ID password (optional; prompted if omitted). '
+            'On Windows the interactive password is visible as typed.',
+      )
+      ..addOption(
         'adi-library-dir',
         valueHelp: 'path',
         help:
@@ -100,7 +106,11 @@ class AuthCommand extends Command<void> {
     if (argResults!.wasParsed('apple-id') && !_present(appleId)) {
       throw XcrossError('--apple-id requires a non-empty email address.');
     }
-    await _runAppleIdLogin(initialUsername: _present(appleId) ? appleId : null);
+    final passwordOpt = argResults!.option('password');
+    await _runAppleIdLogin(
+      initialUsername: _present(appleId) ? appleId : null,
+      initialPassword: _present(passwordOpt) ? passwordOpt : null,
+    );
   }
 
   Future<void> _saveAscCredentials({
@@ -130,7 +140,10 @@ class AuthCommand extends Command<void> {
     Log.logDone('App Store Connect credentials saved to $configPath');
   }
 
-  Future<void> _runAppleIdLogin({String? initialUsername}) async {
+  Future<void> _runAppleIdLogin({
+    String? initialUsername,
+    String? initialPassword,
+  }) async {
     if (!Platform.isWindows && !Platform.isLinux) {
       throw XcrossError(
         'Built-in Apple ID/password login is available on Linux and Windows. '
@@ -138,11 +151,13 @@ class AuthCommand extends Command<void> {
       );
     }
 
-    // Prompt before any await: on Windows, interactive stdin often breaks
-    // after async work (network / ADI fetch), so Apple ID + Password can
-    // paint on one line and appear to ignore typing.
-    final username = initialUsername ?? _readRequiredLine('Apple ID: ');
-    final password = _readPassword();
+    // Prompt before any await so Windows AOT stdin stays usable.
+    final credentials = _readAppleIdCredentials(
+      initialUsername: initialUsername,
+      initialPassword: initialPassword,
+    );
+    final username = credentials.username;
+    final password = credentials.password;
 
     final resolved = await _resolveAdiAnisette();
     final anisette = resolved.anisette;
@@ -150,7 +165,7 @@ class AuthCommand extends Command<void> {
     GrandSlamClient? loginClient;
     GrandSlamAppTokenExchange? tokenExchange;
     try {
-      final endpoints = await Log.logStep(
+      final endpoints = await _authStep(
         'Resolving GrandSlam endpoints',
         anisette.resolveGrandSlamEndpoints,
       );
@@ -158,7 +173,7 @@ class AuthCommand extends Command<void> {
         endpoints: endpoints,
         fetchAnisetteHeaders: anisette.fetchAnisetteHeaders,
       );
-      final loginData = await Log.logStep(
+      final loginData = await _authStep(
         'Signing in with Apple ID',
         () => loginClient!.login(
           username: username,
@@ -170,14 +185,14 @@ class AuthCommand extends Command<void> {
         endpoints: endpoints,
         fetchAnisetteHeaders: anisette.fetchAnisetteHeaders,
       );
-      final token = await Log.logStep(
+      final token = await _authStep(
         'Fetching Developer Services session',
         () => tokenExchange!.exchange(loginData),
       );
       final teamHttpClient = createAppleHttpClient();
       final List<DeveloperServicesTeam> teams;
       try {
-        teams = await Log.logStep(
+        teams = await _authStep(
           'Fetching Developer Services teams',
           () => DeveloperServicesClient.listTeams(
             token: token,
@@ -206,15 +221,32 @@ class AuthCommand extends Command<void> {
           adiLibraryDirectory: adiLibraryDirectory,
         ),
       );
-      Log.logDone('Signed in as $username. Session saved to ${store.path}');
+      _promptWriteln('Signed in as $username. Session saved to ${store.path}');
     } on XcrossError {
       rethrow;
-    } on Object catch (e) {
+    } on Object catch (e, st) {
+      _promptWriteln('error: Apple ID login failed: $e');
+      _promptWriteln('$st');
       throw XcrossError('Apple ID login failed: $e');
     } finally {
       tokenExchange?.close();
       loginClient?.close();
       anisette.close();
+    }
+  }
+
+  /// Status lines for auth. On Windows AOT, dart:io stdout/stderr sinks die
+  /// after the first [stdin.readLineSync], so status goes through [_promptWrite].
+  static Future<T> _authStep<T>(String label, Future<T> Function() body) async {
+    if (!Platform.isWindows) return Log.logStep(label, body);
+    _promptWriteln('$label…');
+    try {
+      final result = await body();
+      _promptWriteln('✓ $label');
+      return result;
+    } on Object {
+      _promptWriteln('✗ $label');
+      rethrow;
     }
   }
 
@@ -251,7 +283,7 @@ class AuthCommand extends Command<void> {
       );
     }
 
-    await Log.logStep(
+    await _authStep(
       'Fetching Apple ADI libraries',
       () => AdiLibraryFetcher(
         cacheDir: Directory(adiLibraryDir),
@@ -264,13 +296,12 @@ class AuthCommand extends Command<void> {
   }
 
   DeveloperServicesTeam _selectTeam(List<DeveloperServicesTeam> teams) {
-    stdout.writeln('Multiple teams available. Choose one:');
+    _promptWriteln('Multiple teams available. Choose one:');
     for (var i = 0; i < teams.length; i++) {
-      stdout.writeln('  [${i + 1}] ${teams[i].name} (${teams[i].id})');
+      _promptWriteln('  [${i + 1}] ${teams[i].name} (${teams[i].id})');
     }
     while (true) {
-      stdout.write('Choice (1-${teams.length}): ');
-      stdout.flush();
+      _promptWrite('Choice (1-${teams.length}): ');
       final raw = stdin.readLineSync()?.trim();
       if (raw == null) {
         throw XcrossError('No team selection made (stdin closed).');
@@ -279,7 +310,7 @@ class AuthCommand extends Command<void> {
       if (choice != null && choice >= 1 && choice <= teams.length) {
         return teams[choice - 1];
       }
-      stdout.writeln(
+      _promptWriteln(
         'Invalid choice "$raw". Enter a number 1-${teams.length}.',
       );
     }
@@ -294,21 +325,78 @@ class AuthCommand extends Command<void> {
         'Enter the verification code sent to your trusted device: ',
       GrandSlamTwoFactorMode.unspecified => 'Enter the verification code: ',
     };
-    return _readHiddenLine(prompt, valueName: 'verification code')?.trim();
+    return _readRequiredLine(prompt);
+  }
+
+  /// Windows AOT (`dart build cli`): after the first [stdin.readLineSync],
+  /// dart:io's stdout/stderr IOSinks throw "StreamSink is bound to a stream"
+  /// on the next write/flush. Write prompts/status via `\\.\CONOUT$` instead.
+  static void _promptWrite(String text) {
+    if (!Platform.isWindows) {
+      stderr.write(text);
+      return;
+    }
+    RandomAccessFile? out;
+    try {
+      out = File(r'\\.\CONOUT$').openSync(mode: FileMode.writeOnlyAppend);
+      out.writeFromSync(utf8.encode(text));
+      out.flushSync();
+    } on Object {
+      // Piped/non-console: best-effort stderr (may also be broken).
+      try {
+        stderr.write(text);
+      } on Object catch (_) {}
+    } finally {
+      out?.closeSync();
+    }
+  }
+
+  static void _promptWriteln(String text) => _promptWrite('$text\n');
+
+  ({String username, String password}) _readAppleIdCredentials({
+    String? initialUsername,
+    String? initialPassword,
+  }) {
+    if (!Platform.isWindows) {
+      final username = initialUsername ?? _readRequiredLine('Apple ID: ');
+      final password =
+          initialPassword ??
+          (_readHiddenLine('Password: ', valueName: 'password') ??
+              (throw XcrossError('No password entered.')));
+      return (username: username, password: password);
+    }
+
+    // Windows: emit every prompt before any readLineSync, and never write
+    // through stdout/stderr between reads (see [_promptWrite]).
+    final needUser = !_present(initialUsername);
+    final needPass = !_present(initialPassword);
+    if (needUser && needPass) {
+      _promptWriteln(
+        'Enter Apple ID, then password on the next line '
+        '(password is visible as typed).',
+      );
+      final username = stdin.readLineSync()?.trim();
+      final password = stdin.readLineSync();
+      if (!_present(username)) {
+        throw XcrossError('No value entered for Apple ID.');
+      }
+      if (!_present(password)) throw XcrossError('No password entered.');
+      return (username: username!, password: password!);
+    }
+    final username = needUser
+        ? _readRequiredLine('Apple ID: ')
+        : initialUsername!;
+    final password = needPass
+        ? _readRequiredLine('Password: ')
+        : initialPassword!;
+    return (username: username, password: password);
   }
 
   String _readRequiredLine(String prompt) {
-    stdout.write(prompt);
-    stdout.flush();
+    _promptWrite(prompt);
     final value = stdin.readLineSync()?.trim();
     if (!_present(value)) throw XcrossError('No value entered for $prompt');
     return value!;
-  }
-
-  String _readPassword() {
-    final password = _readHiddenLine('Password: ', valueName: 'password');
-    if (!_present(password)) throw XcrossError('No password entered.');
-    return password!;
   }
 
   String? _readHiddenLine(String prompt, {required String valueName}) {
@@ -316,11 +404,7 @@ class AuthCommand extends Command<void> {
       throw XcrossError('$valueName prompt requires an interactive terminal.');
     }
 
-    // Write the prompt before touching console modes. On Windows, setting
-    // stdin.echoMode=false first leaves stdout's IOSink "bound to a stream"
-    // so the next stdout.write throws.
-    stdout.write(prompt);
-    stdout.flush();
+    _promptWrite(prompt);
 
     final bool priorEcho;
     final bool priorLine;
@@ -333,7 +417,6 @@ class AuthCommand extends Command<void> {
 
     try {
       try {
-        // lineMode before echoMode — Windows needs that order for Enter.
         stdin.lineMode = true;
         stdin.echoMode = false;
       } on Object catch (e) {
@@ -344,10 +427,9 @@ class AuthCommand extends Command<void> {
       final value = stdin.readLineSync();
       return _present(value) ? value : null;
     } finally {
-      // Restore modes before writing again — same Windows stdout bind hazard.
       _trySet(() => stdin.echoMode = priorEcho);
       _trySet(() => stdin.lineMode = priorLine);
-      stdout.writeln();
+      _promptWriteln('');
     }
   }
 

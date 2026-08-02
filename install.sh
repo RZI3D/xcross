@@ -13,6 +13,8 @@ REPO="arxdeus/xcross"
 BINARY="xcross"
 NOTICE="ZSIGN_LICENSE.txt"
 INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
+# Native-assets .so must sit at dirname(INSTALL_DIR)/lib so bin/xcross finds
+# ../lib/*.so (same layout as `dart build cli`'s bundle/).
 LICENSE_DIR="${XCROSS_LICENSE_DIR:-$(dirname "$INSTALL_DIR")/share/licenses/xcross}"
 VERSION="${XCROSS_VERSION:-latest}"
 
@@ -30,8 +32,8 @@ os="$(uname -s)"
 # --- detect architecture ---------------------------------------------------
 arch="$(uname -m)"
 case "$arch" in
-x86_64 | amd64) asset="xcross-linux-x64" ;;
-aarch64 | arm64) asset="xcross-linux-arm64" ;;
+x86_64 | amd64) asset="xcross-linux-x64.tar.gz" ;;
+aarch64 | arm64) asset="xcross-linux-arm64.tar.gz" ;;
 *) err "unsupported architecture: $arch (supported: x86_64, aarch64)" ;;
 esac
 info "Detected: $os/$arch -> $asset"
@@ -63,17 +65,37 @@ download "$url" "$tmp/$asset" || err "download failed: $url"
 download "$notice_url" "$tmp/$NOTICE" || err "download failed: $notice_url"
 [ -s "$tmp/$NOTICE" ] || err "downloaded file is empty: $notice_url"
 
+tar -C "$tmp" -xzf "$tmp/$asset" || err "failed to extract $asset"
+[ -x "$tmp/bin/xcross" ] || err "archive missing bin/xcross"
+[ -d "$tmp/lib" ] || err "archive missing lib/"
+
 # --- install (use sudo if the target dirs are not writable) ---------------
+# Layout after install:
+#   INSTALL_DIR/xcross          (from bin/xcross)
+#   LIB_DIR/*.so                (from lib/) — must be INSTALL_DIR/../lib/xcross
+# so the AOT loader's ../lib relative to bin/ still works when INSTALL_DIR is
+# .../bin and LIB_DIR is .../lib/xcross. Prefer LIB_DIR = dirname(INSTALL_DIR)/lib.
+lib_parent="$(dirname "$INSTALL_DIR")/lib"
 target="$INSTALL_DIR/$BINARY"
 notice_target="$LICENSE_DIR/zsign.txt"
-if mkdir -p "$INSTALL_DIR" "$LICENSE_DIR" 2>/dev/null &&
-	[ -w "$INSTALL_DIR" ] && [ -w "$LICENSE_DIR" ]; then
-	install -m 0755 "$tmp/$asset" "$target"
+
+install_tree() {
+	mkdir -p "$INSTALL_DIR" "$lib_parent" "$LICENSE_DIR"
+	install -m 0755 "$tmp/bin/xcross" "$target"
+	# Place native assets at <prefix>/lib/ so bin/xcross finds ../lib/*.so
+	rm -rf "$lib_parent/sysv_abi_bridge.so" "$lib_parent"/lib*.so 2>/dev/null || true
+	cp -a "$tmp/lib/." "$lib_parent/"
 	install -m 0644 "$tmp/$NOTICE" "$notice_target"
+}
+
+if mkdir -p "$INSTALL_DIR" "$lib_parent" "$LICENSE_DIR" 2>/dev/null &&
+	[ -w "$INSTALL_DIR" ] && [ -w "$lib_parent" ] && [ -w "$LICENSE_DIR" ]; then
+	install_tree
 elif command -v sudo >/dev/null 2>&1; then
-	info "Elevating with sudo to write $INSTALL_DIR and $LICENSE_DIR"
-	sudo mkdir -p "$INSTALL_DIR" "$LICENSE_DIR"
-	sudo install -m 0755 "$tmp/$asset" "$target"
+	info "Elevating with sudo to write $INSTALL_DIR and $lib_parent"
+	sudo mkdir -p "$INSTALL_DIR" "$lib_parent" "$LICENSE_DIR"
+	sudo install -m 0755 "$tmp/bin/xcross" "$target"
+	sudo cp -a "$tmp/lib/." "$lib_parent/"
 	sudo install -m 0644 "$tmp/$NOTICE" "$notice_target"
 else
 	err "cannot write install directories; set INSTALL_DIR and XCROSS_LICENSE_DIR"

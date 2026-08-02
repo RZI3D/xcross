@@ -23,6 +23,14 @@ void main() {
 
       final client = AdiClient.fromDirectory(fetcher.cacheDir.path);
       expect(client, isNotNull);
+      // First real ADI calls (hits SysV import trampolines). A bad bridge
+      // used to kill the process here with no Dart exception.
+      client.provisioningPath =
+          '${Directory.systemTemp.createTempSync('adi-prov').path.replaceAll(r'\', '/')}/';
+      client.identifier = '0123456789abcdef';
+      // -2 is the conventional "DSID unknown / not provisioned" probe.
+      final provisioned = await client.isMachineProvisioned(-2);
+      expect(provisioned, isA<bool>());
     },
     timeout: const Timeout(Duration(minutes: 2)),
   );

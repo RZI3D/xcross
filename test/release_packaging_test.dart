@@ -15,13 +15,16 @@ void main() {
       "'THIRD_PARTY_LICENSES/provision-dart.txt'",
       'dart analyze',
       'dart test',
+      'dart build cli',
       "if: startsWith(github.ref, 'refs/tags/')",
       r'gh release create "$tag"',
-      'dist/xcross-linux-x64',
-      'dist/xcross-linux-arm64',
+      'dist/xcross-linux-x64.tar.gz',
+      'dist/xcross-linux-arm64.tar.gz',
       'dist/xcross-windows-x64.zip',
       'native/signing/ZSIGN_LICENSE.txt',
-      'xcross.exe --help',
+      'bin/xcross.exe',
+      'lib/sysv_abi_bridge.dll',
+      'smoke/bin/xcross.exe --help',
     ]) {
       expect(workflow, contains(expected));
     }
@@ -51,14 +54,15 @@ void main() {
     final installer = File('install.sh').readAsStringSync();
 
     for (final expected in [
-      'xcross-linux-x64',
-      'xcross-linux-arm64',
+      'xcross-linux-x64.tar.gz',
+      'xcross-linux-arm64.tar.gz',
       'NOTICE="ZSIGN_LICENSE.txt"',
       r'tmp="$(mktemp -d)"',
       r'''trap 'rm -rf "$tmp"' EXIT HUP INT TERM''',
       r'download "$url" "$tmp/$asset"',
       r'download "$notice_url" "$tmp/$NOTICE"',
-      r'install -m 0755 "$tmp/$asset" "$target"',
+      r'tar -C "$tmp" -xzf "$tmp/$asset"',
+      r'install -m 0755 "$tmp/bin/xcross" "$target"',
       r'install -m 0644 "$tmp/$NOTICE" "$notice_target"',
       r'"$target" --help',
     ]) {

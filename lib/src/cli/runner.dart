@@ -91,11 +91,33 @@ abstract final class XcrossCli {
       await runner.run(args);
       return 0;
     } on UsageException catch (e) {
-      stderr.writeln(e);
+      _cliError('$e');
       return 64;
     } on XcrossError catch (e) {
-      stderr.writeln('error: ${e.message}');
+      _cliError('error: ${e.message}');
+      return 1;
+    } on Object catch (e, st) {
+      _cliError('error: $e');
+      _cliError('$st');
       return 1;
     }
+  }
+
+  /// Best-effort CLI error line. On Windows AOT, stderr may be unusable after
+  /// an interactive stdin read — fall back to the console device.
+  static void _cliError(String message) {
+    try {
+      stderr.writeln(message);
+      return;
+    } on Object catch (_) {}
+    if (!Platform.isWindows) return;
+    try {
+      final out = File(r'\\.\CONOUT$').openSync(mode: FileMode.writeOnlyAppend);
+      try {
+        out.writeStringSync('$message\n');
+      } finally {
+        out.closeSync();
+      }
+    } on Object catch (_) {}
   }
 }

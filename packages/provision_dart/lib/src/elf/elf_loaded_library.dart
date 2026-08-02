@@ -95,14 +95,17 @@ class ElfLoadedLibrary {
           .asTypedList(allocation.length)
           .setRange(headerStart, headerEnd, bytes, fileStart);
 
-      final flags = elf.phFlags(i);
+      // Stay RWX until all RELA are applied. Upstream flips to final perms
+      // before reloc; that works on Linux anonymous mmap but on Windows a
+      // write into PAGE_EXECUTE_READ during reloc is a hard AV. Final
+      // permissions are applied in a second pass below.
       allocator.protect(
         allocation,
         offset: protStart,
         length: protLength,
-        readable: flags & elfPfR != 0,
-        writable: flags & elfPfW != 0,
-        executable: flags & elfPfX != 0,
+        readable: true,
+        writable: true,
+        executable: true,
       );
     }
 
@@ -163,6 +166,25 @@ class ElfLoadedLibrary {
         default:
           break;
       }
+    }
+
+    // Final protection pass: reloc needed RWX on Windows (PAGE_EXECUTE_READ
+    // is not writable); now flip each PT_LOAD to its ELF flags.
+    for (var i = 0; i < elf.ehPhnum; i++) {
+      if (elf.phType(i) != elfPtLoad) continue;
+      final headerStart = elf.phVaddr(i) - alignedMin;
+      final memEnd = headerStart + elf.phMemsz(i);
+      final protStart = _pageFloor(headerStart);
+      final protLength = _pageCeil(memEnd) - protStart;
+      final flags = elf.phFlags(i);
+      allocator.protect(
+        allocation,
+        offset: protStart,
+        length: protLength,
+        readable: flags & elfPfR != 0,
+        writable: flags & elfPfW != 0,
+        executable: flags & elfPfX != 0,
+      );
     }
 
     final finalSymtab = (symtabOffset != null && strtabOffset != null)

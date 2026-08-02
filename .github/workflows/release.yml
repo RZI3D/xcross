@@ -45,16 +45,17 @@ jobs:
 
       - name: Compile binary
         run: |
+          dart build cli -t bin/xcross.dart
           mkdir -p dist
-          dart compile exe bin/xcross.dart -o "dist/${{ matrix.asset }}"
-          chmod +x "dist/${{ matrix.asset }}"
+          # Bundle layout is bin/ + lib/ (native assets). Ship as tar.gz.
+          tar -C build/cli/*/bundle -czf "dist/${{ matrix.asset }}.tar.gz" bin lib
 
       - name: Upload binary artifacts
         # v7
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: ${{ matrix.asset }}
-          path: dist/${{ matrix.asset }}
+          path: dist/${{ matrix.asset }}.tar.gz
           if-no-files-found: error
 
   build-windows:
@@ -82,8 +83,10 @@ jobs:
       - name: Build xcross
         shell: pwsh
         run: |
+          dart build cli -t bin/xcross.dart
           New-Item -ItemType Directory -Force dist | Out-Null
-          dart compile exe bin/xcross.dart -o dist/xcross.exe
+          Copy-Item -Recurse build/cli/windows_x64/bundle/bin dist/bin
+          Copy-Item -Recurse build/cli/windows_x64/bundle/lib dist/lib
 
       - name: Package Windows release
         shell: pwsh
@@ -109,7 +112,8 @@ jobs:
             'LICENSE'
             'THIRD_PARTY_LICENSES/provision-dart.txt'
             'THIRD_PARTY_LICENSES/zsign.txt'
-            'xcross.exe'
+            'bin/xcross.exe'
+            'lib/sysv_abi_bridge.dll'
           ) | Sort-Object
           $root = Resolve-Path smoke
           $actual = Get-ChildItem smoke -File -Recurse | ForEach-Object {
@@ -119,7 +123,7 @@ jobs:
             throw "Unexpected archive contents: $actual"
           }
 
-          & smoke/xcross.exe --help | Out-Null
+          & smoke/bin/xcross.exe --help | Out-Null
           if ($LASTEXITCODE -ne 0) { throw 'xcross.exe --help failed' }
 
       - name: Upload Windows artifact
@@ -159,8 +163,8 @@ jobs:
         run: |
           tag="$RELEASE_TAG"
           gh release create "$tag" \
-            dist/xcross-linux-x64 \
-            dist/xcross-linux-arm64 \
+            dist/xcross-linux-x64.tar.gz \
+            dist/xcross-linux-arm64.tar.gz \
             dist/xcross-windows-x64.zip \
             native/signing/ZSIGN_LICENSE.txt \
             packages/provision_dart/LICENSE \

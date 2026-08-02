@@ -80,10 +80,16 @@ class WindowsNativeSymbolStubs {
 
   final DynamicLibrary _ucrt = DynamicLibrary.process();
 
-  Pointer<Void> resolve(String symbolName) => _table[symbolName] ?? nullptr;
+  Pointer<Void> resolve(String symbolName) =>
+      _table[symbolName] ?? nullptr;
 
   void _publish(String name, Pointer<Void> msAbiFn, int argc) {
     _table[name] = sysvExport(msAbiFn, argc);
+  }
+
+  /// Host CRT symbol published as a SysV-callable GOT entry.
+  void _publishCrt(String name, int argc, [String? crtName]) {
+    _publish(name, _ucrt.lookup<Void>(crtName ?? name).cast(), argc);
   }
 
   void _bindAll() {
@@ -101,6 +107,48 @@ class WindowsNativeSymbolStubs {
     _publish('malloc', _callable1malloc(_malloc), 1);
     _publish('free', _callable1free(_free), 1);
     _publish('strncpy', _callable3strncpy(_strncpy), 3);
+
+    _publishCrt('memcpy', 3);
+    _publishCrt('memmove', 3);
+    _publishCrt('memset', 3);
+    _publishCrt('memcmp', 3);
+    _publishCrt('memchr', 3);
+    _publishCrt('strlen', 1);
+    _publishCrt('strcmp', 2);
+    _publishCrt('strncmp', 3);
+    _publishCrt('strcpy', 2);
+    _publishCrt('strcat', 2);
+    _publishCrt('strstr', 2);
+    _publishCrt('strchr', 2);
+    _publishCrt('strrchr', 2);
+    _publishCrt('strtol', 3);
+    _publishCrt('strtoul', 3);
+    _publishCrt('strtoll', 3);
+    _publishCrt('strtoull', 3);
+    _publishCrt('strtod', 2);
+    _publishCrt('atof', 1);
+    _publishCrt('atoi', 1);
+    _publishCrt('calloc', 2);
+    _publishCrt('realloc', 2);
+    _publishCrt('abort', 0);
+    _publishCrt('strcasecmp', 2, '_stricmp');
+    _publishCrt('strncasecmp', 3, '_strnicmp');
+
+    // C++ ABI bits CoreADI references; no-op is enough for our short-lived
+    // ADI usage (matches "don't run real destructors" lazy approach).
+    final cxaAtexit =
+        NativeCallable<Int32 Function(Pointer<Void>, Pointer<Void>, Pointer<Void>)>.isolateLocal(
+      (Pointer<Void> a, Pointer<Void> b, Pointer<Void> c) => 0,
+      exceptionalReturn: 0,
+    );
+    _keepAlive.add(cxaAtexit);
+    _publish('__cxa_atexit', cxaAtexit.nativeFunction.cast(), 3);
+    final cxaFinalize = NativeCallable<Void Function(Pointer<Void>)>.isolateLocal(
+      (Pointer<Void> p) {},
+    );
+    _keepAlive.add(cxaFinalize);
+    _publish('__cxa_finalize', cxaFinalize.nativeFunction.cast(), 1);
+    _publish('__stack_chk_fail', _ucrt.lookup<Void>('abort').cast(), 0);
 
     final errnoLoc = NativeCallable<Pointer<Int32> Function()>.isolateLocal(
       () => _errnoPtr,
@@ -333,9 +381,11 @@ class WindowsNativeSymbolStubs {
 
   int _close(int fd) => _closeCrt(fd);
 
-  int _read(int fd, Pointer<Void> buf, int count) => _readCrt(fd, buf, count);
+  int _read(int fd, Pointer<Void> buf, int count) =>
+      _readCrt(fd, buf, count);
 
-  int _write(int fd, Pointer<Void> buf, int count) => _writeCrt(fd, buf, count);
+  int _write(int fd, Pointer<Void> buf, int count) =>
+      _writeCrt(fd, buf, count);
 
   int _mkdir(Pointer<Utf8> path, int mode) {
     final winPath = _toWindowsPath(path);
@@ -455,9 +505,13 @@ class WindowsNativeSymbolStubs {
     final path = namePtr.toDartString();
     try {
       final lib = loadLibraryForDlopen(path);
-      final handle = lib.base;
+      // Opaque heap handle — never return the ELF mapping address. ADI may
+      // treat the dlopen result like a malloc'd object in edge paths; giving
+      // it VirtualAlloc base has been a crash suspect after dlsym.
+      final handle = malloc<IntPtr>();
+      handle.value = lib.base.address;
       _dlopenHandles[handle.address] = lib;
-      return handle;
+      return handle.cast();
     } catch (_) {
       return nullptr;
     }
@@ -475,5 +529,6 @@ class WindowsNativeSymbolStubs {
 
   void _dlclose(Pointer<Void> handle) {
     _dlopenHandles.remove(handle.address);
+    malloc.free(handle.cast<IntPtr>());
   }
 }

@@ -59,7 +59,7 @@ The command prompts for the password and 2FA code, then stores only the resultin
 
 ### Windows (native)
 
-Download `xcross-windows-x64.zip` from [Releases](https://github.com/arxdeus/xcross/releases), extract it, and put that directory on `PATH`. The archive contains `xcross.exe`. Signing runs in process, so no signing executable is bundled. Swift, LLVM, Flutter, and the Apple SDK are host prerequisites and are not bundled.
+Download `xcross-windows-x64.zip` from [Releases](https://github.com/arxdeus/xcross/releases), extract it, and put the `bin` directory on `PATH`. The archive contains `bin/xcross.exe` and `lib/sysv_abi_bridge.dll` (ADI auth native asset). Signing runs in process, so no signing executable is bundled. Swift, LLVM, Flutter, and the Apple SDK are host prerequisites and are not bundled.
 
 Install Swift and LLVM from an Administrator PowerShell:
 

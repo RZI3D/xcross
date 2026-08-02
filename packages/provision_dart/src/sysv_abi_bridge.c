@@ -1,12 +1,13 @@
 // SysV <-> Microsoft x64 calling-convention trampolines for loading
 // Android/bionic ELF libraries on Windows.
 //
-// Android .so code uses the SysV ABI (args in rdi,rsi,rdx,rcx,r8,r9).
-// Dart FFI / NativeCallable on Windows use the Microsoft x64 ABI
-// (rcx,rdx,r8,r9 + 32-byte shadow space). These trampolines rearrange
-// integer/pointer arguments for arities 0..8 (enough for ADI).
+// Both SysV and MS x64 require: on function ENTRY, rsp % 16 == 8
+// (call pushed the return address). Equivalently, just BEFORE a call,
+// rsp % 16 == 0. Getting this wrong makes callees' `movdqa [rbp-…]`
+// faults (seen as c0000005 inside libstoreservicescore).
 //
-// On non-Windows builds the hook emits identity stubs instead.
+// Also: rdi/rsi are MS non-volatile / SysV arg regs → import saves them.
+// MS callees may scribble 32 bytes of shadow space → export allocates it.
 
 #include <stdint.h>
 #include <string.h>
@@ -16,11 +17,11 @@
 #include <windows.h>
 
 typedef struct {
-  uint8_t code[128];
+  uint8_t code[256];
   void* target;
 } TrampolineSlot;
 
-enum { kPoolCapacity = 256 };
+enum { kPoolCapacity = 512 };
 
 static TrampolineSlot g_pool[kPoolCapacity];
 static size_t g_pool_used = 0;
@@ -56,179 +57,333 @@ static size_t emit_load_target(uint8_t* code, size_t at, const TrampolineSlot* s
   return at + 4;
 }
 
-// SysV -> MS (export): Android calls us (SysV), we call Dart/MSVC (MS).
+// SysV -> MS (export)
 static void emit_export(TrampolineSlot* slot, int argc) {
   uint8_t* code = slot->code;
   size_t at = 0;
 
   if (argc <= 4) {
+    // Entry rsp≡8. Need rsp≡0 before call → sub 0x28 (shadow 0x20 + 8 pad).
+    code[at++] = 0x48;
+    code[at++] = 0x83;
+    code[at++] = 0xEC;
+    code[at++] = 0x28;
+
     if (argc >= 3) {
-      code[at++] = 0x49; code[at++] = 0x89; code[at++] = 0xD2; // r10 = rdx
+      code[at++] = 0x49;
+      code[at++] = 0x89;
+      code[at++] = 0xD2;
     }
     if (argc >= 4) {
-      code[at++] = 0x49; code[at++] = 0x89; code[at++] = 0xCB; // r11 = rcx
+      code[at++] = 0x49;
+      code[at++] = 0x89;
+      code[at++] = 0xCB;
     }
     if (argc >= 1) {
-      code[at++] = 0x48; code[at++] = 0x89; code[at++] = 0xF9; // rcx = rdi
+      code[at++] = 0x48;
+      code[at++] = 0x89;
+      code[at++] = 0xF9;
     }
     if (argc >= 2) {
-      code[at++] = 0x48; code[at++] = 0x89; code[at++] = 0xF2; // rdx = rsi
+      code[at++] = 0x48;
+      code[at++] = 0x89;
+      code[at++] = 0xF2;
     }
     if (argc >= 3) {
-      code[at++] = 0x4D; code[at++] = 0x89; code[at++] = 0xD0; // r8 = r10
+      code[at++] = 0x4D;
+      code[at++] = 0x89;
+      code[at++] = 0xD0;
     }
     if (argc >= 4) {
-      code[at++] = 0x4D; code[at++] = 0x89; code[at++] = 0xD9; // r9 = r11
+      code[at++] = 0x4D;
+      code[at++] = 0x89;
+      code[at++] = 0xD9;
     }
+
     at = emit_load_target(code, at, slot);
-    code[at++] = 0xFF; code[at++] = 0xE0; // jmp *rax
+    code[at++] = 0xFF;
+    code[at++] = 0xD0;
+    code[at++] = 0x48;
+    code[at++] = 0x83;
+    code[at++] = 0xC4;
+    code[at++] = 0x28;
+    code[at++] = 0xC3;
     return;
   }
 
   // argc 5..8
-  code[at++] = 0x41; code[at++] = 0x54; // push r12
-  code[at++] = 0x41; code[at++] = 0x55; // push r13
-  code[at++] = 0x4D; code[at++] = 0x89; code[at++] = 0xC4; // r12 = r8 (SysV arg5)
+  code[at++] = 0x41;
+  code[at++] = 0x54; // push r12 ; entry≡8 → ≡0
+  code[at++] = 0x41;
+  code[at++] = 0x55; // push r13 ; → ≡8
+  code[at++] = 0x4D;
+  code[at++] = 0x89;
+  code[at++] = 0xC4;
   if (argc >= 6) {
-    code[at++] = 0x4D; code[at++] = 0x89; code[at++] = 0xCD; // r13 = r9
+    code[at++] = 0x4D;
+    code[at++] = 0x89;
+    code[at++] = 0xCD;
   }
   if (argc >= 3) {
-    code[at++] = 0x49; code[at++] = 0x89; code[at++] = 0xD2; // r10 = rdx
+    code[at++] = 0x49;
+    code[at++] = 0x89;
+    code[at++] = 0xD2;
   }
   if (argc >= 4) {
-    code[at++] = 0x49; code[at++] = 0x89; code[at++] = 0xCB; // r11 = rcx
+    code[at++] = 0x49;
+    code[at++] = 0x89;
+    code[at++] = 0xCB;
   }
-  code[at++] = 0x48; code[at++] = 0x89; code[at++] = 0xF9; // rcx = rdi
-  code[at++] = 0x48; code[at++] = 0x89; code[at++] = 0xF2; // rdx = rsi
+  code[at++] = 0x48;
+  code[at++] = 0x89;
+  code[at++] = 0xF9;
+  code[at++] = 0x48;
+  code[at++] = 0x89;
+  code[at++] = 0xF2;
   if (argc >= 3) {
-    code[at++] = 0x4D; code[at++] = 0x89; code[at++] = 0xD0; // r8 = r10
+    code[at++] = 0x4D;
+    code[at++] = 0x89;
+    code[at++] = 0xD0;
   }
   if (argc >= 4) {
-    code[at++] = 0x4D; code[at++] = 0x89; code[at++] = 0xD9; // r9 = r11
+    code[at++] = 0x4D;
+    code[at++] = 0x89;
+    code[at++] = 0xD9;
   }
 
+  // rsp≡8 after pushes. Need ≡0 before call ⇒ subtract N where N≡8 (mod 16).
   const int extra = argc - 4;
-  const int frame = 0x28 + 8 * extra;
-  code[at++] = 0x48; code[at++] = 0x81; code[at++] = 0xEC;
-  memcpy(code + at, &frame, 4); at += 4;
+  int frame = 0x20 + 8 * extra;
+  while ((frame & 0xF) != 0x8) {
+    frame += 8;
+  }
 
-  // mov [rsp+0x20], r12
-  code[at++] = 0x4C; code[at++] = 0x89; code[at++] = 0x64; code[at++] = 0x24;
+  code[at++] = 0x48;
+  code[at++] = 0x81;
+  code[at++] = 0xEC;
+  memcpy(code + at, &frame, 4);
+  at += 4;
+
+  code[at++] = 0x4C;
+  code[at++] = 0x89;
+  code[at++] = 0x64;
+  code[at++] = 0x24;
   code[at++] = 0x20;
   if (argc >= 6) {
-    code[at++] = 0x4C; code[at++] = 0x89; code[at++] = 0x6C; code[at++] = 0x24;
+    code[at++] = 0x4C;
+    code[at++] = 0x89;
+    code[at++] = 0x6C;
+    code[at++] = 0x24;
     code[at++] = 0x28;
   }
   if (argc >= 7) {
-    // After 2 pushes + frame: original SysV [rsp+8] (arg7) at rsp+frame+0x18
+    // entry arg7 @ [rsp+8]; after 2 pushes + frame: +0x10+frame
     const int off = frame + 0x18;
-    code[at++] = 0x48; code[at++] = 0x8B; code[at++] = 0x84; code[at++] = 0x24;
-    memcpy(code + at, &off, 4); at += 4;
-    code[at++] = 0x48; code[at++] = 0x89; code[at++] = 0x44; code[at++] = 0x24;
+    code[at++] = 0x48;
+    code[at++] = 0x8B;
+    code[at++] = 0x84;
+    code[at++] = 0x24;
+    memcpy(code + at, &off, 4);
+    at += 4;
+    code[at++] = 0x48;
+    code[at++] = 0x89;
+    code[at++] = 0x44;
+    code[at++] = 0x24;
     code[at++] = 0x30;
   }
   if (argc >= 8) {
     const int off = frame + 0x20;
-    code[at++] = 0x48; code[at++] = 0x8B; code[at++] = 0x84; code[at++] = 0x24;
-    memcpy(code + at, &off, 4); at += 4;
-    code[at++] = 0x48; code[at++] = 0x89; code[at++] = 0x44; code[at++] = 0x24;
+    code[at++] = 0x48;
+    code[at++] = 0x8B;
+    code[at++] = 0x84;
+    code[at++] = 0x24;
+    memcpy(code + at, &off, 4);
+    at += 4;
+    code[at++] = 0x48;
+    code[at++] = 0x89;
+    code[at++] = 0x44;
+    code[at++] = 0x24;
     code[at++] = 0x38;
   }
 
   at = emit_load_target(code, at, slot);
-  code[at++] = 0xFF; code[at++] = 0xD0; // call *rax
-  code[at++] = 0x48; code[at++] = 0x81; code[at++] = 0xC4;
-  memcpy(code + at, &frame, 4); at += 4;
-  code[at++] = 0x41; code[at++] = 0x5D; // pop r13
-  code[at++] = 0x41; code[at++] = 0x5C; // pop r12
-  code[at++] = 0xC3; // ret
+  code[at++] = 0xFF;
+  code[at++] = 0xD0;
+  code[at++] = 0x48;
+  code[at++] = 0x81;
+  code[at++] = 0xC4;
+  memcpy(code + at, &frame, 4);
+  at += 4;
+  code[at++] = 0x41;
+  code[at++] = 0x5D;
+  code[at++] = 0x41;
+  code[at++] = 0x5C;
+  code[at++] = 0xC3;
   (void)at;
 }
 
-// MS -> SysV (import): Dart calls us (MS), we call Android ADI (SysV).
+// MS -> SysV (import)
 static void emit_import(TrampolineSlot* slot, int argc) {
   uint8_t* code = slot->code;
   size_t at = 0;
 
+  // Entry rsp≡8 (Dart MS call). Save MS non-volatiles.
+  code[at++] = 0x57; // push rdi ; ≡0
+  code[at++] = 0x56; // push rsi ; ≡8
+  // Before SysV call need rsp≡0 → one more 8-byte adjust.
+
   if (argc <= 4) {
     if (argc >= 4) {
-      code[at++] = 0x4D; code[at++] = 0x89; code[at++] = 0xCB; // r11 = r9
+      code[at++] = 0x4D;
+      code[at++] = 0x89;
+      code[at++] = 0xCB;
     }
     if (argc >= 3) {
-      code[at++] = 0x4D; code[at++] = 0x89; code[at++] = 0xC2; // r10 = r8
+      code[at++] = 0x4D;
+      code[at++] = 0x89;
+      code[at++] = 0xC2;
     }
     if (argc >= 1) {
-      code[at++] = 0x48; code[at++] = 0x89; code[at++] = 0xCF; // rdi = rcx
+      code[at++] = 0x48;
+      code[at++] = 0x89;
+      code[at++] = 0xCF;
     }
     if (argc >= 2) {
-      code[at++] = 0x48; code[at++] = 0x89; code[at++] = 0xD6; // rsi = rdx
+      code[at++] = 0x48;
+      code[at++] = 0x89;
+      code[at++] = 0xD6;
     }
     if (argc >= 3) {
-      code[at++] = 0x4C; code[at++] = 0x89; code[at++] = 0xD2; // rdx = r10
+      code[at++] = 0x4C;
+      code[at++] = 0x89;
+      code[at++] = 0xD2;
     }
     if (argc >= 4) {
-      code[at++] = 0x4C; code[at++] = 0x89; code[at++] = 0xD9; // rcx = r11
+      code[at++] = 0x4C;
+      code[at++] = 0x89;
+      code[at++] = 0xD9;
     }
+
+    code[at++] = 0x48;
+    code[at++] = 0x83;
+    code[at++] = 0xEC;
+    code[at++] = 0x08; // ≡0 before call
     at = emit_load_target(code, at, slot);
-    code[at++] = 0xFF; code[at++] = 0xE0;
+    code[at++] = 0xFF;
+    code[at++] = 0xD0;
+    code[at++] = 0x48;
+    code[at++] = 0x83;
+    code[at++] = 0xC4;
+    code[at++] = 0x08;
+    code[at++] = 0x5E;
+    code[at++] = 0x5F;
+    code[at++] = 0xC3;
     return;
   }
 
-  code[at++] = 0x41; code[at++] = 0x54; // push r12
-  code[at++] = 0x41; code[at++] = 0x55; // push r13
-  // MS arg5 at [rsp+0x28] on entry; after 2 pushes -> [rsp+0x38]
-  code[at++] = 0x4C; code[at++] = 0x8B; code[at++] = 0x64; code[at++] = 0x24;
-  code[at++] = 0x38;
+  code[at++] = 0x41;
+  code[at++] = 0x54; // push r12 ; from ≡8 → ≡0
+  code[at++] = 0x41;
+  code[at++] = 0x55; // push r13 ; → ≡8
+  // 4 pushes from entry≡8 → still ≡8. Need ≡0 before call.
+
+  // MS arg5 on entry @[rsp+0x28]; after 4 pushes (+0x20) → @[rsp+0x48]
+  code[at++] = 0x4C;
+  code[at++] = 0x8B;
+  code[at++] = 0x64;
+  code[at++] = 0x24;
+  code[at++] = 0x48;
   if (argc >= 6) {
-    code[at++] = 0x4C; code[at++] = 0x8B; code[at++] = 0x6C; code[at++] = 0x24;
-    code[at++] = 0x40;
+    code[at++] = 0x4C;
+    code[at++] = 0x8B;
+    code[at++] = 0x6C;
+    code[at++] = 0x24;
+    code[at++] = 0x50;
   }
 
-  code[at++] = 0x4D; code[at++] = 0x89; code[at++] = 0xCB; // r11 = r9
-  code[at++] = 0x4D; code[at++] = 0x89; code[at++] = 0xC2; // r10 = r8
-  code[at++] = 0x48; code[at++] = 0x89; code[at++] = 0xCF; // rdi = rcx
-  code[at++] = 0x48; code[at++] = 0x89; code[at++] = 0xD6; // rsi = rdx
-  code[at++] = 0x4C; code[at++] = 0x89; code[at++] = 0xD2; // rdx = r10
-  code[at++] = 0x4C; code[at++] = 0x89; code[at++] = 0xD9; // rcx = r11
-  code[at++] = 0x4D; code[at++] = 0x89; code[at++] = 0xE0; // r8 = r12
+  code[at++] = 0x4D;
+  code[at++] = 0x89;
+  code[at++] = 0xCB;
+  code[at++] = 0x4D;
+  code[at++] = 0x89;
+  code[at++] = 0xC2;
+  code[at++] = 0x48;
+  code[at++] = 0x89;
+  code[at++] = 0xCF;
+  code[at++] = 0x48;
+  code[at++] = 0x89;
+  code[at++] = 0xD6;
+  code[at++] = 0x4C;
+  code[at++] = 0x89;
+  code[at++] = 0xD2;
+  code[at++] = 0x4C;
+  code[at++] = 0x89;
+  code[at++] = 0xD9;
+  code[at++] = 0x4D;
+  code[at++] = 0x89;
+  code[at++] = 0xE0;
   if (argc >= 6) {
-    code[at++] = 0x4D; code[at++] = 0x89; code[at++] = 0xE9; // r9 = r13
+    code[at++] = 0x4D;
+    code[at++] = 0x89;
+    code[at++] = 0xE9;
   }
 
-  int aligned = 0x20;
-  if (argc >= 7) aligned = 0x20;
-  if (argc >= 8) aligned = 0x20;
-  aligned = (argc > 6) ? (((argc - 6) * 8 + 15) & ~15) : 0x10;
-  if (aligned < 0x10) aligned = 0x10;
+  // Stack args for 7/8 plus align. Currently ≡8; need ≡0 before call
+  // ⇒ subtract N with N ≡ 8 (mod 16).
+  int aligned = 8;
+  if (argc >= 8) {
+    aligned = 24; // 16 bytes of args + 8 pad
+  } else if (argc >= 7) {
+    aligned = 8; // arg7 lives in the alignment slot at [rsp]
+  }
 
-  code[at++] = 0x48; code[at++] = 0x83; code[at++] = 0xEC;
+  code[at++] = 0x48;
+  code[at++] = 0x83;
+  code[at++] = 0xEC;
   code[at++] = (uint8_t)aligned;
 
   if (argc >= 7) {
-    const int off = 0x48 + aligned; // 0x38+0x10 from pushes was arg5; arg7 is +0x10 more = 0x48 before sub... 
-    // Before sub rsp: arg7 at [rsp+0x48] (entry 0x38 + 2 pushes 0x10 + 0x10 for arg6->arg7)
-    // MS: arg5@[rsp+28h], arg6@[rsp+30h], arg7@[rsp+38h], arg8@[rsp+40h] on entry
-    // After 2 pushes: +10h → arg5@38h, arg6@40h, arg7@48h, arg8@50h
-    // After sub aligned: add aligned to those.
-    const int arg7_off = 0x48 + aligned;
-    code[at++] = 0x48; code[at++] = 0x8B; code[at++] = 0x84; code[at++] = 0x24;
-    memcpy(code + at, &arg7_off, 4); at += 4;
-    code[at++] = 0x48; code[at++] = 0x89; code[at++] = 0x04; code[at++] = 0x24;
+    // after 4 pushes (+0x20) + aligned: entry arg7 @0x38 → 0x58+aligned
+    const int arg7_off = 0x58 + aligned;
+    code[at++] = 0x48;
+    code[at++] = 0x8B;
+    code[at++] = 0x84;
+    code[at++] = 0x24;
+    memcpy(code + at, &arg7_off, 4);
+    at += 4;
+    code[at++] = 0x48;
+    code[at++] = 0x89;
+    code[at++] = 0x04;
+    code[at++] = 0x24;
   }
   if (argc >= 8) {
-    const int arg8_off = 0x50 + aligned;
-    code[at++] = 0x48; code[at++] = 0x8B; code[at++] = 0x84; code[at++] = 0x24;
-    memcpy(code + at, &arg8_off, 4); at += 4;
-    code[at++] = 0x48; code[at++] = 0x89; code[at++] = 0x44; code[at++] = 0x24;
+    const int arg8_off = 0x60 + aligned;
+    code[at++] = 0x48;
+    code[at++] = 0x8B;
+    code[at++] = 0x84;
+    code[at++] = 0x24;
+    memcpy(code + at, &arg8_off, 4);
+    at += 4;
+    code[at++] = 0x48;
+    code[at++] = 0x89;
+    code[at++] = 0x44;
+    code[at++] = 0x24;
     code[at++] = 0x08;
   }
 
   at = emit_load_target(code, at, slot);
-  code[at++] = 0xFF; code[at++] = 0xD0;
-  code[at++] = 0x48; code[at++] = 0x83; code[at++] = 0xC4;
+  code[at++] = 0xFF;
+  code[at++] = 0xD0;
+  code[at++] = 0x48;
+  code[at++] = 0x83;
+  code[at++] = 0xC4;
   code[at++] = (uint8_t)aligned;
-  code[at++] = 0x41; code[at++] = 0x5D;
-  code[at++] = 0x41; code[at++] = 0x5C;
+  code[at++] = 0x41;
+  code[at++] = 0x5D;
+  code[at++] = 0x41;
+  code[at++] = 0x5C;
+  code[at++] = 0x5E;
+  code[at++] = 0x5F;
   code[at++] = 0xC3;
   (void)at;
 }

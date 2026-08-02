@@ -101,7 +101,11 @@ AdiProvisioning _defaultAdiFactory({
   required String identifier,
 }) {
   final client = AdiClient.fromDirectory(adiLibraryDirectory);
-  client.provisioningPath = provisioningPath;
+  // ADI on Windows is happier with forward-slash provisioning paths (bionic
+  // open() stubs translate them); trailing slash matches Provision usage.
+  final normalizedPath = provisioningPath.replaceAll(r'\', '/');
+  client.provisioningPath =
+      normalizedPath.endsWith('/') ? normalizedPath : '$normalizedPath/';
   client.identifier = identifier;
   return _RealAdiProvisioning(client);
 }

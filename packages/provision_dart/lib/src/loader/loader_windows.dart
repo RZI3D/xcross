@@ -30,17 +30,20 @@ class WindowsNativeLibraryLoader implements NativeLibraryLoader {
   String? _lastLoadDir;
 
   ElfLoadedLibrary _loadByPath(String path) {
-    final cached = _loaded[path];
+    final canonical = File(path).absolute.path;
+    final cached = _loaded[canonical];
     if (cached != null) return cached;
 
-    var resolvedPath = path;
+    var resolvedPath = canonical;
     if (!File(resolvedPath).existsSync()) {
       // Same bare-name sibling fallback as loader_posix.dart.
       final fallbackDir = _lastLoadDir;
       final isBareName = !path.contains('/') && !path.contains(r'\');
       if (fallbackDir != null && isBareName) {
         final candidate = File('$fallbackDir${Platform.pathSeparator}$path');
-        if (candidate.existsSync()) resolvedPath = candidate.path;
+        if (candidate.existsSync()) {
+          resolvedPath = candidate.absolute.path;
+        }
       }
     }
 
@@ -49,9 +52,10 @@ class WindowsNativeLibraryLoader implements NativeLibraryLoader {
       _allocator,
       _stubs.resolve,
     );
-    _loaded[path] = lib;
+    _loaded[resolvedPath] = lib;
     return lib;
   }
+
 
   @override
   LoadedNativeLibrary load(String path) {
