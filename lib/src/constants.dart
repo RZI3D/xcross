@@ -26,6 +26,9 @@ abstract final class DeviceConstants {
   /// Keycode for 'q' — quits the running session.
   static const int keyQ = 0x71;
 
+  /// Keycode for 'Q' — same as [keyQ] (Windows/Shift).
+  static const int keyBigQ = 0x51;
+
   /// Keycode for 'r' — triggers a hot reload.
   static const int keyR = 0x72;
 

@@ -43,7 +43,11 @@ abstract final class CoreDeviceLauncher {
         hotReload: hotReload,
       );
     } finally {
-      await transport.close();
+      try {
+        await transport.close().timeout(const Duration(seconds: 3));
+      } on Object catch (e) {
+        Log.logTrace('cleanup transport: $e');
+      }
     }
   }
 
@@ -94,10 +98,25 @@ abstract final class CoreDeviceLauncher {
       }
       await SessionConsole(gdb: gdb, hotReload: hotReloadController).run();
     } finally {
-      await vmService?.close();
-      await hotReloadController?.close();
-      await gdb.kill();
-      await gdb.close();
+      // Every step is timed out: a single hung flush/close on Windows left `q`
+      // in a silent stuck state (no further input or output).
+      await _cleanupStep('vm-service', () => vmService?.close());
+      await _cleanupStep('hot-reload', () => hotReloadController?.close());
+      await _cleanupStep('gdb-kill', gdb.kill);
+      await _cleanupStep('gdb-close', gdb.close);
+    }
+  }
+
+  static Future<void> _cleanupStep(
+    String label,
+    Future<void>? Function() body,
+  ) async {
+    try {
+      final future = body();
+      if (future == null) return;
+      await future.timeout(const Duration(seconds: 2));
+    } on Object catch (e) {
+      Log.logTrace('cleanup $label: $e');
     }
   }
 

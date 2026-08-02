@@ -27,10 +27,15 @@ class SessionConsole {
 
   Completer<void>? _done;
 
+  /// Signalled by [_stop] so [_drainGdbReplies] exits without waiting for the
+  /// next GDB packet (which may never come after `q`).
+  final Completer<void> _drainCancel = Completer<void>();
+
   /// Flip [_stopped] and complete [_stoppedCompleter] (idempotent).
   void _stop() {
     _stopped = true;
     if (!_stoppedCompleter.isCompleted) _stoppedCompleter.complete();
+    if (!_drainCancel.isCompleted) _drainCancel.complete();
   }
 
   /// Run until the app exits or the user quits.
@@ -46,7 +51,9 @@ class SessionConsole {
       final keypressFuture = _runKeypressLoop();
 
       await _stoppedCompleter.future;
-      await drainFuture.timeout(const Duration(seconds: 2), onTimeout: () {});
+      // Drain/keypress should already be unwinding via [_stop]; keep short
+      // timeouts so a wedged stdin cancel cannot block process exit.
+      await drainFuture.timeout(const Duration(seconds: 1), onTimeout: () {});
       await keypressFuture.timeout(
         const Duration(seconds: 1),
         onTimeout: () {},
@@ -68,31 +75,56 @@ class SessionConsole {
       _heldOutput.add(bytes);
       return;
     }
-    stdout.add(bytes);
+    try {
+      stdout.add(bytes);
+    } on Object catch (_) {
+      // Stdout can be wedged on Windows AOT after console-mode churn; dropping
+      // a chunk is better than hanging the drain loop forever.
+    }
   }
 
   void _flushAppOutput() {
     for (final bytes in _heldOutput) {
-      stdout.add(bytes);
+      _writeAppOutput(bytes);
     }
     _heldOutput.clear();
   }
 
   /// Forward `O` (stdout) packets and stop on exit/termination.
   Future<void> _drainGdbReplies() async {
-    await for (final reply in gdb.replies) {
-      if (_stopped) break;
-      switch (reply.type) {
-        case GdbReply.stdout:
-          _writeAppOutput(reply.stdoutBytes);
-        case GdbReply.exited || GdbReply.terminated:
-          Log.logInfo('App exited ${Log.ansi.subtle('(${reply.payload})')}');
-          _stop();
-          return;
-        case GdbReply.stopped || GdbReply.other:
-          break;
-      }
+    final done = Completer<void>();
+    void finish() {
+      if (!done.isCompleted) done.complete();
     }
+
+    final sub = gdb.replies.listen(
+      (reply) {
+        if (_stopped) {
+          finish();
+          return;
+        }
+        switch (reply.type) {
+          case GdbReply.stdout:
+            _writeAppOutput(reply.stdoutBytes);
+          case GdbReply.exited || GdbReply.terminated:
+            Log.logInfo('App exited ${Log.ansi.subtle('(${reply.payload})')}');
+            _stop();
+            finish();
+          case GdbReply.stopped || GdbReply.other:
+            break;
+        }
+      },
+      onDone: finish,
+      onError: (_) => finish(),
+      cancelOnError: true,
+    );
+
+    // Exit as soon as either the stream ends or the user quits — don't sit on
+    // `await for` forever with no more packets after `q`.
+    await Future.any([done.future, _drainCancel.future]);
+    try {
+      await sub.cancel().timeout(const Duration(milliseconds: 500));
+    } on Object catch (_) {}
   }
 
   void _finish() {
@@ -136,7 +168,7 @@ class SessionConsole {
 
     // Break out promptly when stopped externally (e.g. SIGINT), since the stdin
     // subscription otherwise keeps the event loop alive and blocks exit.
-    final poll = Timer.periodic(const Duration(milliseconds: 150), (t) {
+    final poll = Timer.periodic(const Duration(milliseconds: 100), (t) {
       if (_stopped) {
         t.cancel();
         _finish();
@@ -145,15 +177,17 @@ class SessionConsole {
 
     await done.future;
     poll.cancel();
-    await sub.cancel();
+    try {
+      await sub.cancel().timeout(const Duration(milliseconds: 500));
+    } on Object catch (_) {}
     _restoreCookedStdin();
   }
 
   /// Put stdin into cbreak/raw-ish mode so a single keypress is delivered
   /// without Enter. Returns whether both mode flags were applied successfully.
   ///
-  /// Order matches Flutter tools: echoMode then lineMode when enabling;
-  /// reverse when restoring (important on Windows / some PTYs).
+  /// Order matches Flutter tools / dart-lang#28599: echoMode off first, then
+  /// lineMode (Windows rejects lineMode=false while echo is still on).
   static bool _enableRawStdin() {
     // A pipe already delivers bytes unbuffered, and setting the terminal modes
     // on one throws — warning about it would be a warning for a non-problem.
@@ -161,6 +195,14 @@ class SessionConsole {
     try {
       stdin.echoMode = false;
       stdin.lineMode = false;
+      // Verify — a silent no-op leaves "keys do nothing" with no clue why.
+      if (stdin.echoMode || stdin.lineMode) {
+        Log.logWarn(
+          'stdin still cooked after raw request '
+          '(echo=${stdin.echoMode}, line=${stdin.lineMode})',
+        );
+        return false;
+      }
       return true;
     } on Object catch (e) {
       Log.logWarn('stdin raw mode failed: $e');
@@ -182,8 +224,10 @@ class SessionConsole {
     for (final ch in bytes) {
       if (_stopped) return _finish();
       if (ch == DeviceConstants.keyQ ||
+          ch == DeviceConstants.keyBigQ ||
           ch == DeviceConstants.keyCtrlC ||
           ch == DeviceConstants.keyCtrlD) {
+        Log.logInfo('Quitting');
         _stop();
         return _finish();
       }

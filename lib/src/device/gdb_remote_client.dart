@@ -124,16 +124,20 @@ class GdbRemoteClient {
   /// Send `c` (continue) without waiting for a reply.
   Future<void> resume() => _sendFramed('c');
 
-  /// Best-effort `k` (kill).
+  /// Best-effort `k` (kill). Never block forever on a wedged debugproxy flush.
   Future<void> kill() async {
     try {
-      await _sendFramed('k');
-    } catch (_) {}
+      await _sendFramed('k').timeout(const Duration(milliseconds: 500));
+    } on Object catch (_) {}
   }
 
   Future<void> close() async {
-    await _socket?.close();
+    final s = _socket;
     _socket = null;
+    // destroy(), not close(): Socket.close awaits a flush that can hang on
+    // Windows when the peer (debugproxy relay) is already gone — that wedged
+    // `q` into a silent stuck CLI with no further I/O.
+    s?.destroy();
     if (!_replyController.isClosed) await _replyController.close();
   }
 

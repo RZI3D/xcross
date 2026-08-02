@@ -78,7 +78,9 @@ class DartVmServiceClient {
   }
 
   Future<void> close() async {
-    await _channel?.sink.close();
+    try {
+      await _channel?.sink.close().timeout(const Duration(milliseconds: 500));
+    } on Object catch (_) {}
     _handleClose();
   }
 

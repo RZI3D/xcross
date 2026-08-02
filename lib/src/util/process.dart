@@ -80,6 +80,11 @@ abstract final class ProcessRunner {
     bool inheritStdio = false,
     String? label,
     Step? tail,
+    // When [tail] streams output, stdin is forwarded by default so interactive
+    // children (apt, sudo prompts) still work. Install/build steps that never
+    // prompt must pass false: the first sharedStdin listen happens in cooked
+    // mode and on Windows leaves the later hot-reload keypress loop deaf.
+    bool forwardStdin = true,
   }) async {
     final prefix = label ?? executable;
     Log.logTrace('[$prefix] running: ${commandLine(executable, arguments)}');
@@ -91,6 +96,7 @@ abstract final class ProcessRunner {
         workingDirectory: workingDirectory,
         environment: environment,
         tail: tail,
+        forwardStdin: forwardStdin,
       );
     }
 
@@ -135,14 +141,15 @@ abstract final class ProcessRunner {
     }
   }
 
-  /// Stream a child's merged output into [tail] while forwarding our stdin to
-  /// it. Forwarding keeps interactive prompts visible and connected.
+  /// Stream a child's merged output into [tail]. Optionally forward our stdin
+  /// so interactive prompts still work.
   static Future<void> _runWithTail(
     String executable,
     List<String> arguments, {
     required Step tail,
     String? workingDirectory,
     Map<String, String>? environment,
+    bool forwardStdin = true,
   }) async {
     final process = await Process.start(
       executable,
@@ -169,18 +176,25 @@ abstract final class ProcessRunner {
     unawaited(process.stdin.done.catchError((Object _) {}));
 
     StreamSubscription<List<int>>? input;
-    try {
-      input = sharedStdin.listen((bytes) {
-        try {
-          process.stdin.add(bytes);
-        } on Object catch (_) {
-          // Child already gone; nothing left to feed.
-        }
-      }, onError: (Object _) {});
-    } on Object catch (e) {
-      // Unavailable stdin is not fatal: the child simply gets no input,
-      // exactly as before this streaming path existed.
-      Log.logTrace('stdin not forwarded to $executable: $e');
+    if (forwardStdin) {
+      try {
+        input = sharedStdin.listen((bytes) {
+          try {
+            process.stdin.add(bytes);
+          } on Object catch (_) {
+            // Child already gone; nothing left to feed.
+          }
+        }, onError: (Object _) {});
+      } on Object catch (e) {
+        // Unavailable stdin is not fatal: the child simply gets no input,
+        // exactly as before this streaming path existed.
+        Log.logTrace('stdin not forwarded to $executable: $e');
+      }
+    } else {
+      // Don't leave the child blocking on a pipe we will never write.
+      try {
+        await process.stdin.close();
+      } on Object catch (_) {}
     }
 
     try {

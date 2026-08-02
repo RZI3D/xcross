@@ -6,6 +6,7 @@ import 'package:xcross/src/models/device/hot_reload_config.dart';
 import 'package:xcross/src/util/errors.dart';
 import 'package:xcross/src/util/logging.dart';
 import 'package:xcross/src/util/package_uris.dart';
+import 'package:xcross/src/util/process.dart';
 
 /// Drives a persistent `frontend_server` subprocess over its stdin/stdout
 /// protocol, producing incremental kernel diffs for hot reload.
@@ -195,13 +196,28 @@ class FrontendServerClient {
   });
 
   Future<void> close() async {
-    // ORDER MATTERS: `quit` must be flushed before kill() or the write is
-    // dropped and frontend_server is orphaned — one leaked compiler per run.
-    await _send('quit\n');
-    _process?.kill();
+    // ORDER MATTERS: try a polite `quit` first so frontend_server can flush,
+    // but never wait forever — a hung stdin flush here is what left `q` stuck
+    // with no further CLI I/O on Windows AOT.
+    try {
+      await _send('quit\n').timeout(const Duration(milliseconds: 500));
+    } on Object catch (_) {}
+    final process = _process;
     _process = null;
-    await _sink?.close();
+    if (process != null) {
+      try {
+        await ProcessRunner.killTree(process).timeout(
+          const Duration(seconds: 2),
+        );
+      } on Object catch (_) {
+        process.kill();
+      }
+    }
+    final sink = _sink;
     _sink = null;
+    try {
+      await sink?.close().timeout(const Duration(milliseconds: 200));
+    } on Object catch (_) {}
     await _queue?.cancel(immediate: true);
     _queue = null;
   }

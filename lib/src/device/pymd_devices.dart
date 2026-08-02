@@ -60,8 +60,10 @@ abstract final class PymdDevices {
 
   /// `pymobiledevice3 apps install <path> [--udid <udid>]`.
   ///
-  /// Shows a spinner whose grey tail streams pymobiledevice3's own progress,
-  /// forwards stdin for any prompts, and surfaces failures as [XcrossError].
+  /// Shows a spinner whose grey tail streams pymobiledevice3's own progress
+  /// and surfaces failures as [XcrossError]. Does not forward stdin — install
+  /// is non-interactive, and a cooked-mode sharedStdin listen here leaves the
+  /// later hot-reload `r`/`R`/`q` loop deaf on Windows.
   static Future<void> install(String appOrIpaPath, {String? udid}) async {
     final inv = await Pymd.resolve();
     final args = <String>['apps', 'install', appOrIpaPath];
@@ -74,6 +76,7 @@ abstract final class PymdDevices {
         [...inv.prefixArgs, ...args],
         label: 'pymobiledevice3',
         tail: step,
+        forwardStdin: false,
         environment: Pymd.usbmuxEnvironment(),
       );
       step.done();
