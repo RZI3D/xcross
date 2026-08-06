@@ -1,11 +1,17 @@
 import 'dart:io';
+import 'dart:isolate';
 
 import 'package:test/test.dart';
+
+final String _repoRoot = File.fromUri(
+  Isolate.resolvePackageUriSync(Uri.parse('package:xcross/xcross.dart'))!,
+).parent.parent.parent.parent.path;
 
 /// Workspace packages must not deep-import each other's `lib/src/`.
 void main() {
   test('no cross-package package:*/src/ imports outside owning package', () {
     final packages = [
+      'xcross',
       'cli_kit',
       'apple_developer_kit',
       'darwin_sdk_kit',
@@ -15,10 +21,7 @@ void main() {
       'xcross_dap',
     ];
     final roots = [
-      Directory('lib'),
-      Directory('test'),
-      Directory('bin'),
-      for (final name in packages) Directory('packages/$name'),
+      for (final name in packages) Directory('$_repoRoot/packages/$name'),
     ];
 
     final violations = <String>[];

@@ -5,7 +5,7 @@ import 'package:test/test.dart';
 
 final String _repoRoot = File.fromUri(
   Isolate.resolvePackageUriSync(Uri.parse('package:xcross/xcross.dart'))!,
-).parent.parent.path;
+).parent.parent.parent.parent.path;
 
 void main() {
   test('release publishes only xcross artifacts and keeps attribution', () {

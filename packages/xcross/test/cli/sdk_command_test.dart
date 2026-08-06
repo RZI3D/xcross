@@ -8,7 +8,7 @@ import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 import 'package:xcross/src/cli/basic/sdk_command.dart';
 
-import '../../packages/darwin_sdk_kit/test/test_fixtures.dart';
+import '../../../darwin_sdk_kit/test/test_fixtures.dart';
 
 void main() {
   CpioEntry entry(String name, {int mode = 0x81a4, String data = ''}) =>

@@ -70,8 +70,8 @@ jobs:
           flutter config --no-analytics
           flutter precache --ios
           dart pub get
-          dart build cli -t bin/xcross.dart
-          cp -r build/cli/*/bundle "$RUNNER_TEMP/xcross-bundle"
+          (cd packages/xcross && dart build cli -t bin/xcross.dart)
+          cp -r packages/xcross/build/cli/*/bundle "$RUNNER_TEMP/xcross-bundle"
           chmod +x "$RUNNER_TEMP/xcross-bundle/bin/xcross"
           "$RUNNER_TEMP/xcross-bundle/bin/xcross" setup
           sudo apt-get install -y llvm
@@ -147,9 +147,11 @@ jobs:
           flutter config --no-analytics
           flutter precache --ios
           dart pub get
+          Push-Location packages/xcross
           dart build cli -t bin/xcross.dart
+          Pop-Location
           Copy-Item -Recurse `
-            build/cli/windows_x64/bundle `
+            packages/xcross/build/cli/windows_x64/bundle `
             "$env:RUNNER_TEMP\xcross-bundle"
           & "$env:RUNNER_TEMP\xcross-bundle\bin\xcross.exe" setup
 

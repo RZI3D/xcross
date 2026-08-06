@@ -18,7 +18,7 @@ packages:
     source: hosted
     version: "13.3.0"
   archive:
-    dependency: "direct main"
+    dependency: transitive
     description:
       name: archive
       sha256: a96e8b390886ee8abb49b7bd3ac8df6f451c621619f52a26e815fdcf568959ff
@@ -26,7 +26,7 @@ packages:
     source: hosted
     version: "4.0.9"
   args:
-    dependency: "direct main"
+    dependency: transitive
     description:
       name: args
       sha256: d0481093c50b1da8910eb0bb301626d4d8eb7284aa739614d2b394ee09e3ea04
@@ -34,7 +34,7 @@ packages:
     source: hosted
     version: "2.7.0"
   async:
-    dependency: "direct main"
+    dependency: transitive
     description:
       name: async
       sha256: e2eb0491ba5ddb6177742d2da23904574082139b07c1e33b8503b9f46f3e1a37
@@ -42,7 +42,7 @@ packages:
     source: hosted
     version: "2.13.1"
   basic_utils:
-    dependency: "direct main"
+    dependency: transitive
     description:
       name: basic_utils
       sha256: "548047bef0b3b697be19fa62f46de54d99c9019a69fb7db92c69e19d87f633c7"
@@ -74,7 +74,7 @@ packages:
     source: hosted
     version: "4.0.10"
   build_cli:
-    dependency: "direct dev"
+    dependency: transitive
     description:
       name: build_cli
       sha256: b2b2752fec273a3be4a21e0b5d7e93fd30d409cf36d4673cf857a486ee723d02
@@ -82,7 +82,7 @@ packages:
     source: hosted
     version: "2.2.13"
   build_cli_annotations:
-    dependency: "direct main"
+    dependency: transitive
     description:
       name: build_cli_annotations
       sha256: e563c2e01de8974566a1998410d3f6f03521788160a02503b0b1f1a46c7b3d95
@@ -106,7 +106,7 @@ packages:
     source: hosted
     version: "4.1.3"
   build_runner:
-    dependency: "direct dev"
+    dependency: transitive
     description:
       name: build_runner
       sha256: "90363d438bd9f84a4d5bbb83352251f57d2d9d771bc95a44e6a33fe25fa52774"
@@ -146,7 +146,7 @@ packages:
     source: hosted
     version: "0.2.0"
   cli_util:
-    dependency: "direct main"
+    dependency: transitive
     description:
       name: cli_util
       sha256: "71e43f1976c3eae2d9468a5b4d6600bf8cae61508b87f27fa1799228935d48ab"
@@ -178,7 +178,7 @@ packages:
     source: hosted
     version: "1.19.1"
   completion:
-    dependency: "direct main"
+    dependency: transitive
     description:
       name: completion
       sha256: "82fa09800c0b71a2e8396bf3ca6b36b43cd35fe7ba2aeab53b6349ac671d0f5b"
@@ -202,7 +202,7 @@ packages:
     source: hosted
     version: "1.15.1"
   crypto:
-    dependency: "direct main"
+    dependency: transitive
     description:
       name: crypto
       sha256: c8ea0233063ba03258fbcf2ca4d6dadfefe14f02fab57702265467a19f27fadf
@@ -330,7 +330,7 @@ packages:
     source: hosted
     version: "2.1.0"
   http:
-    dependency: "direct main"
+    dependency: transitive
     description:
       name: http
       sha256: "87721a4a50b19c7f1d49001e51409bddc46303966ce89a65af4f4e6004896412"
@@ -394,7 +394,7 @@ packages:
     source: hosted
     version: "0.12.20"
   meta:
-    dependency: "direct main"
+    dependency: transitive
     description:
       name: meta
       sha256: "307249ce4ff29d58a18e97f6345f539382eb9c9c29ecda628900f31de0443dd9"
@@ -434,7 +434,7 @@ packages:
     source: hosted
     version: "3.0.0"
   path:
-    dependency: "direct main"
+    dependency: transitive
     description:
       name: path
       sha256: "75cca69d1490965be98c73ceaea117e8a04dd21217b37b292c9ddbec0d955bc5"
@@ -458,7 +458,7 @@ packages:
     source: hosted
     version: "3.1.6"
   pointycastle:
-    dependency: "direct main"
+    dependency: transitive
     description:
       name: pointycastle
       sha256: "92aa3841d083cc4b0f4709b5c74fd6409a3e6ba833ffc7dc6a8fee096366acf5"
@@ -474,7 +474,7 @@ packages:
     source: hosted
     version: "1.5.2"
   posix:
-    dependency: "direct main"
+    dependency: transitive
     description:
       name: posix
       sha256: bc1bad54ad2b735816e31f8d4600cfde6c7839975085ddfbca48b6c9f7c4044e
@@ -482,7 +482,7 @@ packages:
     source: hosted
     version: "6.5.2"
   propertylistserialization:
-    dependency: "direct main"
+    dependency: transitive
     description:
       name: propertylistserialization
       sha256: "8ebe5e73b912c080916895bff96af9dd026cf87c1867447894f84e4c9e51b4b8"
@@ -506,7 +506,7 @@ packages:
     source: hosted
     version: "1.5.0"
   pure:
-    dependency: "direct main"
+    dependency: transitive
     description:
       name: pure
       sha256: "6509864865ab9c4c1b6039cb362968dc27d2299f561df3cffd9cfcbc853386c1"
@@ -618,7 +618,7 @@ packages:
     source: hosted
     version: "1.12.1"
   standard_message_codec:
-    dependency: "direct main"
+    dependency: transitive
     description:
       name: standard_message_codec
       sha256: f10b3fbdb4d56c6bc4d160ef5b3d6346df7a998a84876d05886a75d17eb290e6
@@ -658,7 +658,7 @@ packages:
     source: hosted
     version: "1.2.2"
   test:
-    dependency: "direct dev"
+    dependency: transitive
     description:
       name: test
       sha256: "0d5ba5602ec3baa28c8ce365e1efc5575969c765f45c554a3e167dc7945b9c30"
@@ -730,7 +730,7 @@ packages:
     source: hosted
     version: "1.0.1"
   web_socket_channel:
-    dependency: "direct main"
+    dependency: transitive
     description:
       name: web_socket_channel
       sha256: d645757fb0f4773d602444000a8131ff5d48c9e47adfe9772652dd1a4f2d45c8
@@ -746,7 +746,7 @@ packages:
     source: hosted
     version: "1.2.1"
   xml:
-    dependency: "direct main"
+    dependency: transitive
     description:
       name: xml
       sha256: "67f0aff7be013d107995e9b75bf4e7f2c3ef2dfdb2c8e68024bba0a7fd5756a4"
@@ -754,7 +754,7 @@ packages:
     source: hosted
     version: "7.0.1"
   yaml:
-    dependency: "direct main"
+    dependency: transitive
     description:
       name: yaml
       sha256: b9da305ac7c39faa3f030eccd175340f968459dae4af175130b3fc47e40d76ce
