@@ -70,9 +70,10 @@ jobs:
           flutter config --no-analytics
           flutter precache --ios
           dart pub get
-          dart compile exe bin/xcross.dart -o "$RUNNER_TEMP/xcross"
-          chmod +x "$RUNNER_TEMP/xcross"
-          "$RUNNER_TEMP/xcross" setup
+          dart build cli -t bin/xcross.dart
+          cp -r build/cli/*/bundle "$RUNNER_TEMP/xcross-bundle"
+          chmod +x "$RUNNER_TEMP/xcross-bundle/bin/xcross"
+          "$RUNNER_TEMP/xcross-bundle/bin/xcross" setup
           sudo apt-get install -y llvm
           tools=(
             swift clang clang++ llvm-ar ld64.lld
@@ -146,8 +147,11 @@ jobs:
           flutter config --no-analytics
           flutter precache --ios
           dart pub get
-          dart compile exe bin/xcross.dart -o "$env:RUNNER_TEMP\xcross.exe"
-          & "$env:RUNNER_TEMP\xcross.exe" setup
+          dart build cli -t bin/xcross.dart
+          Copy-Item -Recurse `
+            build/cli/windows_x64/bundle `
+            "$env:RUNNER_TEMP\xcross-bundle"
+          & "$env:RUNNER_TEMP\xcross-bundle\bin\xcross.exe" setup
 
       - name: Restore cached Darwin SDK
         uses: ./.github/actions/setup-darwin-sdk
@@ -165,7 +169,7 @@ jobs:
           cd "$RUNNER_TEMP/flutter_sample"
           fixture="$GITHUB_WORKSPACE/test/fixtures/spm_plugin"
           flutter pub add "spm_plugin@{path: $fixture}"
-          "$RUNNER_TEMP/xcross" flutter build
+          "$RUNNER_TEMP/xcross-bundle/bin/xcross" flutter build
 
       - name: Create and build plugin sample on Windows
         if: runner.os == 'Windows'
@@ -184,7 +188,7 @@ jobs:
           $fixture = $fixturePath.Path.Replace('\', '/')
           $descriptor = 'spm_plugin@{path: ' + $fixture + '}'
           flutter pub add -- $descriptor
-          & "$env:RUNNER_TEMP\xcross.exe" flutter build
+          & "$env:RUNNER_TEMP\xcross-bundle\bin\xcross.exe" flutter build
 
       - name: Inspect app and plugin library on Linux
         if: runner.os == 'Linux'
