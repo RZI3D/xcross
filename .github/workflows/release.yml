@@ -13,6 +13,12 @@ jobs:
   build:
     name: Build ${{ matrix.asset }}
     runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      # Required to sign the SLSA provenance attestation with the run's OIDC
+      # identity, proving the archive came out of this workflow at this commit.
+      id-token: write
+      attestations: write
     strategy:
       fail-fast: false
       matrix:
@@ -58,6 +64,13 @@ jobs:
           # Bundle layout is bin/ + lib/ (native assets). Ship as tar.gz.
           tar -C build/cli/*/bundle -czf "dist/${{ matrix.asset }}.tar.gz" bin lib
 
+      - name: Attest build provenance
+        if: startsWith(github.ref, 'refs/tags/')
+        # v4.1.1
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373
+        with:
+          subject-path: dist/${{ matrix.asset }}.tar.gz
+
       - name: Upload binary artifacts
         # v7
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -69,6 +82,10 @@ jobs:
   build-windows:
     name: Build xcross-windows-x64
     runs-on: windows-2022
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
 
     steps:
       - name: Checkout
@@ -141,6 +158,13 @@ jobs:
           & smoke/bin/xcross.exe --help | Out-Null
           if ($LASTEXITCODE -ne 0) { throw 'xcross.exe --help failed' }
 
+      - name: Attest build provenance
+        if: startsWith(github.ref, 'refs/tags/')
+        # v4.1.1
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373
+        with:
+          subject-path: xcross-windows-x64.zip
+
       - name: Upload Windows artifact
         # v7
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -156,6 +180,7 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: write
+      attestations: read
     env:
       GH_TOKEN: ${{ github.token }}
 
@@ -172,16 +197,68 @@ jobs:
           path: dist
           merge-multiple: true
 
+      # Gate: refuse to publish anything that is not provably the output of
+      # this workflow, built from this commit. A hand-uploaded or swapped
+      # artifact has no matching attestation and fails here.
+      - name: Verify build provenance of downloaded artifacts
+        env:
+          SOURCE_DIGEST: ${{ github.sha }}
+          SOURCE_REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          for asset in \
+            xcross-linux-x64.tar.gz \
+            xcross-linux-arm64.tar.gz \
+            xcross-windows-x64.zip; do
+            echo "==> verifying $asset"
+            gh attestation verify "dist/$asset" \
+              --repo "$GITHUB_REPOSITORY" \
+              --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml" \
+              --source-digest "$SOURCE_DIGEST" \
+              --source-ref "$SOURCE_REF" \
+              --deny-self-hosted-runners
+          done
+
+      - name: Generate SHA256SUMS
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum \
+            xcross-linux-x64.tar.gz \
+            xcross-linux-arm64.tar.gz \
+            xcross-windows-x64.zip >SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
       - name: Create and publish release
         env:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
+          set -euo pipefail
           tag="$RELEASE_TAG"
+          cat >notes.md <<EOF
+          ### Verifying this release
+
+          Every archive below carries a signed SLSA build provenance
+          attestation binding it to commit \`$GITHUB_SHA\` and to this
+          repository's release workflow:
+
+          \`\`\`sh
+          gh attestation verify xcross-linux-x64.tar.gz \\
+            --repo $GITHUB_REPOSITORY \\
+            --signer-workflow $GITHUB_REPOSITORY/.github/workflows/release.yml \\
+            --source-digest $GITHUB_SHA
+          \`\`\`
+
+          \`SHA256SUMS.txt\` covers the same archives for plain integrity
+          checks.
+          EOF
           gh release create "$tag" \
             dist/xcross-linux-x64.tar.gz \
             dist/xcross-linux-arm64.tar.gz \
             dist/xcross-windows-x64.zip \
+            dist/SHA256SUMS.txt \
             native/signing/ZSIGN_LICENSE.txt \
             packages/apple_developer_kit/ADI_LICENSE \
             --title "$tag" \
+            --notes-file notes.md \
             --generate-notes

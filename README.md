@@ -92,6 +92,19 @@ Both installers download the latest release, install it, **add xcross to your `P
 
    `xcross setup` also installs `usbmuxd`, `usbutils`, and `libimobiledevice-utils` for USB device access and diagnostics.
 
+### Verifying a release
+
+Every release archive is built by [`release.yml`](.github/workflows/release.yml) and signed with a [SLSA build provenance attestation](https://docs.github.com/actions/security-for-github-actions/using-artifact-attestations) that binds the archive's digest to the commit it was built from. The release job refuses to publish an artifact whose provenance does not match, so a bundle produced outside this repository can never reach the release page.
+
+To check an archive yourself with the [`gh`](https://cli.github.com) CLI (`SHA256SUMS.txt` is published alongside the archives for plain integrity checks):
+
+```sh
+gh attestation verify xcross-linux-x64.tar.gz \
+  --repo arxdeus/xcross \
+  --signer-workflow arxdeus/xcross/.github/workflows/release.yml \
+  --source-digest <commit-sha-from-the-release-notes>
+```
+
 ## Authentication
 
 xcross talks to Apple's Developer Services directly. Two options:
