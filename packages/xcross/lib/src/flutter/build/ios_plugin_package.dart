@@ -127,7 +127,7 @@ abstract final class GeneratedPluginsPackage {
     // uniformly to every target's compile step regardless of what that
     // target's own manifest declares.
     final flutterFrameworkSlice = p.join(flutterXcframework, 'ios-arm64');
-    final toolsetPath = await writeWindowsToolset(outputDir: outputDir);
+    final toolsetPath = await writeToolset(outputDir: outputDir);
     await ProcessRunner.runChecked(
       swift,
       swiftBuildArguments(
@@ -234,47 +234,93 @@ abstract final class GeneratedPluginsPackage {
     );
   }
 
-  /// Writes SwiftPM's external Windows toolset and returns its path. Other
-  /// hosts use the SDK's toolset metadata and return null.
+  /// LLVM's drop-in replacement for Apple's `libtool`.
+  static const _libtool = 'llvm-libtool-darwin';
+
+  /// Every archiver SwiftPM may be pointed at, best first.
+  static const _librarians = [_libtool, 'llvm-ar'];
+
+  /// Writes SwiftPM's external toolset and returns its path.
+  ///
+  /// Every host needs the `librarian` entry: SwiftPM validates the toolchain
+  /// against the *target* triple before building, and for an Apple triple that
+  /// means Apple's `libtool` ("toolchain is invalid: could not find CLI tool
+  /// `libtool`"), which no cross host has. Windows overrides the compilers and
+  /// the linker on top; Linux passes its linker as a `swift build` flag
+  /// instead.
   @visibleForTesting
-  static Future<String?> writeWindowsToolset({
+  static Future<String> writeToolset({
     required String outputDir,
     bool? windows,
-    Future<String> Function(String name)? locateTool,
+    Future<String?> Function(String name)? locateTool,
   }) async {
     final onWindows = windows ?? Platform.isWindows;
-    if (!onWindows) return null;
-
     final output = Directory(outputDir);
     await output.create(recursive: true);
-    final locate = locateTool ?? ProcessRunner.locateTool;
-    final tools = <String, String>{
-      'cCompiler': 'clang',
-      'cxxCompiler': 'clang++',
-      'librarian': 'llvm-ar',
-      // `.lld` looks like an extension, so pass the complete Windows name.
-      'linker': 'ld64.lld.exe',
-    };
+    final locate = locateTool ?? ProcessRunner.which;
     final toolset = <String, Object>{
       'schemaVersion': '1.0',
       'rootPath': _jsonPath(output.resolveSymbolicLinksSync()),
     };
-    for (final tool in tools.entries) {
-      final executable = ProcessRunner.hostExecutableName(
-        tool.value,
-        windows: true,
+
+    Future<String?> resolve(String name) async {
+      final path = await locate(
+        ProcessRunner.hostExecutableName(name, windows: onWindows),
       );
-      final path = await locate(executable);
-      toolset[tool.key] = {
-        'path': _jsonPath(File(path).resolveSymbolicLinksSync()),
-      };
+      return path == null
+          ? null
+          : _jsonPath(File(path).resolveSymbolicLinksSync());
     }
 
-    final toolsetFile = File(p.join(outputDir, 'xcross-windows-toolset.json'));
+    final librarian = await _resolveLibrarian(onWindows, resolve);
+    if (librarian == null) {
+      throw FlutterBuildError(
+        'No Darwin-capable archiver on PATH (${_librarians.join(' or ')}). '
+        'Install LLVM and retry.',
+      );
+    }
+    toolset['librarian'] = {'path': librarian};
+
+    if (onWindows) {
+      final tools = <String, String>{
+        'cCompiler': 'clang',
+        'cxxCompiler': 'clang++',
+        // `.lld` looks like an extension, so pass the complete Windows name.
+        'linker': 'ld64.lld.exe',
+      };
+      for (final tool in tools.entries) {
+        final path = await resolve(tool.value);
+        if (path == null) {
+          throw FlutterBuildError('Could not find ${tool.value} in PATH.');
+        }
+        toolset[tool.key] = {'path': path};
+      }
+    }
+
+    final toolsetFile = File(p.join(outputDir, 'xcross-toolset.json'));
     await toolsetFile.writeAsString(
       '${const JsonEncoder.withIndent('  ').convert(toolset)}\n',
     );
     return toolsetFile.path;
+  }
+
+  /// Picks the archiver for an Apple target: `llvm-libtool-darwin` when it is
+  /// on PATH, else the copy sitting next to `llvm-ar` inside LLVM's own bin
+  /// directory (Debian and Ubuntu only symlink a subset of LLVM into
+  /// `/usr/bin`), else `llvm-ar` itself.
+  static Future<String?> _resolveLibrarian(
+    bool windows,
+    Future<String?> Function(String name) resolve,
+  ) async {
+    final libtool = await resolve(_libtool);
+    if (libtool != null) return libtool;
+    final archiver = await resolve('llvm-ar');
+    if (archiver == null) return null;
+    final sibling = p.join(
+      p.dirname(archiver),
+      ProcessRunner.hostExecutableName(_libtool, windows: windows),
+    );
+    return File(sibling).existsSync() ? _jsonPath(sibling) : archiver;
   }
 
   /// Writes the `FlutterFramework` and `Plugins` wrapper packages (manifests,

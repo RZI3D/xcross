@@ -84,13 +84,23 @@ jobs:
           if (-not (Test-Path "$llvmBin\ld64.lld.exe")) {
             throw "Hosted-runner LLVM missing ld64.lld.exe at $llvmBin"
           }
-          $machinePath = [Environment]::GetEnvironmentVariable(
-            'Path', 'Machine'
-          )
-          $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
-          $env:Path = "$llvmBin;$machinePath;$userPath"
+          $swiftRoot = "$env:LOCALAPPDATA\Programs\Swift"
+          # The installer registers its Runtimes, Toolchains, and Tools
+          # directories in the persisted PATH, but this job's environment
+          # predates the install. swift.exe cannot even start without the
+          # Runtimes DLLs, and Windows reports that as a bare exit code
+          # 3221225781 (0xC0000135, STATUS_DLL_NOT_FOUND), so re-export every
+          # directory the installer registered under the Swift root.
+          $swiftDirs = @(
+            [Environment]::GetEnvironmentVariable('Path', 'Machine')
+            [Environment]::GetEnvironmentVariable('Path', 'User')
+          ) -join ';' -split ';' |
+            Where-Object { $_ } |
+            ForEach-Object { $_.TrimEnd('\') } |
+            Where-Object { $_ -like "$swiftRoot*" } |
+            Select-Object -Unique
           $swift = Get-ChildItem `
-            "$env:LOCALAPPDATA\Programs\Swift" `
+            "$swiftRoot\Toolchains" `
             -Filter swift.exe `
             -File `
             -Recurse `
@@ -99,14 +109,8 @@ jobs:
           if (-not $swift) {
             throw 'Swift.Toolchain did not install swift.exe'
           }
-          $swiftPath = if ($swift.Source) {
-            $swift.Source
-          } else {
-            $swift.FullName
-          }
-          $swiftBin = Split-Path $swiftPath
           $runtime = Get-ChildItem `
-            "$env:LOCALAPPDATA\Programs\Swift\Runtimes" `
+            "$swiftRoot\Runtimes" `
             -Filter swiftCore.dll `
             -File `
             -Recurse `
@@ -115,21 +119,30 @@ jobs:
           if (-not $runtime) {
             throw 'Swift.Runtime did not install swiftCore.dll'
           }
-          $runtimeBin = Split-Path $runtime.FullName
+          $swiftDirs = @(
+            (Split-Path $runtime.FullName)
+            (Split-Path $swift.FullName)
+          ) + $swiftDirs | Select-Object -Unique
+          $swiftDirs | ForEach-Object { "  $_" } | Write-Host
           $llvmBin |
             Out-File $env:GITHUB_PATH -Encoding utf8 -Append
-          $runtimeBin | Out-File $env:GITHUB_PATH -Encoding utf8 -Append
-          $swiftBin | Out-File $env:GITHUB_PATH -Encoding utf8 -Append
-          $env:Path = "$llvmBin;$runtimeBin;$swiftBin;$env:Path"
+          $swiftDirs | Out-File $env:GITHUB_PATH -Encoding utf8 -Append
+          $env:Path = "$llvmBin;$($swiftDirs -join ';');$env:Path"
           $tools = @('swift', 'clang', 'clang++', 'llvm-ar', 'ld64.lld')
           foreach ($tool in $tools) {
             if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) {
               throw "Missing $tool"
             }
           }
+          # Runs swift.exe and the swift-sdk.exe subcommand binary, so a
+          # broken toolchain fails here instead of in a later step.
           & swift --version
           if ($LASTEXITCODE -ne 0) {
             throw "swift --version failed with $LASTEXITCODE"
+          }
+          & swift sdk list
+          if ($LASTEXITCODE -ne 0) {
+            throw "swift sdk list failed with $LASTEXITCODE"
           }
 
       - name: Mask dispatched artifactbundle URL

@@ -174,6 +174,7 @@ runs:
       shell: python
       run: |
         import os
+        import shutil
         import subprocess
         from pathlib import Path
 
@@ -182,7 +183,13 @@ runs:
         for name in ("info.json", "swift-sdk.json"):
             if not (bundle / name).is_file():
                 raise SystemExit(f"missing {bundle / name}")
-        subprocess.run(
-            ["swift", "sdk", "list", "--swift-sdks-path", str(parent)],
-            check=True,
-        )
+        command = ["swift", "sdk", "list", "--swift-sdks-path", str(parent)]
+        completed = subprocess.run(command, check=False)
+        if completed.returncode:
+            # A bare NTSTATUS here means swift.exe could not load its DLLs.
+            print(f"::error::{' '.join(command)} exited {completed.returncode}")
+            print(f"swift: {shutil.which('swift')}")
+            print("PATH:")
+            for entry in os.environ["PATH"].split(os.pathsep):
+                print(f"  {entry}")
+            raise SystemExit(completed.returncode)

@@ -7,6 +7,7 @@ import 'package:test/test.dart';
 import 'package:xcross/src/flutter/build/ios_plugin_package.dart';
 import 'package:xcross/src/flutter/build/ios_plugins.dart';
 import 'package:xcross/src/flutter/constants.dart';
+import 'package:xcross/src/flutter/errors.dart';
 
 void main() {
   late Directory tmp;
@@ -274,38 +275,46 @@ let package = Package(
     });
   });
 
-  group('Windows SwiftPM command', () {
+  group('SwiftPM toolset', () {
+    String createTools(List<String> names, Map<String, String> into) {
+      final toolsDir = Directory(p.join(tmp.path, 'LLVM Preview', 'bin'))
+        ..createSync(recursive: true);
+      for (final name in names) {
+        into[name] = (File(p.join(toolsDir.path, name))..createSync()).path;
+      }
+      return toolsDir.path;
+    }
+
     test(
-      'writes an escaped external toolset with resolved LLVM paths',
+      'writes an escaped external toolset with resolved LLVM paths on Windows',
       () async {
-        final toolsDir = Directory(p.join(tmp.path, 'LLVM Preview', 'bin'))
-          ..createSync(recursive: true);
         final toolPaths = <String, String>{};
-        for (final name in [
+        createTools([
           'clang.exe',
           'clang++.exe',
-          'llvm-ar.exe',
+          'llvm-libtool-darwin.exe',
           'ld64.lld.exe',
-        ]) {
-          toolPaths[name] = (File(
-            p.join(toolsDir.path, name),
-          )..createSync()).path;
-        }
+        ], toolPaths);
         final requested = <String>[];
         final outputDir = p.join(tmp.path, 'generated output');
 
-        final toolsetPath = await GeneratedPluginsPackage.writeWindowsToolset(
+        final toolsetPath = await GeneratedPluginsPackage.writeToolset(
           outputDir: outputDir,
           windows: true,
           locateTool: (name) async {
             requested.add(name);
-            return toolPaths[name]!;
+            return toolPaths[name];
           },
         );
 
-        expect(requested, toolPaths.keys);
-        expect(toolsetPath, p.join(outputDir, 'xcross-windows-toolset.json'));
-        final contents = File(toolsetPath!).readAsStringSync();
+        expect(requested, [
+          'llvm-libtool-darwin.exe',
+          'clang.exe',
+          'clang++.exe',
+          'ld64.lld.exe',
+        ]);
+        expect(toolsetPath, p.join(outputDir, 'xcross-toolset.json'));
+        final contents = File(toolsetPath).readAsStringSync();
         final toolset = jsonDecode(contents) as Map<String, dynamic>;
         expect(toolset['schemaVersion'], '1.0');
         expect(contents, contains('LLVM Preview'));
@@ -316,7 +325,7 @@ let package = Package(
         final expected = {
           'cCompiler': toolPaths['clang.exe'],
           'cxxCompiler': toolPaths['clang++.exe'],
-          'librarian': toolPaths['llvm-ar.exe'],
+          'librarian': toolPaths['llvm-libtool-darwin.exe'],
           'linker': toolPaths['ld64.lld.exe'],
         };
         for (final entry in expected.entries) {
@@ -331,6 +340,66 @@ let package = Package(
         }
       },
     );
+
+    test('writes only a librarian on Linux, falling back to llvm-ar', () async {
+      final toolPaths = <String, String>{};
+      createTools(['llvm-ar'], toolPaths);
+      final requested = <String>[];
+      final outputDir = p.join(tmp.path, 'linux output');
+
+      final toolsetPath = await GeneratedPluginsPackage.writeToolset(
+        outputDir: outputDir,
+        windows: false,
+        locateTool: (name) async {
+          requested.add(name);
+          return toolPaths[name];
+        },
+      );
+
+      expect(requested, ['llvm-libtool-darwin', 'llvm-ar']);
+      final toolset =
+          jsonDecode(File(toolsetPath).readAsStringSync())
+              as Map<String, dynamic>;
+      expect(toolset.keys, ['schemaVersion', 'rootPath', 'librarian']);
+      expect(
+        (toolset['librarian'] as Map<String, dynamic>)['path'],
+        File(toolPaths['llvm-ar']!).resolveSymbolicLinksSync(),
+      );
+    });
+
+    test('prefers the llvm-libtool-darwin sitting next to llvm-ar', () async {
+      final toolPaths = <String, String>{};
+      createTools(['llvm-ar', 'llvm-libtool-darwin'], toolPaths);
+
+      final toolsetPath = await GeneratedPluginsPackage.writeToolset(
+        outputDir: p.join(tmp.path, 'sibling output'),
+        windows: false,
+        // Only the unversioned archiver is symlinked onto PATH.
+        locateTool: (name) async => name == 'llvm-ar' ? toolPaths[name] : null,
+      );
+
+      final toolset =
+          jsonDecode(File(toolsetPath).readAsStringSync())
+              as Map<String, dynamic>;
+      expect(
+        (toolset['librarian'] as Map<String, dynamic>)['path'],
+        p.join(
+          p.dirname(File(toolPaths['llvm-ar']!).resolveSymbolicLinksSync()),
+          'llvm-libtool-darwin',
+        ),
+      );
+    });
+
+    test('fails when no Darwin-capable archiver exists', () {
+      expect(
+        GeneratedPluginsPackage.writeToolset(
+          outputDir: p.join(tmp.path, 'empty output'),
+          windows: false,
+          locateTool: (name) async => null,
+        ),
+        throwsA(isA<FlutterBuildError>()),
+      );
+    });
 
     test('keeps the iOS SDK, package flags, and Windows toolset', () {
       final arguments = GeneratedPluginsPackage.swiftBuildArguments(
