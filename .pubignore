@@ -1,0 +1,32 @@
+# Dev-only files; .pubignore replaces .gitignore for `dart pub publish`.
+# Applies to workspace packages too — pub reads ignore files from the repo root down.
+.dart_tool/
+.fvm/
+.fvmrc
+.vscode/
+.idea/
+*.iml
+.github/
+.maki/
+.opencode/
+.slim
+.hive
+AGENTS.md
+analysis_options.yaml
+pubspec_overrides.yaml
+pubspec.lock
+
+examples/
+test/
+coverage/
+doc/api/
+
+# Build output only; lib/src/build/ is source.
+build/
+!lib/src/build/
+!**/lib/src/build/
+
+.DS_Store
+._*
+*~
+*.log
