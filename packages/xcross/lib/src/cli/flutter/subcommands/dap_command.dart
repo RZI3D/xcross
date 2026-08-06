@@ -1,5 +1,5 @@
 import 'package:args/command_runner.dart';
-import 'package:xcross_dap/xcross_dap.dart';
+import 'package:xcross/src/dap/dap.dart';
 
 /// `xcross flutter dap` — Debug Adapter Protocol server driving
 /// `xcross flutter run`.

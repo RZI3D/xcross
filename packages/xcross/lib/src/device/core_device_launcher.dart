@@ -8,7 +8,7 @@ import 'package:pure/pure.dart';
 import 'package:xcross/src/constants.dart';
 import 'package:xcross/src/device/session_console.dart';
 import 'package:xcross/src/errors.dart';
-import 'package:xcross_flutter/xcross_flutter.dart';
+import 'package:xcross/src/flutter/flutter.dart';
 
 const _cleanupTimeout = Duration(seconds: 2);
 const _transportCloseTimeout = Duration(seconds: 3);

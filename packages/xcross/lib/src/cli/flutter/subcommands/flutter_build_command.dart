@@ -2,7 +2,7 @@ import 'package:args/command_runner.dart';
 import 'package:build_cli_annotations/build_cli_annotations.dart';
 import 'package:cli_kit/cli_kit.dart';
 import 'package:xcross/src/cli/shared/ipa_packager.dart';
-import 'package:xcross_flutter/xcross_flutter.dart';
+import 'package:xcross/src/flutter/flutter.dart';
 
 part 'flutter_build_command.g.dart';
 

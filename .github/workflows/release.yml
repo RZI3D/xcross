@@ -54,8 +54,10 @@ jobs:
           dart test packages/darwin_sdk_kit
           dart test packages/dart_mobile_device
           dart test packages/frontend_server_kit
-          dart test packages/xcross_flutter
-          dart test packages/xcross_dap
+
+      - name: Validate pub.dev package
+        working-directory: packages/xcross
+        run: dart pub publish --dry-run
 
       - name: Compile binary
         run: |
@@ -110,8 +112,6 @@ jobs:
           dart test packages/darwin_sdk_kit
           dart test packages/dart_mobile_device
           dart test packages/frontend_server_kit
-          dart test packages/xcross_flutter
-          dart test packages/xcross_dap
 
       - name: Build xcross
         shell: pwsh

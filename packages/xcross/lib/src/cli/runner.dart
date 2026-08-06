@@ -16,7 +16,7 @@ import 'package:xcross/src/cli/flutter/flutter_command.dart';
 import 'package:xcross/src/cli/ide/ide_command.dart';
 import 'package:xcross/src/cli/internal/xcross_runner.dart';
 import 'package:xcross/src/errors.dart';
-import 'package:xcross_flutter/xcross_flutter.dart';
+import 'package:xcross/src/flutter/flutter.dart';
 
 /// Namespace for building and running the xcross CLI.
 abstract final class XcrossCli {

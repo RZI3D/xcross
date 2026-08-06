@@ -169,7 +169,7 @@ jobs:
             --project-name xcross_ci_sample \
             "$RUNNER_TEMP/flutter_sample"
           cd "$RUNNER_TEMP/flutter_sample"
-          fixture="$GITHUB_WORKSPACE/test/fixtures/spm_plugin"
+          fixture="$GITHUB_WORKSPACE/packages/xcross/test/flutter/fixtures/spm_plugin"
           flutter pub add "spm_plugin@{path: $fixture}"
           "$RUNNER_TEMP/xcross-bundle/bin/xcross" flutter build
 

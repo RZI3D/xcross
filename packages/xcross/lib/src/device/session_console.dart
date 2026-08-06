@@ -5,7 +5,7 @@ import 'package:cli_kit/cli_kit.dart';
 import 'package:dart_mobile_device/dart_mobile_device.dart';
 import 'package:pure/pure.dart';
 import 'package:xcross/src/constants.dart';
-import 'package:xcross_flutter/xcross_flutter.dart';
+import 'package:xcross/src/flutter/flutter.dart';
 
 /// Interactive terminal session for an attached app: streams the app's stdout,
 /// dispatches `r`/`R`/`q` keypresses to hot reload, and stops on SIGINT or when

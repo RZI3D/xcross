@@ -6,7 +6,7 @@ import 'package:dart_mobile_device/dart_mobile_device.dart';
 import 'package:path/path.dart' as p;
 import 'package:xcross/src/device/internal/signing_session.dart';
 import 'package:xcross/src/errors.dart';
-import 'package:xcross_flutter/xcross_flutter.dart';
+import 'package:xcross/src/flutter/flutter.dart';
 
 /// Resolves, signs, and installs to a device using the native pipeline.
 abstract interface class DeviceBackend {

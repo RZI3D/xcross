@@ -17,8 +17,6 @@ void main() {
       'darwin_sdk_kit',
       'dart_mobile_device',
       'frontend_server_kit',
-      'xcross_flutter',
-      'xcross_dap',
     ];
     final roots = [
       for (final name in packages) Directory('$_repoRoot/packages/$name'),

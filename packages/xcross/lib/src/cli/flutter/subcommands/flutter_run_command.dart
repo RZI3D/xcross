@@ -8,7 +8,7 @@ import 'package:xcross/src/cli/flutter/subcommands/flutter_build_command.dart';
 import 'package:xcross/src/device/core_device_launcher.dart';
 import 'package:xcross/src/device/device_backend.dart';
 import 'package:xcross/src/errors.dart';
-import 'package:xcross_flutter/xcross_flutter.dart';
+import 'package:xcross/src/flutter/flutter.dart';
 
 part 'flutter_run_command.g.dart';
 
