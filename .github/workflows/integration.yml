@@ -131,9 +131,21 @@ jobs:
             $swift.FullName
           }
           $swiftBin = Split-Path $swiftPath
+          $runtime = Get-ChildItem `
+            "$env:LOCALAPPDATA\Programs\Swift\Runtimes" `
+            -Filter swiftCore.dll `
+            -File `
+            -Recurse `
+            -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+          if (-not $runtime) {
+            throw 'Swift.Runtime did not install swiftCore.dll'
+          }
+          $runtimeBin = Split-Path $runtime.FullName
           $llvmBin | Out-File $env:GITHUB_PATH -Encoding utf8 -Append
+          $runtimeBin | Out-File $env:GITHUB_PATH -Encoding utf8 -Append
           $swiftBin | Out-File $env:GITHUB_PATH -Encoding utf8 -Append
-          $env:Path = "$llvmBin;$swiftBin;$env:Path"
+          $env:Path = "$llvmBin;$runtimeBin;$swiftBin;$env:Path"
           $tools = @(
             'swift', 'clang', 'clang++', 'llvm-ar', 'ld64.lld',
             'llvm-readobj', 'llvm-nm', 'llvm-objdump'
@@ -142,6 +154,10 @@ jobs:
             if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) {
               throw "Missing $tool"
             }
+          }
+          & swift --version
+          if ($LASTEXITCODE -ne 0) {
+            throw "swift --version failed with $LASTEXITCODE"
           }
 
           flutter config --no-analytics
