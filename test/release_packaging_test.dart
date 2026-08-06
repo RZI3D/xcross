@@ -1,10 +1,17 @@
 import 'dart:io';
+import 'dart:isolate';
 
 import 'package:test/test.dart';
 
+final String _repoRoot = File.fromUri(
+  Isolate.resolvePackageUriSync(Uri.parse('package:xcross/xcross.dart'))!,
+).parent.parent.path;
+
 void main() {
   test('release publishes only xcross artifacts and keeps attribution', () {
-    final workflow = File('.github/workflows/release.yml').readAsStringSync();
+    final workflow = File(
+      '$_repoRoot/.github/workflows/release.yml',
+    ).readAsStringSync();
 
     for (final expected in [
       'native/signing/ZSIGN_LICENSE.txt',
@@ -57,7 +64,7 @@ void main() {
   });
 
   test('installer installs xcross plus its required license notice', () {
-    final installer = File('install.sh').readAsStringSync();
+    final installer = File('$_repoRoot/install.sh').readAsStringSync();
 
     for (final expected in [
       'xcross-linux-x64.tar.gz',
@@ -80,15 +87,15 @@ void main() {
   });
 
   test('Windows installer installs release zip under LOCALAPPDATA', () {
-    final installer = File('install.ps1').readAsStringSync();
+    final installer = File('$_repoRoot/install.ps1').readAsStringSync();
 
     for (final expected in [
       'xcross-windows-x64.zip',
       'LOCALAPPDATA',
-      r"sysv_abi_bridge.dll",
+      'sysv_abi_bridge.dll',
       r'bin\xcross.exe',
       '--help',
-      "Join-Path \$env:LOCALAPPDATA 'xcross'",
+      r"Join-Path $env:LOCALAPPDATA 'xcross'",
       'SetEnvironmentVariable',
     ]) {
       expect(installer, contains(expected));

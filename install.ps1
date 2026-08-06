@@ -51,11 +51,11 @@ try {
 
   $staged = Join-Path $tmp 'staged'
   Expand-Archive -Path $zip -DestinationPath $staged
-  if (-not (Test-Path (Join-Path $staged 'bin/xcross.exe'))) {
-    Fail 'archive missing bin/xcross.exe'
+  if (-not (Test-Path (Join-Path $staged 'bin\xcross.exe'))) {
+    Fail 'archive missing bin\xcross.exe'
   }
-  if (-not (Test-Path (Join-Path $staged 'lib/sysv_abi_bridge.dll'))) {
-    Fail 'archive missing lib/sysv_abi_bridge.dll'
+  if (-not (Test-Path (Join-Path $staged 'lib\sysv_abi_bridge.dll'))) {
+    Fail 'archive missing lib\sysv_abi_bridge.dll'
   }
 
   # --- install (keep the bin/ + lib/ layout so xcross finds ../lib) --------
@@ -71,7 +71,7 @@ try {
 }
 
 # --- verify ----------------------------------------------------------------
-$exe = Join-Path $InstallDir 'bin/xcross.exe'
+$exe = Join-Path $InstallDir 'bin\xcross.exe'
 & $exe --help *> $null
 if ($LASTEXITCODE -ne 0) { Fail 'installed xcross failed verification' }
 Info "Installed and verified: $exe"

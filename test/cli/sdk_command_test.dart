@@ -283,7 +283,10 @@ void main() {
         return swift.path;
       },
       runProcess: (executable, arguments) async {
-        expect(executable, clang.path);
+        expect(
+          File(executable).resolveSymbolicLinksSync(),
+          clang.resolveSymbolicLinksSync(),
+        );
         expect(arguments, ['-print-resource-dir']);
         return CapturedProcess(0, p.dirname(include.path), '');
       },

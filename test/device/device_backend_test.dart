@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:isolate';
 
 import 'package:test/test.dart';
 import 'package:xcross/src/device/device_backend.dart';
@@ -9,9 +10,10 @@ void main() {
   });
 
   test('rejects non-app inputs before provisioning mutates Apple state', () {
-    final source = File(
-      'lib/src/device/device_backend.dart',
-    ).readAsStringSync();
+    final uri = Isolate.resolvePackageUriSync(
+      Uri.parse('package:xcross/src/device/device_backend.dart'),
+    )!;
+    final source = File.fromUri(uri).readAsStringSync();
     final guard = source.indexOf(
       'in-process signer currently supports xcross-generated .app',
     );
