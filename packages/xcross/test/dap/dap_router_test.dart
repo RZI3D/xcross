@@ -79,7 +79,7 @@ void main() {
     },
   );
 
-  test('DapSession.run with xcross:true starts the xcross adapter', () async {
+  test('DapSession.run with XCROSS env starts the xcross adapter', () async {
     final inbound = StreamController<List<int>>();
     final outbound = StreamController<List<int>>();
     ByteStreamServerChannel? started;
@@ -107,7 +107,10 @@ void main() {
       'seq': 3,
       'type': 'request',
       'command': 'launch',
-      'arguments': {'program': 'lib/main.dart', 'xcross': true},
+      'arguments': {
+        'program': 'lib/main.dart',
+        'env': {'XCROSS': 'true'},
+      },
     });
     await inbound.close();
     await session;

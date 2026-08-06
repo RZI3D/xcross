@@ -220,7 +220,7 @@ xcross ide vscode
 Writes the DAP shim and upserts an xcross launch entry + DAP settings into `.vscode/`. Press **F5** to build, sign, install, and launch. Hot Reload / Restart buttons drive the same `r`/`R` commands as the CLI, and DevTools attaches to the same VM Service connection.
 
 - Works in VS Code forks with the Dart-Code extension installed.
-- The xcross launch config sets `"xcross": true`; other Flutter launch configs in the workspace keep working - sessions without that flag are handed to Flutter's own debug adapter.
+- The xcross launch config sets `"env": { "XCROSS": "true" }`; other Flutter launch configs in the workspace keep working - sessions without that marker are handed to Flutter's own debug adapter.
 - For multiple iPhones, set `"args": ["--udid", "<UDID>"]` on the xcross entry; re-running the command preserves those args.
 - Existing `launch.json` / `settings.json` are merged in place (xcross keys upserted, everything else kept). A second run is a no-op when already current.
 - Run the *installed* `xcross`; the generated DAP shim records that binary's path.
@@ -323,7 +323,7 @@ Hot reload is pure Flutter-internals territory, reimplemented protocol-for-proto
 
 ### 7. IDE debugging via DAP
 
-`xcross_dap` implements a **Debug Adapter Protocol** server that routes launch/attach, breakpoints, stepping, and hot-reload requests to the same VM Service connection. VS Code reaches it through a shim that intercepts launch configs marked `"xcross": true` (everything else falls through to Flutter's own adapter); JetBrains IDEs reach it through an LSP4IJ DAP run configuration.
+`xcross_dap` implements a **Debug Adapter Protocol** server that routes launch/attach, breakpoints, stepping, and hot-reload requests to the same VM Service connection. VS Code reaches it through a shim that intercepts launch configs marked with `"env": { "XCROSS": "true" }` (everything else falls through to Flutter's own adapter); JetBrains IDEs reach it through an LSP4IJ DAP run configuration.
 
 ## Credits
 

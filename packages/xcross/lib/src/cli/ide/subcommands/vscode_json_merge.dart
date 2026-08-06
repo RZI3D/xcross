@@ -5,6 +5,11 @@ const String dapPathSetting = 'dart.customFlutterDapPath';
 const String dapPathValue = '.vscode/xcross_dap.dart';
 const String promptErrorsSetting = 'dart.promptToRunIfErrors';
 
+/// Marks a launch config as xcross-owned. Carried in the config's `env` (a
+/// schema-valid Dart launch field) so editors don't flag an unknown key.
+const String xcrossEnvKey = 'XCROSS';
+const String xcrossEnvValue = 'true';
+
 /// JSONC parse/merge helpers for VS Code launch.json / settings.json.
 abstract final class VscodeJsonMerge {
   /// Strip JSONC sugar VS Code allows: `//` / `/* */` comments and trailing
@@ -123,13 +128,20 @@ abstract final class VscodeJsonMerge {
     'request': 'launch',
     'debuggerType': 'flutter',
     'program': 'lib/main.dart',
-    'xcross': true,
     'cwd': r'${workspaceFolder}',
   };
 
+  /// The xcross marker merged onto the entry's own `env` entries.
+  static Map<String, Object?> _withMarker(Object? env) => {
+    if (env case final Map<Object?, Object?> existing)
+      for (final e in existing.entries) '${e.key}': e.value,
+    xcrossEnvKey: xcrossEnvValue,
+  };
+
   /// Overwrite the xcross-managed fields on an existing launch entry while
-  /// keeping the user's own keys, their original order, and their `args`
-  /// (device flags they typed there must survive a re-run).
+  /// keeping the user's own keys, their original order, their `env` and their
+  /// `args` (device flags they typed there must survive a re-run).
+  /// The legacy top-level `xcross` flag is migrated into `env`.
   static Map<String, Object?> _withCanonicalFields(
     Map<Object?, Object?> entry,
   ) {
@@ -137,14 +149,20 @@ abstract final class VscodeJsonMerge {
       for (final e in entry.entries) '${e.key}': e.value,
     };
     final args = merged.containsKey('args') ? merged['args'] : <Object?>[];
+    final env = _withMarker(merged['env']);
     return merged
+      ..remove('xcross')
       ..addAll(xcrossLaunchFields())
+      ..['env'] = env
       ..['args'] = args;
   }
 
   static bool _isXcrossConfig(Object? config) =>
       config is Map &&
-      (config['xcross'] == true || config['name'] == xcrossLaunchName);
+      (config['name'] == xcrossLaunchName ||
+          config['xcross'] == true ||
+          (config['env'] is Map &&
+              (config['env']! as Map)[xcrossEnvKey] == xcrossEnvValue));
 
   /// Upsert the xcross launch configuration into a launch.json document.
   static Map<String, Object?> mergeLaunchDoc(Map<String, Object?>? existing) {
@@ -154,7 +172,11 @@ abstract final class VscodeJsonMerge {
     final configs = <Object?>[...?doc['configurations'] as List<Object?>?];
     final index = configs.indexWhere(_isXcrossConfig);
     if (index < 0) {
-      configs.add({...xcrossLaunchFields(), 'args': <Object?>[]});
+      configs.add({
+        ...xcrossLaunchFields(),
+        'env': _withMarker(null),
+        'args': <Object?>[],
+      });
     } else {
       configs[index] = _withCanonicalFields(configs[index]! as Map);
     }

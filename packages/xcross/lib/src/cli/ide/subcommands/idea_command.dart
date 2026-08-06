@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:args/command_runner.dart';
 import 'package:cli_kit/cli_kit.dart';
 import 'package:path/path.dart' as p;
+import 'package:xcross/src/cli/ide/subcommands/vscode_json_merge.dart';
 import 'package:xcross/src/cli/ide/xcross_executable.dart';
 
 /// `xcross ide idea` — write a shared LSP4IJ DAP run configuration that
@@ -64,7 +65,7 @@ final class IdeaCommand extends Command<void> {
       'request': 'launch',
       'program': 'lib/main.dart',
       'cwd': r'${workspaceFolder}',
-      'xcross': true,
+      'env': {xcrossEnvKey: xcrossEnvValue},
       'args': <String>[],
     });
 

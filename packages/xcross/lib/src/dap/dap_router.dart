@@ -17,7 +17,8 @@ final class DapMessage {
 }
 
 /// Gates the DAP session until `launch`/`attach`, then either runs
-/// [startXcross] (when launch.json has `"xcross": true`) or proxies to
+/// [startXcross] (when the launch config sets `env: {XCROSS: true}`) or
+/// proxies to
 /// Flutter's own `debug-adapter`.
 abstract final class DapSession {
   static Future<void> run({

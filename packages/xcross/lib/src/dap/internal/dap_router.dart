@@ -103,8 +103,7 @@ final class DapRouter {
   }
 
   Future<void> _handoff(Map<String, Object?> launchRequest) async {
-    final args = launchRequest['arguments'];
-    final useXcross = args is Map<Object?, Object?> && args['xcross'] == true;
+    final useXcross = _wantsXcross(launchRequest['arguments']);
 
     final filtered = DapResponseFilter(_output, _answered);
     final inbound = StreamController<List<int>>();
@@ -119,6 +118,17 @@ final class DapRouter {
       inbound.add(frame);
     }
     await _rest.stream.pipe(inbound);
+  }
+
+  /// A session is ours when its launch args carry `env: {XCROSS: true}`
+  /// (the legacy top-level `xcross: true` flag still works).
+  static bool _wantsXcross(Object? args) {
+    if (args is! Map<Object?, Object?>) return false;
+    if (args['xcross'] == true) return true;
+    if (args['env'] case final Map<Object?, Object?> env) {
+      return '${env['XCROSS']}'.toLowerCase() == 'true';
+    }
+    return false;
   }
 
   void _startXcrossAdapter(
@@ -137,9 +147,9 @@ final class DapRouter {
     final flutterRoot = Platform.environment['FLUTTER_ROOT'];
     if (flutterRoot == null) {
       stderr.writeln(
-        'xcross dap: launch.json is missing "xcross": true and '
-        'FLUTTER_ROOT is unset — cannot fall back to the Flutter DAP.\n'
-        'Add "xcross": true to this config, or fix FLUTTER_ROOT.',
+        'xcross dap: launch config is missing "env": {"XCROSS": "true"} '
+        'and FLUTTER_ROOT is unset — cannot fall back to the Flutter DAP.\n'
+        'Add that env entry to this config, or fix FLUTTER_ROOT.',
       );
       await outbound.close();
       return false;

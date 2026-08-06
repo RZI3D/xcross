@@ -44,6 +44,7 @@ void main() {
       expect(configs, hasLength(1));
       expect(configs.single, {
         ...VscodeJsonMerge.xcrossLaunchFields(),
+        'env': {'XCROSS': 'true'},
         'args': <Object?>[],
       });
     });
@@ -62,7 +63,7 @@ void main() {
         'type': 'dart',
         'request': 'launch',
       });
-      expect((configs.last as Map)['xcross'], true);
+      expect((configs.last as Map)['env'], {'XCROSS': 'true'});
     });
 
     test('preserves args on an existing xcross entry', () {
@@ -73,6 +74,7 @@ void main() {
             'name': 'xcross: iOS device',
             'type': 'dart',
             'xcross': true,
+            'env': {'MY_KEY': 'mine'},
             'args': ['--udid', 'ABC'],
             'extra': true,
           },
@@ -80,19 +82,21 @@ void main() {
       });
       final entry = (doc['configurations']! as List).single as Map;
       expect(entry['args'], ['--udid', 'ABC']);
+      expect(entry['env'], {'MY_KEY': 'mine', 'XCROSS': 'true'});
+      expect(entry.containsKey('xcross'), isFalse);
       expect(entry['extra'], true);
       expect(entry['program'], 'lib/main.dart');
       expect(entry['debuggerType'], 'flutter');
     });
 
-    test('matches by name when xcross flag is missing', () {
+    test('matches by name when the xcross marker is missing', () {
       final doc = VscodeJsonMerge.mergeLaunchDoc({
         'configurations': [
           {'name': 'xcross: iOS device', 'type': 'dart'},
         ],
       });
       final entry = (doc['configurations']! as List).single as Map;
-      expect(entry['xcross'], true);
+      expect(entry['env'], {'XCROSS': 'true'});
       expect(entry['args'], <Object?>[]);
     });
   });
@@ -173,7 +177,7 @@ void main() {
       final last = configs.last as Map;
       expect(configs, hasLength(2));
       expect(first['name'], 'Flutter');
-      expect(last['xcross'], true);
+      expect(last['env'], {'XCROSS': 'true'});
 
       final settings =
           jsonDecode(
@@ -200,7 +204,10 @@ void main() {
       expect(xml, contains('factoryName="DAPConfiguration"'));
       expect(xml, contains(r'C:\tools\xcross.exe'));
       expect(xml, contains(' flutter dap'));
-      expect(xml, contains('&quot;xcross&quot;:true'));
+      expect(
+        xml,
+        contains('&quot;env&quot;:{&quot;XCROSS&quot;:&quot;true&quot;}'),
+      );
       expect(xml, contains('*.dart'));
       expect(xml, contains(r'$PROJECT_DIR$'));
       expect(xml, contains('debugServerWaitStrategy" value="TIMEOUT"'));
