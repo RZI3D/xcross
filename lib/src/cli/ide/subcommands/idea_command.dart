@@ -34,7 +34,7 @@ final class IdeaCommand extends Command<void> {
     Log.logInfo(
       'Next',
       Log.ansi.subtle(
-        'install LSP4IJ (plugins.jetbrains.com/plugin/18229-lsp4ij), '
+        'install LSP4IJ (plugins.jetbrains.com/plugin/23257-lsp4ij), '
         'then Debug the "xcross: iOS device" run configuration '
         "(not Flutter's Run button)",
       ),
@@ -83,12 +83,17 @@ final class IdeaCommand extends Command<void> {
     <option name="serverMappings">
       <list>
         <ServerMappingSettings>
+          <option name="fileNamePatterns">
+            <list>
+              <option value="*.dart" />
+            </list>
+          </option>
           <fileType>
-            <option name="patterns">
-              <list>
+            <FileTypeSettings>
+              <option name="patterns">
                 <option value="*.dart" />
-              </list>
-            </option>
+              </option>
+            </FileTypeSettings>
           </fileType>
         </ServerMappingSettings>
       </list>
