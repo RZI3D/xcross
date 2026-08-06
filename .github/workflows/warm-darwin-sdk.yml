@@ -1,12 +1,21 @@
 # Seeds the private, per-host Darwin SDK caches used by integration.yml.
-# Repository secret DARWIN_ARTIFACTBUNDLE_URL must point to an archive with
-# xcross-darwin.artifactbundle at its root, produced by `xcross sdk install`.
+# The artifactbundle_url input, or repository secret DARWIN_ARTIFACTBUNDLE_URL
+# when it is empty, must point to an archive with xcross-darwin.artifactbundle
+# at its root, produced by `xcross sdk install`.
 # Never publish the archive: it contains Apple SDK content.
 name: Warm Darwin SDK cache
 
 on:
   workflow_dispatch:
     inputs:
+      artifactbundle_url:
+        description: >-
+          Private URL to the SDK .tar.gz. Defaults to the
+          DARWIN_ARTIFACTBUNDLE_URL secret. Dispatch inputs are recorded in
+          plain text in the run metadata, so prefer a short-lived URL.
+        required: false
+        default: ""
+        type: string
       cache_revision:
         description: Non-secret revision used to replace an older SDK cache.
         required: true
@@ -107,8 +116,20 @@ jobs:
             }
           }
 
+      - name: Mask dispatched artifactbundle URL
+        if: inputs.artifactbundle_url != ''
+        shell: bash
+        env:
+          ARTIFACTBUNDLE_URL: ${{ inputs.artifactbundle_url }}
+        run: |
+          set -euo pipefail
+          echo "::add-mask::$ARTIFACTBUNDLE_URL"
+
       - name: Restore or download xcross Darwin SDK
         uses: ./.github/actions/setup-darwin-sdk
         with:
-          artifactbundle-url: ${{ secrets.DARWIN_ARTIFACTBUNDLE_URL }}
+          artifactbundle-url: >-
+            ${{ inputs.artifactbundle_url != ''
+            && inputs.artifactbundle_url
+            || secrets.DARWIN_ARTIFACTBUNDLE_URL }}
           cache-revision: ${{ inputs.cache_revision }}
