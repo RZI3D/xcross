@@ -13,7 +13,7 @@
 
 No Mac. No Xcode. No WSL.
 
-[Install](#-installation) • [Quick start](#-quick-start) • [Commands](#-command-reference) • [IDE](#-ide-integration) • [FAQ](#-faq) • [Under the hood](#-under-the-hood)
+[Install](#installation) • [Quick start](#quick-start) • [Commands](#command-reference) • [IDE](#ide-integration) • [FAQ](#faq) • [Under the hood](#under-the-hood)
 
 </div>
 
@@ -21,21 +21,19 @@ No Mac. No Xcode. No WSL.
 
 xcross reimplements the Flutter iOS build pipeline and the iOS 17+ CoreDevice launch protocol in pure Dart. It compiles your Flutter app with the official Swift and LLVM toolchains, signs it with your Apple ID or an App Store Connect API key, installs it on a physical iPhone, launches it, and gives you full hot reload - all from a Windows or Linux machine.
 
-## ✨ Highlights
-
-| | Feature | Details |
-|---|---|---|
-| 🪟🐧 | **Native Windows & Linux** | Runs directly on the host with official Swift and LLVM toolchains - no VM, no WSL, no macOS anywhere |
-| 🔥 | **Hot reload & hot restart** | Full `r` / `R` workflow on a real iPhone over an iOS 17+ RSD tunnel |
-| 📦 | **Native signing & install** | Apple ID (free account works) or App Store Connect API key; signing runs in-process |
-| 🔌 | **SwiftPM plugins** | Swift Package Manager iOS plugins compile on both Windows and Linux |
-| 🧠 | **IDE debugging** | One command sets up VS Code (F5, breakpoints, DevTools) or JetBrains IDEs via DAP |
-| ⚙️ | **Direct build pipeline** | `frontend_server` → `clang` → `ld64.lld` → `.app` / `.ipa` - no Xcode build system involved |
+| Feature | Details |
+|---|---|
+| **Native Windows & Linux** | Runs directly on the host with official Swift and LLVM toolchains - no VM, no WSL, no macOS anywhere |
+| **Hot reload & hot restart** | Full `r` / `R` workflow on a real iPhone over an iOS 17+ RSD tunnel |
+| **Native signing & install** | Apple ID (free account works) or App Store Connect API key; signing runs in-process |
+| **SwiftPM plugins** | Swift Package Manager iOS plugins compile on both Windows and Linux |
+| **IDE debugging** | One command sets up VS Code (F5, breakpoints, DevTools) or JetBrains IDEs via DAP |
+| **Direct build pipeline** | `frontend_server` → `clang` → `ld64.lld` → `.app` / `.ipa` - no Xcode build system involved |
 
 > [!IMPORTANT]
 > xcross produces **debug (JIT) device builds**. Release/AOT builds still require Flutter's macOS build tooling. Launching with xcross requires **iOS 17 or later** on the device.
 
-## 📋 Requirements
+## Requirements
 
 Both platforms need the same five ingredients:
 
@@ -50,7 +48,7 @@ Both platforms need the same five ingredients:
 > [!NOTE]
 > Download the Xcode archive from [xcodereleases.com](https://xcodereleases.com/) (requires an Apple ID). It is only used as SDK *input* - neither Xcode nor macOS is ever installed or executed. xcross extracts the iOS SDK and frameworks from the archive with its own pure-Dart xar/pbzx/cpio readers. Don't redistribute the extracted Apple SDK.
 
-## 📥 Installation
+## Installation
 
 Both installers download the latest release, install it, **add xcross to your `PATH`**, verify the binary, and print any missing prerequisites with install hints.
 
@@ -94,7 +92,7 @@ Both installers download the latest release, install it, **add xcross to your `P
 
    `xcross setup` also installs `usbmuxd`, `usbutils`, and `libimobiledevice-utils` for USB device access and diagnostics.
 
-## 🔑 Authentication
+## Authentication
 
 xcross talks to Apple's Developer Services directly. Two options:
 
@@ -117,7 +115,7 @@ Machine attestation uses Android ADI libraries (`libCoreADI.so`, `libstoreservic
 xcross auth --issuer-id <uuid> --key-id <id> --private-key /path/to/AuthKey.p8
 ```
 
-## 🚀 Quick start
+## Quick start
 
 ```sh
 # 1. One-time machine setup (see Installation above)
@@ -141,13 +139,13 @@ While the app is running:
 
 | Key | Action |
 |---|---|
-| `r` | 🔥 Hot reload |
-| `R` | ♻️ Hot restart |
+| `r` | Hot reload |
+| `R` | Hot restart |
 | `q` / `Ctrl-C` / `Ctrl-D` | Quit |
 
 With multiple iPhones connected, an interactive terminal shows a numbered device picker; pass `-u <UDID>` for CI or piped runs.
 
-## 📖 Command reference
+## Command reference
 
 | Command | Description |
 |---|---|
@@ -183,13 +181,13 @@ With multiple iPhones connected, an interactive terminal shows a numbered device
 ```
 </details>
 
-## 🔌 Flutter plugins
+## Flutter plugins
 
 Swift Package Manager iOS plugins work on both Windows and Linux. Their native code is compiled against the extracted Darwin SDK into `Frameworks/libFlutterPluginsGenerated.dylib` and registered by the generated runner.
 
 Plugins that only ship a CocoaPods podspec are currently **skipped with a warning** - prefer plugin releases that include `ios/<package_name>/Package.swift`.
 
-## 🪪 Bundle identity
+## Bundle identity
 
 The bundle id is read from the Flutter iOS project, using the same sources as Flutter's own tooling on non-macOS hosts:
 
@@ -198,7 +196,7 @@ The bundle id is read from the Flutter iOS project, using the same sources as Fl
 
 The packed `.app`'s `Info.plist` is always derived from `ios/Runner/Info.plist` when present.
 
-## 🧩 IDE integration
+## IDE integration
 
 ### VS Code
 
@@ -226,7 +224,7 @@ Writes `.run/xcross_ios_device.run.xml` - a shared [LSP4IJ](https://plugins.jetb
 - Breakpoints and stepping use the DAP/VM Service path; Restart maps to hot restart. Console `r`/`R` still work.
 - An existing `.run/xcross_ios_device.run.xml` is never overwritten.
 
-## ❓ FAQ
+## FAQ
 
 <details>
 <summary><b>Why can't it build release/AOT?</b></summary>
@@ -254,7 +252,7 @@ No. `xcross auth` performs the login handshake locally and persists only the res
 
 ---
 
-## 🔬 Under the hood
+## Under the hood
 
 xcross does not wrap or patch `flutter build ios` - that command simply refuses to run off-macOS. Instead, it re-implements the parts of Flutter's toolchain that matter for a debug device build, using the same engine artifacts, the same compilers, and the same device protocols the official tooling uses.
 
@@ -314,18 +312,16 @@ Hot reload is pure Flutter-internals territory, reimplemented protocol-for-proto
 
 `xcross_dap` implements a **Debug Adapter Protocol** server that routes launch/attach, breakpoints, stepping, and hot-reload requests to the same VM Service connection. VS Code reaches it through a shim that intercepts launch configs marked `"xcross": true` (everything else falls through to Flutter's own adapter); JetBrains IDEs reach it through an LSP4IJ DAP run configuration.
 
-### Package map
+## Support
 
-| Package | Role |
-|---|---|
-| `xcross_flutter` | Build pipeline: packer, debug bundler, engine cache, plugins, hot reload |
-| `apple_developer_kit` | GrandSlam/ADI auth, App Store Connect, provisioning, Mach-O signing |
-| `darwin_sdk_kit` | Pure-Dart xar/pbzx/cpio extraction of `Xcode.xip` → Darwin Swift SDK |
-| `dart_mobile_device` | Device transports, RSD tunnel discovery, gdb-remote client, port forwarding |
-| `frontend_server_kit` | Incremental kernel compiler session management |
-| `xcross_dap` | Debug Adapter Protocol server for IDEs |
-| `cli_kit` | Process, logging, privileges, download utilities |
+xcross is free and open source. If it saves you a Mac, consider giving back:
 
-## 📄 License
+- **Contribute** - pull requests are welcome, from typo fixes to new features.
+- **Report** - found a bug or missing a feature? [Open an issue](https://github.com/arxdeus/xcross/issues).
+- **Donate** - support ongoing development:
+
+  [![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/E1E0I3G2D)
+
+## License
 
 [MIT](LICENSE)
