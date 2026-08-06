@@ -312,6 +312,14 @@ Hot reload is pure Flutter-internals territory, reimplemented protocol-for-proto
 
 `xcross_dap` implements a **Debug Adapter Protocol** server that routes launch/attach, breakpoints, stepping, and hot-reload requests to the same VM Service connection. VS Code reaches it through a shim that intercepts launch configs marked `"xcross": true` (everything else falls through to Flutter's own adapter); JetBrains IDEs reach it through an LSP4IJ DAP run configuration.
 
+## Credits
+
+Thanks for maintainers for these repositories for their work, i took and adapt a lot from them:
+
+- [xtool](https://github.com/xtool-org/xtool) - cross-platform Xcode replacement that pioneered building and deploying iOS apps with SwiftPM from Linux and Windows.
+- [Provision](https://github.com/Dadoum/Provision) - reverse-engineered Apple ADI machine attestation and anisette provisioning; the foundation of xcross's Apple ID authentication approach.
+- [anisette-v3-server](https://github.com/Dadoum/anisette-v3-server) - anisette data server powering Apple ID logins without Apple hardware.
+
 ## Support
 
 xcross is free and open source. If it saves you a Mac, consider giving back:
