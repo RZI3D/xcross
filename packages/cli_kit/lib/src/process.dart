@@ -263,6 +263,22 @@ abstract final class ProcessRunner {
     Map<String, String>? environment,
     bool? windows,
     bool Function(String path)? accept,
+  }) async => (await whichAll(
+    name,
+    environment: environment,
+    windows: windows,
+    accept: accept,
+  )).firstOrNull;
+
+  /// Every match for [name] on PATH, in PATH order.
+  ///
+  /// Use this when the first match is not necessarily the right one and the
+  /// choice needs the whole candidate list.
+  static Future<List<String>> whichAll(
+    String name, {
+    Map<String, String>? environment,
+    bool? windows,
+    bool Function(String path)? accept,
   }) async {
     final env = environment ?? Platform.environment;
     final onWindows = windows ?? Platform.isWindows;
@@ -271,6 +287,7 @@ abstract final class ProcessRunner {
       onWindows ? _pathExtensions(env) : const [],
     );
 
+    final found = <String>[];
     final searchPath = _environmentValue(env, 'PATH') ?? '';
     for (final dir in searchPath.split(onWindows ? ';' : ':')) {
       if (dir.isEmpty) continue;
@@ -278,11 +295,11 @@ abstract final class ProcessRunner {
         final candidate = p.join(dir, candidateName);
         if (File(candidate).existsSync() &&
             (accept == null || accept(candidate))) {
-          return candidate;
+          found.add(candidate);
         }
       }
     }
-    return null;
+    return found;
   }
 
   static List<String> _pathExtensions(Map<String, String> env) =>

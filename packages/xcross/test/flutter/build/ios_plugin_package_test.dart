@@ -300,6 +300,7 @@ let package = Package(
 
         final toolsetPath = await GeneratedPluginsPackage.writeToolset(
           outputDir: outputDir,
+          linkerPath: toolPaths['ld64.lld.exe']!,
           windows: true,
           locateTool: (name) async {
             requested.add(name);
@@ -311,7 +312,6 @@ let package = Package(
           'llvm-libtool-darwin.exe',
           'clang.exe',
           'clang++.exe',
-          'ld64.lld.exe',
         ]);
         expect(toolsetPath, p.join(outputDir, 'xcross-toolset.json'));
         final contents = File(toolsetPath).readAsStringSync();
@@ -349,6 +349,7 @@ let package = Package(
 
       final toolsetPath = await GeneratedPluginsPackage.writeToolset(
         outputDir: outputDir,
+        linkerPath: toolPaths['llvm-ar']!,
         windows: false,
         locateTool: (name) async {
           requested.add(name);
@@ -373,6 +374,7 @@ let package = Package(
 
       final toolsetPath = await GeneratedPluginsPackage.writeToolset(
         outputDir: p.join(tmp.path, 'sibling output'),
+        linkerPath: toolPaths['llvm-ar']!,
         windows: false,
         // Only the unversioned archiver is symlinked onto PATH.
         locateTool: (name) async => name == 'llvm-ar' ? toolPaths[name] : null,
@@ -394,6 +396,7 @@ let package = Package(
       expect(
         GeneratedPluginsPackage.writeToolset(
           outputDir: p.join(tmp.path, 'empty output'),
+          linkerPath: 'ld64.lld',
           windows: false,
           locateTool: (name) async => null,
         ),

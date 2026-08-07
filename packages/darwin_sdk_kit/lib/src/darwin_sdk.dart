@@ -151,16 +151,36 @@ final class DarwinSdk {
 
   /// Resolve the Apple-compatible linker from PATH on every host.
   ///
-  /// swiftly's proxy shims are skipped since they cannot link for iOS.
-  static Future<String> resolveLd64Lld(DarwinSdk _) async =>
-      await ProcessRunner.which('ld64.lld', accept: usableLd64Lld) ??
-      (throw DarwinSdkError(
-        "No usable 'ld64.lld' on PATH.\n"
-        "swiftly's bundled lld cannot link for iOS, so it is skipped. Install "
-        'the LLVM one — `xcross setup`, or `sudo apt install lld` on Linux — '
-        'and make sure it is on PATH.',
-      ));
+  /// The `ld64.lld` a Swift toolchain ships beside its own `swift` refuses to
+  /// link for iOS ("This version of lld does not support linking for platform
+  /// iOS"), on Linux through swiftly's proxy shims and on Windows through the
+  /// official installer's copy. Stock LLVM ships no `swift`, so prefer a
+  /// candidate without one next to it — but still accept a co-located linker
+  /// when that is all PATH offers, since distributions that install Swift and
+  /// LLVM into the same `bin` are fine.
+  static Future<String> resolveLd64Lld(DarwinSdk _) async {
+    final candidates = await ProcessRunner.whichAll(
+      'ld64.lld',
+      accept: usableLd64Lld,
+    );
+    final linker =
+        candidates.where((path) => !_besideSwift(path)).firstOrNull ??
+        candidates.firstOrNull;
+    return linker ??
+        (throw DarwinSdkError(
+          "No usable 'ld64.lld' on PATH.\n"
+          "swiftly's bundled lld cannot link for iOS, so it is skipped. "
+          'Install the LLVM one — `xcross setup`, or `sudo apt install lld` '
+          'on Linux — and make sure it is on PATH.',
+        ));
+  }
 
   /// PATH filter for [resolveLd64Lld] and the `xcross setup` requirement check.
   static bool usableLd64Lld(String path) => !ProcessRunner.isSwiftlyProxy(path);
+
+  static bool _besideSwift(String path) {
+    final dir = p.dirname(path);
+    return File(p.join(dir, 'swift')).existsSync() ||
+        File(p.join(dir, 'swift.exe')).existsSync();
+  }
 }

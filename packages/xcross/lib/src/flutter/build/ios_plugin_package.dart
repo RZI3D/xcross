@@ -127,7 +127,11 @@ abstract final class GeneratedPluginsPackage {
     // uniformly to every target's compile step regardless of what that
     // target's own manifest declares.
     final flutterFrameworkSlice = p.join(flutterXcframework, 'ios-arm64');
-    final toolsetPath = await writeToolset(outputDir: outputDir);
+    final linker = await DarwinSdk.resolveLd64Lld(sdk);
+    final toolsetPath = await writeToolset(
+      outputDir: outputDir,
+      linkerPath: linker,
+    );
     await ProcessRunner.runChecked(
       swift,
       swiftBuildArguments(
@@ -137,9 +141,7 @@ abstract final class GeneratedPluginsPackage {
         flutterFrameworkSlice: flutterFrameworkSlice,
         toolsetPath: toolsetPath,
         // Windows gets the same override from the toolset's `linker`.
-        linkerPath: Platform.isWindows
-            ? null
-            : await DarwinSdk.resolveLd64Lld(sdk),
+        linkerPath: Platform.isWindows ? null : linker,
       ),
       inheritStdio: Log.isVerbose,
       label: 'swift build',
@@ -251,6 +253,7 @@ abstract final class GeneratedPluginsPackage {
   @visibleForTesting
   static Future<String> writeToolset({
     required String outputDir,
+    required String linkerPath,
     bool? windows,
     Future<String?> Function(String name)? locateTool,
   }) async {
@@ -285,8 +288,6 @@ abstract final class GeneratedPluginsPackage {
       final tools = <String, String>{
         'cCompiler': 'clang',
         'cxxCompiler': 'clang++',
-        // `.lld` looks like an extension, so pass the complete Windows name.
-        'linker': 'ld64.lld.exe',
       };
       for (final tool in tools.entries) {
         final path = await resolve(tool.value);
@@ -295,6 +296,11 @@ abstract final class GeneratedPluginsPackage {
         }
         toolset[tool.key] = {'path': path};
       }
+      // The Swift toolchain's own ld64.lld refuses iOS, so take the linker
+      // already vetted by DarwinSdk.resolveLd64Lld instead of PATH order.
+      toolset['linker'] = {
+        'path': _jsonPath(File(linkerPath).resolveSymbolicLinksSync()),
+      };
     }
 
     final toolsetFile = File(p.join(outputDir, 'xcross-toolset.json'));
