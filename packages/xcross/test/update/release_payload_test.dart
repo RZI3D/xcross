@@ -67,7 +67,10 @@ void main() {
       bytes: _zip(
         _bundle(
           binary: 'bin/xcross.exe',
-          extra: {'LICENSE': 'mit', 'THIRD_PARTY_LICENSES/zsign.txt': 'notice'},
+          extra: {
+            'LICENSE': 'mit',
+            'THIRD_PARTY_LICENSES/provision-dart.txt': 'notice',
+          },
         ),
       ),
       asset: 'xcross-windows-x64.zip',

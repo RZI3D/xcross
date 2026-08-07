@@ -14,9 +14,6 @@ void main() {
     ).readAsStringSync();
 
     for (final expected in [
-      'native/signing/ZSIGN_LICENSE.txt',
-      'dist/THIRD_PARTY_LICENSES/zsign.txt',
-      "'THIRD_PARTY_LICENSES/zsign.txt'",
       'packages/apple_developer_kit/ADI_LICENSE',
       'dist/THIRD_PARTY_LICENSES/provision-dart.txt',
       "'THIRD_PARTY_LICENSES/provision-dart.txt'",
@@ -35,7 +32,6 @@ void main() {
       'dist/xcross-linux-x64.tar.gz',
       'dist/xcross-linux-arm64.tar.gz',
       'dist/xcross-windows-x64.zip',
-      'native/signing/ZSIGN_LICENSE.txt',
       'bin/xcross.exe',
       'lib/sysv_abi_bridge.dll',
       'smoke/bin/xcross.exe --help',
@@ -45,13 +41,11 @@ void main() {
     expect(
       workflow
           .split('\n')
-          .where((line) => line.toLowerCase().contains('zsign'))
+          .where((line) => line.toLowerCase().contains('provision-dart'))
           .map((line) => line.trim()),
       orderedEquals([
-        'native/signing/ZSIGN_LICENSE.txt `',
-        'dist/THIRD_PARTY_LICENSES/zsign.txt',
-        "'THIRD_PARTY_LICENSES/zsign.txt'",
-        r'native/signing/ZSIGN_LICENSE.txt \',
+        'dist/THIRD_PARTY_LICENSES/provision-dart.txt',
+        "'THIRD_PARTY_LICENSES/provision-dart.txt'",
       ]),
     );
     // Both build jobs must stamp, and only on a tag: an unstamped release
@@ -84,11 +78,26 @@ void main() {
     );
     expect(stamps[1], lessThan(workflow.indexOf('- name: Build xcross')));
 
+    // Every file the workflow copies must actually be committed: a deleted
+    // one surfaces only as a failed release job otherwise.
+    for (final published in [
+      'LICENSE',
+      'packages/apple_developer_kit/ADI_LICENSE',
+    ]) {
+      expect(
+        File('$_repoRoot/$published').existsSync(),
+        isTrue,
+        reason: 'release.yml publishes $published',
+      );
+    }
+
     for (final removed in [
       'libssl-dev',
       'microsoft/setup-msbuild',
       'make -C',
       'msbuild ',
+      'zsign',
+      'ZSIGN',
     ]) {
       expect(workflow, isNot(contains(removed)));
     }
@@ -100,19 +109,23 @@ void main() {
     for (final expected in [
       'xcross-linux-x64.tar.gz',
       'xcross-linux-arm64.tar.gz',
-      'NOTICE="ZSIGN_LICENSE.txt"',
-      r'tmp="$(mktemp -d)"',
-      r'''trap 'rm -rf "$tmp"' EXIT HUP INT TERM''',
-      r'download "$url" "$tmp/$asset"',
-      r'download "$notice_url" "$tmp/$NOTICE"',
-      r'tar -C "$tmp" -xzf "$tmp/$asset"',
-      r'install -m 0755 "$tmp/bin/xcross" "$target"',
-      r'install -m 0644 "$tmp/$NOTICE" "$notice_target"',
-      r'"$target" --help',
+      'LICENSE_ASSET="ADI_LICENSE"',
+      r'staging_dir="$(mktemp -d)"',
+      r'''trap 'rm -rf "$staging_dir"' EXIT HUP INT TERM''',
+      r'download "$base_url/$archive_name" "$staging_dir/$archive_name"',
+      r'download "$base_url/$LICENSE_ASSET" "$staging_dir/$LICENSE_ASSET"',
+      r'tar -C "$staging_dir" -xzf "$staging_dir/$archive_name"',
+      r'install -m 0755 "$staging_dir/bin/$BINARY_NAME" "$installed_binary"',
+      r'install -m 0644 "$staging_dir/$LICENSE_ASSET" "$installed_license"',
+      r'"$installed_binary" --help',
     ]) {
       expect(installer, contains(expected));
     }
-    for (final removed in ['zsign-linux', 'zsign.exe', 'XCROSS_ZSIGN_PATH']) {
+    for (final removed in [
+      'zsign',
+      'ZSIGN',
+      'XCROSS_ZSIGN_PATH',
+    ]) {
       expect(installer, isNot(contains(removed)));
     }
   });

@@ -5,7 +5,7 @@
 #
 # WHAT THIS DOES
 #   1. Works out which prebuilt release asset matches this machine.
-#   2. Downloads that asset (plus the zsign license notice) from GitHub Releases.
+#   2. Downloads that asset (plus the ADI license notice) from GitHub Releases.
 #   3. Unpacks it into place, using sudo only if the target dirs need it.
 #   4. Runs `xcross --help` to prove the install works.
 #   5. Adds the install dir to your PATH and lists any missing prerequisites.
@@ -44,9 +44,9 @@ REPO="arxdeus/xcross"
 # Name of the executable inside the release archive and after installation.
 BINARY_NAME="xcross"
 
-# Standalone release asset: the license notice for the bundled zsign code.
-# It is published next to the archives rather than inside them.
-LICENSE_ASSET="ZSIGN_LICENSE.txt"
+# Standalone release asset: the license notice for the bundled provision-dart
+# code.  It is published next to the archives rather than inside them.
+LICENSE_ASSET="ADI_LICENSE"
 
 # Where the binary goes.  `/usr/local/bin` is the conventional location for
 # software installed outside the distro package manager.
@@ -179,7 +179,7 @@ tar -C "$staging_dir" -xzf "$staging_dir/$archive_name" ||
 # ---------------------------------------------------------------------------
 
 installed_binary="$INSTALL_DIR/$BINARY_NAME"
-installed_license="$LICENSE_DIR/zsign.txt"
+installed_license="$LICENSE_DIR/provision-dart.txt"
 
 # Try to create the target directories as the current user.  If that works and
 # all of them are writable we install directly; otherwise we retry every step

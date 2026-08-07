@@ -153,9 +153,6 @@ jobs:
           Copy-Item `
             packages/apple_developer_kit/ADI_LICENSE `
             dist/THIRD_PARTY_LICENSES/provision-dart.txt
-          Copy-Item `
-            native/signing/ZSIGN_LICENSE.txt `
-            dist/THIRD_PARTY_LICENSES/zsign.txt
           Compress-Archive -Path dist/* -DestinationPath xcross-windows-x64.zip
 
       - name: Smoke-test Windows archive
@@ -166,7 +163,6 @@ jobs:
           $expected = @(
             'LICENSE'
             'THIRD_PARTY_LICENSES/provision-dart.txt'
-            'THIRD_PARTY_LICENSES/zsign.txt'
             'bin/xcross.exe'
             'lib/sysv_abi_bridge.dll'
           ) | Sort-Object
@@ -280,7 +276,6 @@ jobs:
             dist/xcross-linux-arm64.tar.gz \
             dist/xcross-windows-x64.zip \
             dist/SHA256SUMS.txt \
-            native/signing/ZSIGN_LICENSE.txt \
             packages/apple_developer_kit/ADI_LICENSE \
             --title "$tag" \
             --notes-file notes.md \
