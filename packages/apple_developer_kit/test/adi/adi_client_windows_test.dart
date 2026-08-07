@@ -1,6 +1,7 @@
 @TestOn('windows')
 library;
 
+import 'dart:ffi';
 import 'dart:io';
 
 import 'package:apple_developer_kit/apple_developer_kit.dart';
@@ -32,5 +33,9 @@ void main() {
       expect(provisioned, isA<bool>());
     },
     timeout: const Timeout(Duration(minutes: 2)),
+    // The SysV bridge and the loaded code are both x86_64.
+    skip: Abi.current() == Abi.windowsX64
+        ? null
+        : 'ADI is x86_64-only (host is ${Abi.current()}).',
   );
 }

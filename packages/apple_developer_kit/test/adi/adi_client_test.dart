@@ -1,6 +1,7 @@
 @TestOn('linux')
 library;
 
+import 'dart:ffi';
 import 'dart:io';
 
 import 'package:apple_developer_kit/apple_developer_kit.dart';
@@ -46,5 +47,11 @@ void main() {
       expect(client, isNotNull);
     },
     timeout: const Timeout(Duration(minutes: 2)),
+    // Apple publishes the ADI libraries as an x86_64 slice only, and the
+    // loader maps their code into this process: running it on arm64
+    // takes the whole test runner down with a SIGSEGV.
+    skip: Abi.current() == Abi.linuxX64
+        ? null
+        : 'ADI is x86_64-only (host is ${Abi.current()}).',
   );
 }

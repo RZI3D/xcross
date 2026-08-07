@@ -11,6 +11,7 @@
 // the instant they're called. That path has been removed entirely — see
 // NOTICE.md.
 
+import 'dart:ffi';
 import 'dart:io';
 
 import 'package:apple_developer_kit/src/adi/elf/elf_loaded_library.dart';
@@ -31,6 +32,16 @@ final class PosixNativeLibraryLoader implements NativeLibraryLoader {
         "provision_dart's native ELF loader currently only supports "
         "Linux. macOS needs lib/provision/compat/macos.d's open()/stat() "
         'translation ported first — see NOTICE.md.',
+      );
+    }
+    // Apple ships only an x86_64 slice of libCoreADI.so, and the ELF
+    // loader maps and runs its code in-process. On any other
+    // architecture that is a segfault waiting to happen, so refuse up
+    // front instead of jumping into foreign instructions.
+    if (Abi.current() != Abi.linuxX64) {
+      throw UnsupportedError(
+        'Linux ADI loader requires linux_x64 (got ${Abi.current()}): '
+        'Apple publishes the ADI libraries as x86_64 only.',
       );
     }
     _stubs = NativeSymbolStubs(loadLibraryForDlopen: _loadByPath);
