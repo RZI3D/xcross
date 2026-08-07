@@ -68,6 +68,7 @@ abstract final class SdkInstall {
     String destDir, {
     bool? materializeLinks,
     void Function(int count)? onProgress,
+    void Function(int done, int total)? onLinkProgress,
   }) async {
     final root = p.normalize(p.absolute(destDir));
     await Directory(ioPath(root)).create(recursive: true);
@@ -107,11 +108,13 @@ abstract final class SdkInstall {
     }
 
     if (materializeLinks ?? Platform.isWindows) {
-      await _materializeSdkLinks(root, links);
+      await _materializeSdkLinks(root, links, onProgress: onLinkProgress);
     } else {
+      var linked = 0;
       for (final link in links.entries) {
         _resolvedSdkLinkTarget(root, link.key, link.value);
         await Link(link.key).create(link.value, recursive: true);
+        onLinkProgress?.call(++linked, links.length);
       }
     }
     return written;
@@ -141,8 +144,9 @@ abstract final class SdkInstall {
   /// link makes progress; a directory waits until nothing else links inside it.
   static Future<void> _materializeSdkLinks(
     String root,
-    Map<String, String> links,
-  ) async {
+    Map<String, String> links, {
+    void Function(int done, int total)? onProgress,
+  }) async {
     final pending = Map<String, String>.from(links);
     while (pending.isNotEmpty) {
       var progressed = false;
@@ -167,6 +171,7 @@ abstract final class SdkInstall {
         }
         pending.remove(link.key);
         progressed = true;
+        onProgress?.call(links.length - pending.length, links.length);
       }
       if (!progressed) {
         throw XcrossError(

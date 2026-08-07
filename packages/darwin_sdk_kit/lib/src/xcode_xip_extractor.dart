@@ -18,7 +18,14 @@ abstract final class XcodeXipExtractor {
   /// Decodes the format layers of [xipPath] only — filtering entries, writing
   /// them to disk, etc. is the caller's job (a follow-up `xcode_xip install`
   /// CLI command and wiring into `DarwinSdk` resolution, not this function).
-  static Stream<CpioEntry> extract(String xipPath) async* {
+  ///
+  /// [onProgress] reports compressed bytes of the `Content` entry consumed so
+  /// far against its total size — the only length known before the archive is
+  /// decoded, and the one that tracks the work still to do.
+  static Stream<CpioEntry> extract(
+    String xipPath, {
+    void Function(int consumed, int total)? onProgress,
+  }) async* {
     final file = await File(xipPath).open();
     try {
       final entry = await XarReader.findEntry(file, 'Content');
@@ -31,6 +38,9 @@ abstract final class XcodeXipExtractor {
         file,
         offset: entry.offset,
         length: entry.length,
+        onProgress: onProgress == null
+            ? null
+            : (consumed) => onProgress(consumed, entry.length),
       );
       yield* CpioReader.read(pbzxStream);
     } finally {

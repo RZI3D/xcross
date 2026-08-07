@@ -1,7 +1,7 @@
 import 'dart:io';
 
 import 'package:cli_kit/src/errors.dart';
-import 'package:cli_kit/src/internal/download_progress.dart';
+import 'package:cli_kit/src/progress.dart';
 import 'package:path/path.dart' as p;
 
 /// Groups file-download helpers.
@@ -55,9 +55,9 @@ abstract final class Downloader {
         retryDelay: retryDelay,
       );
       await dest.parent.create(recursive: true);
-      final reporter = DownloadProgress(
+      final reporter = ProgressBar(
         label ?? _labelFromUrl(url),
-        response.contentLength,
+        total: response.contentLength,
       );
       final sink = dest.openWrite();
       try {

@@ -29,10 +29,14 @@ abstract final class PbzxReader {
   /// Decodes chunks one at a time via `package:archive`'s pure-Dart
   /// [XZDecoder]. A raw chunk (`compressedSize == [_pbzxChunkSize]`, or one
   /// that doesn't start with the xz magic) is copied through verbatim.
+  ///
+  /// [onProgress] reports the compressed bytes of `[offset, offset + length)`
+  /// consumed so far, after each chunk has been handed to the listener.
   static Stream<List<int>> decode(
     RandomAccessFile file, {
     required int offset,
     required int length,
+    void Function(int consumed)? onProgress,
   }) async* {
     var pos = offset;
     final end = offset + length;
@@ -68,6 +72,7 @@ abstract final class PbzxReader {
       } else {
         yield _xzDecompress(chunk);
       }
+      onProgress?.call(pos - offset);
 
       if (decompressedSize < _pbzxChunkSize) break;
     }

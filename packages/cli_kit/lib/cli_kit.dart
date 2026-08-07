@@ -6,4 +6,5 @@ export 'src/errors.dart';
 export 'src/host_privileges.dart';
 export 'src/logging.dart';
 export 'src/process.dart';
+export 'src/progress.dart';
 export 'src/sudo.dart';
