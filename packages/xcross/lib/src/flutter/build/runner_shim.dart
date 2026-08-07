@@ -33,9 +33,7 @@ final class RunnerShim {
     required String outputDir,
     String? pluginsLibrary,
   }) => Log.logStep('Compiling Runner', () async {
-    final clang = await ProcessRunner.locateTool(
-      Platform.isWindows ? 'clang.exe' : 'clang',
-    );
+    final clang = await DarwinSdk.resolveDarwinClang(sdk);
     final iosSdk = _resolveIPhoneOsSDK(sdk);
     final flutterSlice = _flutterDeviceSlice(flutterXcframework);
     final subframeworks = p.join(iosSdk, 'System', 'Library', 'SubFrameworks');

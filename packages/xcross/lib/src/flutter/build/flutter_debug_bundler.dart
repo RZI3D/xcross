@@ -407,9 +407,7 @@ final class FlutterDebugBundler {
       );
     }
     return Toolchain(
-      clang: await ProcessRunner.locateTool(
-        Platform.isWindows ? 'clang.exe' : 'clang',
-      ),
+      clang: await DarwinSdk.resolveDarwinClang(darwin),
       iosSdk: darwin.iPhoneOSSdk(),
       linker: await DarwinSdk.resolveLd64Lld(darwin),
     );

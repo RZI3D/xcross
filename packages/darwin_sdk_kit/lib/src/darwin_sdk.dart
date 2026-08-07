@@ -322,6 +322,119 @@ final class DarwinSdk {
     return failure;
   }
 
+  /// Resolve a clang that can drive a Darwin target, preferring stock LLVM.
+  ///
+  /// The same preference as [resolveLd64Lld], for the same reason: a Swift
+  /// toolchain's own clang is built for that toolchain's host targets, and the
+  /// Windows 6.3.3 one fast-fails on an Xcode 26 sysroot before it prints
+  /// anything at all. [name] selects `clang` or `clang++`.
+  static Future<String> resolveDarwinClang(
+    DarwinSdk sdk, {
+    String name = 'clang',
+    Future<CapturedProcess> Function(String, List<String>)? runProcess,
+  }) async {
+    final sysroot = sdk.iPhoneOSSdk();
+    final searched = llvmToolDirs();
+    final candidates = await ProcessRunner.whichAll(
+      name,
+      extraDirectories: searched,
+    );
+    final ordered = [
+      ...candidates.where((path) => !_besideSwift(path)),
+      ...candidates.where(_besideSwift),
+    ];
+
+    final rejected = <String>[];
+    for (final candidate in ordered) {
+      final failure = await probeDarwinDriver(
+        candidate,
+        sysroot: sysroot,
+        runProcess: runProcess,
+      );
+      if (failure == null) return candidate;
+      Log.logTrace('$name: skipping $candidate — $failure');
+      rejected.add('  $candidate\n    $failure');
+    }
+
+    final where = [
+      'Looked on PATH and in:',
+      for (final dir in searched) '  $dir',
+    ].join('\n');
+    throw DarwinSdkError(
+      rejected.isEmpty
+          ? "No '$name' found.\n$where\n$_installClangHint"
+          : "No '$name' that can target iOS.\n"
+                '${rejected.join('\n')}\n$where\n$_installClangHint',
+    );
+  }
+
+  static String get _installClangHint => Platform.isWindows
+      ? 'Install stock LLVM — `winget install --id LLVM.LLVM --exact` — into '
+            'one of the directories above, or add the bin directory of an '
+            'existing install to PATH.'
+      : 'Install LLVM — `xcross setup`, or `sudo apt install clang` — and make '
+            'sure it is on PATH.';
+
+  /// Why [clang] cannot be pointed at a Darwin [sysroot], or null when it can.
+  ///
+  /// `-###` makes the driver do all of its Darwin work — resolving the
+  /// toolchain, reading the SDK settings, computing the deployment target —
+  /// and then print the commands instead of running any of them, so the probe
+  /// costs one process and writes nothing. A driver that dies there dies on
+  /// every real compile too.
+  static Future<String?> probeDarwinDriver(
+    String clang, {
+    required String sysroot,
+    Future<CapturedProcess> Function(String, List<String>)? runProcess,
+  }) async {
+    final cached = _darwinDrivers[clang];
+    if (cached != null) return cached.isEmpty ? null : cached;
+
+    final missing = p.join(
+      Directory.systemTemp.path,
+      'xcross-clang-probe',
+      'probe.c',
+    );
+    final CapturedProcess result;
+    try {
+      result = await (runProcess ?? ProcessRunner.run)(clang, [
+        '-###',
+        '--target=arm64-apple-ios13.0',
+        '-arch',
+        'arm64',
+        '-isysroot',
+        sysroot,
+        '-x',
+        'c',
+        missing,
+        '-c',
+        '-o',
+        '$missing.o',
+      ]);
+    } on Object catch (error) {
+      return _rememberDarwinDriver(clang, 'could not be run: $error');
+    }
+
+    // A missing input file is expected and says nothing about the driver, so
+    // only an outright crash disqualifies a candidate.
+    if (ProcessRunner.crashed(result.exitCode)) {
+      return _rememberDarwinDriver(
+        clang,
+        'crashed on a Darwin driver run: '
+        '${ProcessRunner.describeExitCode(result.exitCode)}',
+      );
+    }
+    return _rememberDarwinDriver(clang, null);
+  }
+
+  static String? _rememberDarwinDriver(String clang, String? failure) {
+    _darwinDrivers[clang] = failure ?? '';
+    return failure;
+  }
+
+  /// Probe verdicts by clang path; the empty string means "usable".
+  static final Map<String, String> _darwinDrivers = {};
+
   /// Probe verdicts by linker path; the empty string means "usable".
   static final Map<String, String> _iosSupport = {};
 

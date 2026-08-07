@@ -164,6 +164,48 @@ void main() {
     });
   });
 
+  group('probeDarwinDriver', () {
+    test('accepts a driver that only misses its input file', () async {
+      final failure = await DarwinSdk.probeDarwinDriver(
+        p.join(tmp.path, 'good-clang'),
+        sysroot: tmp.path,
+        runProcess: (executable, arguments) async => const CapturedProcess(
+          1,
+          '',
+          "clang: error: no such file or directory: 'probe.c'",
+        ),
+      );
+      expect(failure, isNull);
+    });
+
+    test('rejects a driver that fast-fails on the sysroot', () async {
+      final failure = await DarwinSdk.probeDarwinDriver(
+        p.join(tmp.path, 'swift-clang'),
+        sysroot: tmp.path,
+        runProcess: (executable, arguments) async =>
+            const CapturedProcess(-1073740791, '', ''),
+      );
+      expect(failure, allOf(contains('crashed'), contains('0xC0000409')));
+    });
+
+    test('drives the probe without running any subcommand', () async {
+      late List<String> seen;
+      await DarwinSdk.probeDarwinDriver(
+        p.join(tmp.path, 'recorded-clang'),
+        sysroot: p.join(tmp.path, 'iPhoneOS26.5.sdk'),
+        runProcess: (executable, arguments) async {
+          seen = arguments;
+          return const CapturedProcess(1, '', 'no such file');
+        },
+      );
+      expect(seen.first, '-###');
+      expect(
+        seen,
+        containsAllInOrder(['-isysroot', p.join(tmp.path, 'iPhoneOS26.5.sdk')]),
+      );
+    });
+  });
+
   group('llvmToolDirs', () {
     test('covers both Windows LLVM installer layouts', () {
       final dirs = DarwinSdk.llvmToolDirs(

@@ -131,6 +131,12 @@ abstract final class GeneratedPluginsPackage {
     final toolsetPath = await writeToolset(
       outputDir: outputDir,
       linkerPath: linker,
+      cCompilerPath: Platform.isWindows
+          ? await DarwinSdk.resolveDarwinClang(sdk)
+          : null,
+      cxxCompilerPath: Platform.isWindows
+          ? await DarwinSdk.resolveDarwinClang(sdk, name: 'clang++')
+          : null,
     );
     await ProcessRunner.runChecked(
       swift,
@@ -254,6 +260,8 @@ abstract final class GeneratedPluginsPackage {
   static Future<String> writeToolset({
     required String outputDir,
     required String linkerPath,
+    String? cCompilerPath,
+    String? cxxCompilerPath,
     bool? windows,
     Future<String?> Function(String name)? locateTool,
   }) async {
@@ -280,21 +288,26 @@ abstract final class GeneratedPluginsPackage {
     final librarian = await _resolveLibrarian(onWindows, resolve);
     if (librarian == null) {
       throw FlutterBuildError(
-        'No Darwin-capable archiver on PATH (${_librarians.join(' or ')}). '
+        'No Darwin-capable archiver found (${_librarians.join(' or ')}). '
         'Install LLVM and retry.',
       );
     }
     toolset['librarian'] = {'path': librarian};
 
     if (onWindows) {
-      final tools = <String, String>{
-        'cCompiler': 'clang',
-        'cxxCompiler': 'clang++',
+      // Vetted by DarwinSdk.resolveDarwinClang where the caller could do it;
+      // a plain lookup is the fallback for tests and older call sites.
+      final tools = <String, (String, String?)>{
+        'cCompiler': ('clang', cCompilerPath),
+        'cxxCompiler': ('clang++', cxxCompilerPath),
       };
       for (final tool in tools.entries) {
-        final path = await resolve(tool.value);
+        final vetted = tool.value.$2;
+        final path = vetted == null
+            ? await resolve(tool.value.$1)
+            : _jsonPath(File(vetted).resolveSymbolicLinksSync());
         if (path == null) {
-          throw FlutterBuildError('Could not find ${tool.value} in PATH.');
+          throw FlutterBuildError('Could not find ${tool.value.$1}.');
         }
         toolset[tool.key] = {'path': path};
       }
