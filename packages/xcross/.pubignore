@@ -13,6 +13,7 @@ pubspec_overrides.yaml
 pubspec.lock
 
 test/
+tool/
 coverage/
 doc/api/
 
