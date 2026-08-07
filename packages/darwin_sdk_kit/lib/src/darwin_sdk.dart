@@ -167,9 +167,11 @@ final class DarwinSdk {
     DarwinSdk _, {
     Future<CapturedProcess> Function(String, List<String>)? runProcess,
   }) async {
+    final searched = llvmToolDirs();
     final candidates = await ProcessRunner.whichAll(
       'ld64.lld',
       accept: usableLd64Lld,
+      extraDirectories: searched,
     );
     final ordered = [
       ...candidates.where((path) => !_besideSwift(path)),
@@ -184,18 +186,74 @@ final class DarwinSdk {
       rejected.add('  $candidate\n    $failure');
     }
 
+    final where = [
+      'Looked on PATH and in:',
+      for (final dir in searched) '  $dir',
+    ].join('\n');
     throw DarwinSdkError(
       rejected.isEmpty
-          ? "No usable 'ld64.lld' on PATH.\n$_installLinkerHint"
-          : "No 'ld64.lld' on PATH can link for iOS.\n"
-                '${rejected.join('\n')}\n$_installLinkerHint',
+          ? "No 'ld64.lld' found.\n$where\n$_installLinkerHint"
+          : "No 'ld64.lld' that can link for iOS.\n"
+                '${rejected.join('\n')}\n$where\n$_installLinkerHint',
     );
   }
 
+  /// Where a stock LLVM install sits when nobody put it on PATH.
+  ///
+  /// winget's LLVM package registers no PATH entry at all
+  /// (microsoft/winget-pkgs#11767), and Debian keeps versioned toolchains
+  /// under `/usr/lib`, so the tools are installed but invisible to a plain
+  /// PATH lookup.
+  static List<String> llvmToolDirs({
+    Map<String, String>? environment,
+    bool? windows,
+  }) {
+    final env = environment ?? Platform.environment;
+    if (windows ?? Platform.isWindows) {
+      // The machine-wide installer lands in Program Files, the per-user one
+      // under LOCALAPPDATA\Programs.
+      const roots = {
+        'ProgramFiles': 'LLVM',
+        'ProgramW6432': 'LLVM',
+        'ProgramFiles(x86)': 'LLVM',
+        'LOCALAPPDATA': r'Programs\LLVM',
+      };
+      return [
+        for (final root in roots.entries)
+          if ((env[root.key] ?? '').isNotEmpty)
+            p.windows.join(env[root.key]!, root.value, 'bin'),
+      ];
+    }
+    return [..._versionedLlvmBins(), '/usr/local/opt/llvm/bin'];
+  }
+
+  /// Debian's `/usr/lib/llvm-<version>/bin`, newest version first.
+  static List<String> _versionedLlvmBins() {
+    final lib = Directory('/usr/lib');
+    if (!lib.existsSync()) return const [];
+    final versions =
+        lib
+            .listSync()
+            .map((entry) => p.basename(entry.path))
+            .where((name) => name.startsWith('llvm-'))
+            .toList()
+          ..sort((a, b) {
+            final left = int.tryParse(a.substring(5).split('.').first) ?? -1;
+            final right = int.tryParse(b.substring(5).split('.').first) ?? -1;
+            return right.compareTo(left);
+          });
+    return [for (final name in versions) p.join('/usr/lib', name, 'bin')];
+  }
+
+  /// PATH lookup for an LLVM tool that also reaches into [llvmToolDirs].
+  static Future<String?> locateLlvmTool(String name) =>
+      ProcessRunner.which(name, extraDirectories: llvmToolDirs());
+
   static String get _installLinkerHint => Platform.isWindows
-      ? 'Install stock LLVM — `winget install --id LLVM.LLVM --exact` — and '
-            r'put its bin directory (C:\Program Files\LLVM\bin) on PATH. The '
-            "Swift toolchain's own ld64.lld cannot link Mach-O for iOS."
+      ? "The Swift toolchain's own ld64.lld cannot link Mach-O for iOS. "
+            'Install stock LLVM — `winget install --id LLVM.LLVM --exact` — '
+            'into one of the directories above, or add the bin directory of '
+            'an existing install to PATH.'
       : 'Install the LLVM one — `xcross setup`, or `sudo apt install lld` — '
             'and make sure it is on PATH.';
 

@@ -336,14 +336,18 @@ abstract final class ProcessRunner {
     Map<String, String>? environment,
     bool? windows,
     bool Function(String path)? accept,
+    Iterable<String> extraDirectories = const [],
   }) async => (await whichAll(
     name,
     environment: environment,
     windows: windows,
     accept: accept,
+    extraDirectories: extraDirectories,
   )).firstOrNull;
 
-  /// Every match for [name] on PATH, in PATH order.
+  /// Every match for [name] on PATH, in PATH order, then in
+  /// [extraDirectories] — install locations worth trying when a toolchain
+  /// never registered itself on PATH.
   ///
   /// Use this when the first match is not necessarily the right one and the
   /// choice needs the whole candidate list.
@@ -352,6 +356,7 @@ abstract final class ProcessRunner {
     Map<String, String>? environment,
     bool? windows,
     bool Function(String path)? accept,
+    Iterable<String> extraDirectories = const [],
   }) async {
     final env = environment ?? Platform.environment;
     final onWindows = windows ?? Platform.isWindows;
@@ -361,11 +366,20 @@ abstract final class ProcessRunner {
     );
 
     final found = <String>[];
+    final seen = <String>{};
     final searchPath = _environmentValue(env, 'PATH') ?? '';
-    for (final dir in searchPath.split(onWindows ? ';' : ':')) {
+    final directories = [
+      ...searchPath.split(onWindows ? ';' : ':'),
+      ...extraDirectories,
+    ];
+    for (final dir in directories) {
       if (dir.isEmpty) continue;
       for (final candidateName in names) {
         final candidate = p.join(dir, candidateName);
+        // A directory can be both on PATH and a known install location.
+        if (!seen.add(onWindows ? candidate.toLowerCase() : candidate)) {
+          continue;
+        }
         if (File(candidate).existsSync() &&
             (accept == null || accept(candidate))) {
           found.add(candidate);
@@ -401,8 +415,11 @@ abstract final class ProcessRunner {
   }
 
   /// Searches PATH for [name], falling back to `command -v` on POSIX.
-  static Future<String> locateTool(String name) async {
-    final found = await which(name);
+  static Future<String> locateTool(
+    String name, {
+    Iterable<String> extraDirectories = const [],
+  }) async {
+    final found = await which(name, extraDirectories: extraDirectories);
     if (found != null) return found;
     if (!Platform.isWindows) {
       final result = await Process.run('/bin/sh', ['-c', "command -v '$name'"]);

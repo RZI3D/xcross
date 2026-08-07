@@ -328,6 +328,62 @@ void main() {
     );
   });
 
+  group('whichAll extraDirectories', () {
+    test('finds a tool that PATH never mentions', () async {
+      final tmp = Directory.systemTemp.createTempSync('xcross-extra-dir-');
+      addTearDown(() => tmp.deleteSync(recursive: true));
+      final tool = File(p.join(tmp.path, 'ld64.lld'))..createSync();
+
+      expect(
+        await ProcessRunner.whichAll(
+          'ld64.lld',
+          environment: const {'PATH': ''},
+          windows: false,
+          extraDirectories: [tmp.path],
+        ),
+        [tool.path],
+      );
+    });
+
+    test(
+      'reports a directory that is both on PATH and extra only once',
+      () async {
+        final tmp = Directory.systemTemp.createTempSync('xcross-dup-dir-');
+        addTearDown(() => tmp.deleteSync(recursive: true));
+        File(p.join(tmp.path, 'ld64.lld')).createSync();
+
+        expect(
+          await ProcessRunner.whichAll(
+            'ld64.lld',
+            environment: {'PATH': tmp.path},
+            windows: false,
+            extraDirectories: [tmp.path],
+          ),
+          hasLength(1),
+        );
+      },
+    );
+
+    test('searches PATH before the extra directories', () async {
+      final tmp = Directory.systemTemp.createTempSync('xcross-order-dir-');
+      addTearDown(() => tmp.deleteSync(recursive: true));
+      final onPath = Directory(p.join(tmp.path, 'path-bin'))..createSync();
+      final extra = Directory(p.join(tmp.path, 'llvm-bin'))..createSync();
+      File(p.join(onPath.path, 'ld64.lld')).createSync();
+      File(p.join(extra.path, 'ld64.lld')).createSync();
+
+      expect(
+        await ProcessRunner.whichAll(
+          'ld64.lld',
+          environment: {'PATH': onPath.path},
+          windows: false,
+          extraDirectories: [extra.path],
+        ),
+        [p.join(onPath.path, 'ld64.lld'), p.join(extra.path, 'ld64.lld')],
+      );
+    });
+  });
+
   group('describeExitCode', () {
     test('names a Windows NTSTATUS reported as a raw DWORD', () {
       expect(

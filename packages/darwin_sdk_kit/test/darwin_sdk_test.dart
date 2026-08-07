@@ -164,6 +164,29 @@ void main() {
     });
   });
 
+  group('llvmToolDirs', () {
+    test('covers both Windows LLVM installer layouts', () {
+      final dirs = DarwinSdk.llvmToolDirs(
+        windows: true,
+        environment: {
+          'ProgramFiles': r'C:\Program Files',
+          'LOCALAPPDATA': r'C:\Users\Mind\AppData\Local',
+        },
+      );
+      expect(dirs, [
+        r'C:\Program Files\LLVM\bin',
+        r'C:\Users\Mind\AppData\Local\Programs\LLVM\bin',
+      ]);
+    });
+
+    test('skips roots the environment does not define', () {
+      expect(
+        DarwinSdk.llvmToolDirs(windows: true, environment: const {}),
+        isEmpty,
+      );
+    });
+  });
+
   group('probeIosSupport', () {
     test('accepts a linker that only misses its input file', () async {
       final failure = await DarwinSdk.probeIosSupport(

@@ -260,7 +260,9 @@ abstract final class GeneratedPluginsPackage {
     final onWindows = windows ?? Platform.isWindows;
     final output = Directory(outputDir);
     await output.create(recursive: true);
-    final locate = locateTool ?? ProcessRunner.which;
+    // LLVM often never registers itself on PATH, so reach into its install
+    // directories too (see [DarwinSdk.llvmToolDirs]).
+    final locate = locateTool ?? DarwinSdk.locateLlvmTool;
     final toolset = <String, Object>{
       'schemaVersion': '1.0',
       'rootPath': _jsonPath(output.resolveSymbolicLinksSync()),
