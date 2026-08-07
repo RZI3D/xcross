@@ -1,8 +1,6 @@
-import 'dart:io';
-
+import 'package:apple_developer_kit/src/secure/secure_file.dart';
 import 'package:basic_utils/basic_utils.dart';
 import 'package:meta/meta.dart';
-import 'package:posix/posix.dart' as posix;
 
 /// Generates the RSA keypair + PKCS#10 CSR needed to request a new signing
 /// certificate from App Store Connect.
@@ -36,17 +34,10 @@ abstract final class AscCsr {
   static String privateKeyToPem(RSAPrivateKey privateKey) =>
       CryptoUtils.encodeRSAPrivateKeyToPem(privateKey);
 
-  /// Writes [pem] to [path] and, on POSIX platforms, restricts its
-  /// permissions to owner-only (`chmod 600`) since it's a private signing
-  /// key. `posix` is a no-op stub on non-POSIX hosts (e.g. Windows), which
-  /// has no equivalent via `dart:io` alone.
-  static Future<void> writePrivateKeyPem(String path, String pem) async {
-    final file = File(path);
-    await file.writeAsString(pem);
-    if (!Platform.isWindows && posix.isPosixSupported) {
-      posix.chmod(path, '0600');
-    }
-  }
+  /// Writes [pem] to [path] as an owner-only file. This is the private
+  /// signing key, the longest-lived secret xcross puts on disk.
+  static Future<void> writePrivateKeyPem(String path, String pem) =>
+      SecureFile.writeString(path, pem);
 }
 
 /// A freshly generated RSA keypair and its PKCS#10 CSR, from [AscCsr.generate].

@@ -8,7 +8,9 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 
+import 'package:apple_developer_kit/src/config_dir.dart';
 import 'package:apple_developer_kit/src/errors.dart';
+import 'package:apple_developer_kit/src/secure/secure_file.dart';
 import 'package:meta/meta.dart';
 import 'package:path/path.dart' as p;
 
@@ -81,31 +83,21 @@ final class AnisetteState {
 }
 
 /// Reads/writes [AnisetteState] to a per-user JSON config file.
+///
+/// Deliberately *not* encrypted with `LocalCipher`, unlike the GrandSlam
+/// session: ADI never returns `routingInfo` again after `endProvisioning`,
+/// so a key that could rotate would turn a recoverable inconvenience into
+/// permanent loss. The file is owner-only instead. It holds a device
+/// pseudo-identity, not a credential.
 final class AnisetteStateStore {
   AnisetteStateStore({String? path}) : path = path ?? defaultPath();
 
   final String path;
 
-  /// `<config-dir>/xcross/anisette-state.json`, where `<config-dir>` is
-  /// `%APPDATA%` on Windows and `$XDG_CONFIG_HOME` (or `~/.config`)
-  /// elsewhere - the same convention as `AscCredentials.defaultConfigPath`.
+  /// `<config-dir>/xcross/anisette-state.json` — see [xcrossConfigDir].
   @useResult
   static String defaultPath() =>
-      p.join(_configDir(), 'xcross', 'anisette-state.json');
-
-  static String _configDir() {
-    if (Platform.isWindows) {
-      final appData = Platform.environment['APPDATA'];
-      if (appData != null && appData.isNotEmpty) return appData;
-    }
-    final xdg = Platform.environment['XDG_CONFIG_HOME'];
-    if (xdg != null && xdg.isNotEmpty) return xdg;
-    final home =
-        Platform.environment['HOME'] ??
-        Platform.environment['USERPROFILE'] ??
-        '.';
-    return p.join(home, '.config');
-  }
+      p.join(xcrossConfigDir(), 'anisette-state.json');
 
   /// Loads the persisted state, creating and saving a fresh one (with a
   /// new [AnisetteState.localUserUid]) if none exists yet.
@@ -126,9 +118,6 @@ final class AnisetteStateStore {
     return AnisetteState.fromJson(doc.cast());
   }
 
-  Future<void> save(AnisetteState state) async {
-    final file = File(path);
-    await file.parent.create(recursive: true);
-    await file.writeAsString(jsonEncode(state.toJson()));
-  }
+  Future<void> save(AnisetteState state) =>
+      SecureFile.writeString(path, jsonEncode(state.toJson()));
 }

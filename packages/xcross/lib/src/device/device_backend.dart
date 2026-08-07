@@ -110,10 +110,17 @@ final class NativeBackend implements DeviceBackend {
 
     Object? appleSessionFailure;
     Object? ascFailure;
+    Object? unreadableSession;
 
     GrandSlamSession? session;
     try {
       session = await GrandSlamSessionStore().load();
+    } on LocalCipherError catch (error) {
+      // A session sealed on another machine, or one whose key file is gone,
+      // carries no team identity at all. Unlike a session that loaded and
+      // then failed, it cannot silently point at the wrong team, so falling
+      // through to App Store Connect credentials is safe here.
+      unreadableSession = error;
     } on Object catch (error) {
       appleSessionFailure = error;
     }
@@ -138,8 +145,12 @@ final class NativeBackend implements DeviceBackend {
       }
     }
 
+    final unreadable =
+        'Apple ID: the saved session cannot be read on this machine, '
+        'sign in again to replace it ($unreadableSession)';
     final details = [
       if (appleSessionFailure != null) 'Apple ID: $appleSessionFailure',
+      if (unreadableSession != null) unreadable,
       if (ascFailure != null) 'App Store Connect: $ascFailure',
     ];
     throw XcrossError(

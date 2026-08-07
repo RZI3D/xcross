@@ -3,12 +3,23 @@ import 'dart:io';
 import 'package:apple_developer_kit/src/errors.dart';
 import 'package:apple_developer_kit/src/grandslam/app_token_exchange.dart';
 import 'package:apple_developer_kit/src/grandslam/grandslam_session_store.dart';
+import 'package:apple_developer_kit/src/secure/local_cipher.dart';
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 
 void main() {
   late Directory tempDir;
   late String sessionPath;
+
+  // Pinned so tests never touch the developer's real config directory and
+  // never depend on the host having a readable machine id.
+  LocalCipher cipher() => LocalCipher(
+    keyFilePath: p.join(tempDir.path, 'local.key'),
+    machineId: 'test-machine',
+  );
+
+  GrandSlamSessionStore store() =>
+      GrandSlamSessionStore(path: sessionPath, cipher: cipher());
 
   setUp(() {
     tempDir = Directory.systemTemp.createTempSync('xcross_grandslam_session');
@@ -20,7 +31,6 @@ void main() {
   });
 
   test('save/load round-trips the Developer Services session', () async {
-    final store = GrandSlamSessionStore(path: sessionPath);
     final session = GrandSlamSession(
       username: 'User@Example.com',
       teamId: 'TEAM123',
@@ -32,8 +42,8 @@ void main() {
       ),
     );
 
-    await store.save(session);
-    final loaded = await store.load();
+    await store().save(session);
+    final loaded = await store().load();
 
     expect(loaded, isNotNull);
     expect(loaded!.username, session.username);
@@ -52,8 +62,7 @@ void main() {
   });
 
   test('round-trips a session without adiLibraryDirectory', () async {
-    final store = GrandSlamSessionStore(path: sessionPath);
-    await store.save(
+    await store().save(
       GrandSlamSession(
         username: 'windows@example.com',
         teamId: 'TEAM123',
@@ -65,7 +74,7 @@ void main() {
       ),
     );
 
-    final loaded = await store.load();
+    final loaded = await store().load();
     expect(loaded?.adiLibraryDirectory, isNull);
     expect(loaded?.teamId, 'TEAM123');
   });
@@ -74,7 +83,7 @@ void main() {
     await File(sessionPath).writeAsString('{"token":"secret-token",BROKEN');
 
     await expectLater(
-      GrandSlamSessionStore(path: sessionPath).load(),
+      store().load(),
       throwsA(
         isA<AppleError>().having(
           (error) => error.toString(),
@@ -86,10 +95,9 @@ void main() {
   });
 
   test('load returns null when absent, clear deletes the file', () async {
-    final store = GrandSlamSessionStore(path: sessionPath);
-    expect(await store.load(), isNull);
+    expect(await store().load(), isNull);
 
-    await store.save(
+    await store().save(
       GrandSlamSession(
         username: 'user@example.com',
         teamId: 'TEAM123',
@@ -103,9 +111,67 @@ void main() {
     );
     expect(File(sessionPath).existsSync(), isTrue);
 
-    await store.clear();
+    await store().clear();
     expect(File(sessionPath).existsSync(), isFalse);
-    expect(await store.load(), isNull);
+    expect(await store().load(), isNull);
+  });
+
+  test('the token never reaches disk in cleartext', () async {
+    await store().save(
+      GrandSlamSession(
+        username: 'user@example.com',
+        teamId: 'TEAM123',
+        token: DeveloperServicesLoginToken(
+          adsid: '123456789',
+          token: 'super-secret-token',
+          expiry: DateTime.now().toUtc().add(const Duration(days: 1)),
+        ),
+      ),
+    );
+
+    final onDisk = File(sessionPath).readAsStringSync();
+    expect(onDisk, isNot(contains('super-secret-token')));
+    expect(onDisk, isNot(contains('user@example.com')));
+    expect(onDisk, isNot(contains('123456789')));
+    expect(LocalCipher.isSealed(onDisk), isTrue);
+  });
+
+  test('a session sealed on another machine is refused', () async {
+    await store().save(
+      GrandSlamSession(
+        username: 'user@example.com',
+        teamId: 'TEAM123',
+        token: DeveloperServicesLoginToken(
+          adsid: '1',
+          token: 'token',
+          expiry: DateTime.now().toUtc().add(const Duration(days: 1)),
+        ),
+      ),
+    );
+
+    final elsewhere = GrandSlamSessionStore(
+      path: sessionPath,
+      cipher: LocalCipher(
+        keyFilePath: p.join(tempDir.path, 'local.key'),
+        machineId: 'a-different-machine',
+      ),
+    );
+    await expectLater(elsewhere.load(), throwsA(isA<LocalCipherError>()));
+  });
+
+  test('a legacy cleartext session is read once, then resealed', () async {
+    await File(sessionPath).writeAsString(
+      '{"username":"user@example.com","adsid":"1","token":"legacy-token",'
+      '"expiryMs":1893456000000,"teamId":"TEAM123"}',
+    );
+
+    final loaded = await store().load();
+    expect(loaded?.token.token, 'legacy-token');
+
+    final onDisk = File(sessionPath).readAsStringSync();
+    expect(LocalCipher.isSealed(onDisk), isTrue);
+    expect(onDisk, isNot(contains('legacy-token')));
+    expect((await store().load())?.token.token, 'legacy-token');
   });
 
   test('isExpired delegates to the persisted token expiry', () {

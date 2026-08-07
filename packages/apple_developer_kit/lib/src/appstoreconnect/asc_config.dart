@@ -1,7 +1,9 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:apple_developer_kit/src/config_dir.dart';
 import 'package:apple_developer_kit/src/errors.dart';
+import 'package:apple_developer_kit/src/secure/secure_file.dart';
 import 'package:meta/meta.dart';
 import 'package:path/path.dart' as p;
 
@@ -33,26 +35,25 @@ final class AscCredentials {
   /// Reads the `.p8` file's PEM content.
   Future<String> readPrivateKeyPem() => File(privateKeyPath).readAsString();
 
-  /// Default per-user config file location:
-  /// `%APPDATA%/xcross/appstoreconnect.json` on Windows,
-  /// `$XDG_CONFIG_HOME/xcross/appstoreconnect.json` (falling back to
-  /// `~/.config/...`) elsewhere.
+  /// Default per-user config file location,
+  /// `<config-dir>/xcross/appstoreconnect.json` — see [xcrossConfigDir].
   static String defaultConfigPath() =>
-      p.join(_configDir(), 'xcross', 'appstoreconnect.json');
+      p.join(xcrossConfigDir(), 'appstoreconnect.json');
 
-  static String _configDir() {
-    if (Platform.isWindows) {
-      final appData = Platform.environment['APPDATA'];
-      if (appData != null && appData.isNotEmpty) return appData;
-    }
-    final xdg = Platform.environment['XDG_CONFIG_HOME'];
-    if (xdg != null && xdg.isNotEmpty) return xdg;
-    final home =
-        Platform.environment['HOME'] ??
-        Platform.environment['USERPROFILE'] ??
-        '.';
-    return p.join(home, '.config');
-  }
+  /// Writes these credentials to [path] as an owner-only file.
+  ///
+  /// Not encrypted with `LocalCipher`, unlike the GrandSlam session: this
+  /// file holds identifiers and a path, while the actual secret is the
+  /// `.p8` it points at, which the user manages and which
+  /// [AscCsr.writePrivateKeyPem] already restricts to its owner.
+  Future<void> save([String? path]) => SecureFile.writeString(
+    path ?? defaultConfigPath(),
+    const JsonEncoder.withIndent('  ').convert({
+      'issuerId': issuerId,
+      'keyId': keyId,
+      'privateKeyPath': privateKeyPath,
+    }),
+  );
 
   /// Loads credentials from [path] (defaults to [defaultConfigPath]).
   static Future<AscCredentials> fromFile([String? path]) async {
@@ -64,6 +65,9 @@ final class AscCredentials {
         '"privateKeyPath": "/path/to/AuthKey_<keyId>.p8"}',
       );
     }
+    // Repairs configs written by older xcross versions, or hand-created
+    // with a permissive umask.
+    SecureFile.harden(file.path);
     final Object? doc;
     try {
       doc = jsonDecode(await file.readAsString());

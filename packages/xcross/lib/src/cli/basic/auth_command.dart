@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'dart:ffi';
 import 'dart:io';
 
@@ -105,15 +104,11 @@ final class AuthCommand extends _$AuthArgsCommand<void> {
     }
 
     final configPath = AscCredentials.defaultConfigPath();
-    final configFile = File(configPath);
-    await configFile.parent.create(recursive: true);
-    await configFile.writeAsString(
-      const JsonEncoder.withIndent('  ').convert({
-        'issuerId': issuerId,
-        'keyId': keyId,
-        'privateKeyPath': keyFile.absolute.path,
-      }),
-    );
+    await AscCredentials(
+      issuerId: issuerId!,
+      keyId: keyId!,
+      privateKeyPath: keyFile.absolute.path,
+    ).save(configPath);
     // Authentication mode is explicit: a newly saved ASC key should not be
     // silently shadowed by an older still-unexpired Apple ID session.
     await GrandSlamSessionStore().clear();

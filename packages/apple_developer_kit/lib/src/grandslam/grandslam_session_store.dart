@@ -8,9 +8,10 @@ import 'dart:io';
 import 'package:apple_developer_kit/src/errors.dart';
 import 'package:apple_developer_kit/src/grandslam/anisette/anisette_state.dart';
 import 'package:apple_developer_kit/src/grandslam/app_token_exchange.dart';
+import 'package:apple_developer_kit/src/secure/local_cipher.dart';
+import 'package:apple_developer_kit/src/secure/secure_file.dart';
 import 'package:meta/meta.dart';
 import 'package:path/path.dart' as p;
-import 'package:posix/posix.dart' as posix;
 
 @immutable
 final class GrandSlamSession {
@@ -86,10 +87,20 @@ final class GrandSlamSession {
   };
 }
 
+/// Reads/writes the [GrandSlamSession] as an encrypted, owner-only file.
+///
+/// The session is sealed with [LocalCipher], so the token is not sitting in
+/// cleartext in a directory that routinely ends up in backups and synced
+/// dotfile folders. Sealing is safe here precisely because the session is
+/// re-obtainable: if the key file or the machine changes, [load] reports
+/// the session as unreadable and `xcross auth` mints a new one.
 final class GrandSlamSessionStore {
-  GrandSlamSessionStore({String? path}) : path = path ?? defaultPath();
+  GrandSlamSessionStore({String? path, LocalCipher? cipher})
+    : path = path ?? defaultPath(),
+      _cipher = cipher ?? LocalCipher();
 
   final String path;
+  final LocalCipher _cipher;
 
   @useResult
   static String defaultPath() => p.join(
@@ -97,13 +108,28 @@ final class GrandSlamSessionStore {
     'grandslam-session.json',
   );
 
+  /// Returns null when no session is stored.
+  ///
+  /// A file left over from before sessions were encrypted is read as
+  /// plaintext once and immediately rewritten sealed, so the cleartext
+  /// token stops existing on disk without forcing a re-login.
   Future<GrandSlamSession?> load() async {
     final file = File(path);
     if (!file.existsSync()) return null;
 
+    final contents = await file.readAsString();
+    if (!LocalCipher.isSealed(contents)) {
+      final migrated = _parse(contents);
+      await save(migrated);
+      return migrated;
+    }
+    return _parse(await _cipher.open(contents));
+  }
+
+  GrandSlamSession _parse(String json) {
     final Object? doc;
     try {
-      doc = jsonDecode(await file.readAsString());
+      doc = jsonDecode(json);
     } on FormatException {
       // Deliberately does not echo the exception: the file holds a token.
       throw AppleError('$path: invalid JSON');
@@ -112,25 +138,11 @@ final class GrandSlamSessionStore {
     return GrandSlamSession.fromJson(doc.cast<String, Object?>());
   }
 
-  /// Writes atomically through a temporary file so a crash mid-write
-  /// cannot leave a half-written session behind, and restricts the file
-  /// to the owner wherever POSIX permissions exist.
   Future<void> save(GrandSlamSession session) async {
-    final file = File(path);
-    await file.parent.create(recursive: true);
-    final contents = const JsonEncoder.withIndent(
-      '  ',
-    ).convert(session.toJson());
-
-    final temporary = File('$path.${AnisetteState.generateUuidV4()}.tmp');
-    try {
-      await temporary.writeAsString(contents, flush: true);
-      if (!Platform.isWindows) posix.chmod(temporary.path, '600');
-      await temporary.rename(file.path);
-    } on Object catch (e) {
-      if (temporary.existsSync()) await temporary.delete();
-      throw AppleError('Could not save GrandSlam session at $path: $e');
-    }
+    await SecureFile.writeString(
+      path,
+      await _cipher.seal(jsonEncode(session.toJson())),
+    );
   }
 
   Future<void> clear() async {
