@@ -293,7 +293,7 @@ fi
 # ---------------------------------------------------------------------------
 
 printf '\nNext steps:\n'
-printf '  xcross setup                             # install apt deps, pipx & pymobiledevice3\n'
+printf '  xcross setup                             # install distro deps, pipx & pymobiledevice3\n'
 printf '  xcross sdk install ~/Downloads/Xcode.xip # once\n'
 printf '  xcross auth --apple-id you@example.com\n'
 printf '  xcross tunnel                            # needs root, per device reconnect\n'
