@@ -153,6 +153,31 @@ jobs:
           $llvmBin | Out-File $env:GITHUB_PATH -Encoding utf8 -Append
           $swiftDirs | Out-File $env:GITHUB_PATH -Encoding utf8 -Append
           $env:Path = "$llvmBin;$($swiftDirs -join ';');$env:Path"
+          # SDKROOT is registered by the installer too, and it is what swiftc
+          # defaults `-sdk` to for *host* compiles. SwiftPM compiles every
+          # Package.swift manifest for the host before it ever looks at
+          # `--swift-sdk`, so without SDKROOT the cross build dies with
+          # "unable to load standard library for target
+          # 'x86_64-unknown-windows-msvc'".
+          $sdkRoot = @(
+            [Environment]::GetEnvironmentVariable('SDKROOT', 'User')
+            [Environment]::GetEnvironmentVariable('SDKROOT', 'Machine')
+          ) | Where-Object { $_ } | Select-Object -First 1
+          if (-not $sdkRoot) {
+            $sdkRoot = Get-ChildItem `
+              "$swiftRoot\Platforms" `
+              -Filter Windows.sdk `
+              -Directory `
+              -Recurse `
+              -ErrorAction SilentlyContinue |
+              Select-Object -First 1 -ExpandProperty FullName
+          }
+          if (-not $sdkRoot -or -not (Test-Path $sdkRoot)) {
+            throw 'Swift.Platform did not install a Windows SDK (SDKROOT)'
+          }
+          Write-Host "  SDKROOT=$sdkRoot"
+          "SDKROOT=$sdkRoot" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
+          $env:SDKROOT = $sdkRoot
           $tools = @(
             'swift', 'clang', 'clang++', 'llvm-ar', 'ld64.lld',
             'llvm-readobj', 'llvm-nm', 'llvm-objdump'
@@ -171,6 +196,14 @@ jobs:
           & swift sdk list
           if ($LASTEXITCODE -ne 0) {
             throw "swift sdk list failed with $LASTEXITCODE"
+          }
+          # Neither command above loads the standard library, so type-check a
+          # trivial file to prove SDKROOT actually resolves one.
+          $probe = "$env:RUNNER_TEMP\swift-probe.swift"
+          Set-Content $probe 'print("ok")' -Encoding utf8
+          & swiftc -typecheck $probe
+          if ($LASTEXITCODE -ne 0) {
+            throw "Host Swift stdlib unusable (SDKROOT=$env:SDKROOT)"
           }
 
           flutter config --no-analytics
