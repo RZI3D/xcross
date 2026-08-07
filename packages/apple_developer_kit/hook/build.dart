@@ -5,6 +5,11 @@ import 'package:hooks/hooks.dart';
 import 'package:logging/logging.dart';
 import 'package:native_toolchain_c/native_toolchain_c.dart';
 
+/// Asset id of the code asset, which must stay equal to the path of the
+/// library holding the `@Native` externals: that is the id those lookups
+/// default to, and a mismatch only shows up at runtime as "no asset with id".
+const _assetName = 'src/adi/loader/internal/sysv_abi_bridge.dart';
+
 void main(List<String> args) async {
   await build(args, (input, output) async {
     if (!input.config.buildCodeAssets) return;
@@ -21,7 +26,7 @@ void main(List<String> args) async {
     if (input.config.code.targetOS == OS.windows) {
       final cBuilder = CBuilder.library(
         name: 'sysv_abi_bridge',
-        assetName: 'src/adi/loader/sysv_abi_bridge.dart',
+        assetName: _assetName,
         sources: const ['src/sysv_abi_bridge.c'],
       );
       await cBuilder.run(input: input, output: output, logger: logger);
@@ -72,7 +77,7 @@ Future<void> _buildWithSystemCc({
   output.assets.code.add(
     CodeAsset(
       package: input.packageName,
-      name: 'src/adi/loader/sysv_abi_bridge.dart',
+      name: _assetName,
       linkMode: DynamicLoadingBundled(),
       file: outFile,
     ),
