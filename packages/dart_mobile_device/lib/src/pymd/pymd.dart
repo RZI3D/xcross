@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:cli_kit/cli_kit.dart';
 import 'package:dart_mobile_device/src/errors.dart';
+import 'package:path/path.dart' as p;
 
 /// Resolved pymobiledevice3 invocation — either the bare CLI or python3 -m.
 class PymdInvocation {
@@ -30,7 +31,22 @@ abstract final class Pymd {
 
   static String get _installCommand => Platform.isWindows
       ? 'py -m pip install -U pymobiledevice3'
-      : 'sudo pip3 install --break-system-packages pymobiledevice3';
+      : 'pipx install pymobiledevice3 && pipx ensurepath';
+
+  /// Directories pipx links its entry points into.
+  ///
+  /// `pipx ensurepath` only edits shell profiles, so a process started before
+  /// that (or by a shell that never sourced them) still has to look there
+  /// itself.
+  static List<String> get pipxBinDirectories {
+    final env = Platform.environment;
+    final configured = env['PIPX_BIN_DIR'];
+    final home = env['HOME'] ?? env['USERPROFILE'];
+    return [
+      if (configured != null && configured.isNotEmpty) configured,
+      if (home != null && home.isNotEmpty) p.join(home, '.local', 'bin'),
+    ];
+  }
 
   /// Human-readable install hint shown when pymobiledevice3 is not found.
   static String get _notFoundMessage =>
@@ -43,7 +59,10 @@ abstract final class Pymd {
     if (_cached != null) return _cached!;
 
     // Prefer the bare CLI when available.
-    final cli = await ProcessRunner.which('pymobiledevice3');
+    final cli = await ProcessRunner.which(
+      'pymobiledevice3',
+      extraDirectories: pipxBinDirectories,
+    );
     if (cli != null) {
       _cached = PymdInvocation(cli, []);
       return _cached!;
@@ -115,16 +134,24 @@ abstract final class Pymd {
       await ProcessRunner.which('python') ??
       await ProcessRunner.which('py');
 
-  /// Build the ordered list of install command vectors to try: system-wide
-  /// with `--break-system-packages`, then without, then the `--user` variants
+  /// Absolute path to `pipx`, including the bin directory it installs into
+  /// but may not have put on PATH yet.
+  static Future<String?> resolvePipx() =>
+      ProcessRunner.which('pipx', extraDirectories: pipxBinDirectories);
+
+  /// Build the ordered list of install command vectors to try: pipx first (the
+  /// only supported route on PEP 668 distros), then system-wide pip with
+  /// `--break-system-packages`, then without, then the `--user` variants
   /// (which need no sudo).
   static Future<List<List<String>>> _buildInstallAttempts(String py) async {
     final sudo = await Sudo.resolve();
+    final pipx = Platform.isWindows ? null : await resolvePipx();
     const pipInstall = ['-m', 'pip', 'install'];
     const upgradeTarget = ['-U', 'pymobiledevice3'];
     const breakSystem = '--break-system-packages';
 
     return <List<String>>[
+      if (pipx != null) [pipx, 'install', 'pymobiledevice3'],
       if (sudo != null)
         [sudo, py, ...pipInstall, breakSystem, ...upgradeTarget],
       if (sudo != null) [sudo, py, ...pipInstall, ...upgradeTarget],

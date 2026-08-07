@@ -83,14 +83,14 @@ Both installers download the latest release, install it, **add xcross to your `P
    curl -fsSL https://raw.githubusercontent.com/arxdeus/xcross/main/install.sh | sh
    ```
 
-2. Let xcross install its apt dependencies and `pymobiledevice3`, and build the Darwin SDK:
+2. Let xcross install its apt dependencies and `pymobiledevice3` (via `pipx`), and build the Darwin SDK:
 
    ```sh
    xcross setup
    xcross sdk install ~/Downloads/Xcode.xip   # once, takes a while
    ```
 
-   `xcross setup` also installs `usbmuxd`, `usbutils`, and `libimobiledevice-utils` for USB device access and diagnostics.
+   `xcross setup` also installs `usbmuxd`, `usbutils`, and `libimobiledevice-utils` for USB device access and diagnostics. `pymobiledevice3` goes into its own `pipx` venv, and `pipx ensurepath` puts `~/.local/bin` on your `PATH` - open a new shell for that to take effect.
 
 ### Verifying a release
 
@@ -176,7 +176,7 @@ With multiple iPhones connected, an interactive terminal shows a numbered device
 
 | Command | Description |
 |---|---|
-| `xcross setup` | Install host dependencies (apt packages, `pymobiledevice3`) |
+| `xcross setup` | Install host dependencies (apt packages, `pipx`, `pymobiledevice3`) |
 | `xcross sdk install <Xcode.xip>` | Extract a private Darwin Swift SDK from an Xcode archive |
 | `xcross auth` | Save Apple ID or App Store Connect credentials |
 | `xcross tunnel` | Mount the Developer Disk Image + start the iOS 17+ RSD tunnel |

@@ -73,7 +73,9 @@ final class SetupCommand extends Command<void> {
       );
     }
 
+    final pipx = await _ensurePipx();
     await _ensurePymd();
+    await _pipxEnsurePath(pipx);
     Log.logDone('Requirements installed');
   }
 
@@ -132,6 +134,57 @@ final class SetupCommand extends Command<void> {
       versioned.last.path,
       '/usr/local/bin/ld64.lld',
     ], label: 'link ld64.lld');
+  }
+
+  /// pipx is the only pip route left on PEP 668 distros, and it keeps
+  /// pymobiledevice3 in its own venv. Prefer the distro package; fall back to
+  /// a `--user` pip install when the distro is too old to ship one.
+  static Future<String> _ensurePipx() async {
+    final existing = await Pymd.resolvePipx();
+    if (existing != null) return existing;
+
+    final step = Log.beginStep('Installing pipx');
+    for (final attempt in await _pipxInstallAttempts()) {
+      Log.logTrace('[pipx] running: ${attempt.join(' ')}');
+      final result = await ProcessRunner.run(attempt.first, attempt.sublist(1));
+      if (result.exitCode != 0) continue;
+      final pipx = await Pymd.resolvePipx();
+      if (pipx != null) {
+        step.done();
+        return pipx;
+      }
+    }
+
+    step.fail();
+    throw XcrossError(
+      'Could not install pipx. Install it manually:\n'
+      '    sudo apt install pipx',
+    );
+  }
+
+  static Future<List<List<String>>> _pipxInstallAttempts() async {
+    final sudo = await Sudo.resolve();
+    final py = await ProcessRunner.which('python3') ?? 'python3';
+    return <List<String>>[
+      if (sudo != null) [sudo, 'apt-get', 'install', '-y', 'pipx'],
+      [py, '-m', 'pip', 'install', '--user', '--break-system-packages', 'pipx'],
+      [py, '-m', 'pip', 'install', '--user', 'pipx'],
+    ];
+  }
+
+  /// Appends pipx's bin directory to the shell profile so the freshly linked
+  /// `pymobiledevice3` resolves in new shells. Never fatal: xcross itself
+  /// looks in that directory regardless.
+  static Future<void> _pipxEnsurePath(String pipx) async {
+    try {
+      await ProcessRunner.runChecked(
+        pipx,
+        ['ensurepath'],
+        label: 'pipx ensurepath',
+      );
+    } on Object catch (error) {
+      Log.logWarn('pipx ensurepath failed, add ~/.local/bin to PATH: $error');
+    }
   }
 
   static Future<void> _ensurePymd() async {
