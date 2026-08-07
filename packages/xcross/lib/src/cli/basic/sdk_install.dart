@@ -34,6 +34,10 @@ const _anyExecuteBit = 0x049; // u+x | g+x | o+x
 
 const _json = JsonEncoder.withIndent('  ');
 
+/// Windows reports "a DLL this executable needs is missing" as a bare exit
+/// code, with no output on either stream.
+const _statusDllNotFound = 0xC0000135;
+
 /// Helpers for extracting and wiring the Darwin Swift SDK bundle.
 abstract final class SdkInstall {
   /// Destination-relative path for an included cpio entry, or null when the
@@ -386,20 +390,105 @@ abstract final class SdkInstall {
     String resolvedSwift,
     Future<CapturedProcess> Function(String, List<String>) run,
   ) async {
-    final result = await run(clang, const ['-print-resource-dir']);
-    final resourceDir = result.stdout.trim();
-    final source = p.join(resourceDir, 'include');
-    if (result.exitCode != 0 ||
-        resourceDir.isEmpty ||
-        !Directory(source).existsSync()) {
-      final detail = result.stderr.trim();
-      final suffix = detail.isEmpty ? '' : '\n$detail';
-      throw XcrossError(
-        'Could not locate clang builtin headers using sibling clang "$clang" '
-        'selected for Swift "$resolvedSwift".$suffix',
+    CapturedProcess? printed;
+    Object? failure;
+    try {
+      printed = await run(clang, const ['-print-resource-dir']);
+    } on Object catch (error) {
+      failure = error;
+    }
+
+    if (printed != null && printed.exitCode == 0) {
+      final resourceDir = printed.stdout.trim();
+      if (resourceDir.isNotEmpty) {
+        final source = p.join(resourceDir, 'include');
+        if (Directory(source).existsSync()) return source;
+      }
+    }
+
+    // Asking clang is only the fast path: a toolchain whose binaries cannot
+    // even start still ships its builtin headers at a fixed spot, and nothing
+    // about installing the SDK actually needs to run the compiler.
+    final shipped = _shippedClangHeaderDir(clang);
+    if (shipped != null) {
+      Log.logWarn(
+        'clang -print-resource-dir failed; falling back to the headers '
+        'shipped at "$shipped".${_clangFailureDetail(printed, failure)}',
+      );
+      return shipped;
+    }
+
+    throw XcrossError(
+      'Could not locate clang builtin headers using sibling clang "$clang" '
+      'selected for Swift "$resolvedSwift".'
+      '${_clangFailureDetail(printed, failure)}',
+    );
+  }
+
+  /// The builtin headers a toolchain ships, located without running clang:
+  /// `usr/lib/clang/<version>/include`, or the copy Swift keeps beside its own
+  /// resources at `usr/lib/swift/clang/include`.
+  static String? _shippedClangHeaderDir(String clang) {
+    final lib = p.join(p.dirname(p.dirname(clang)), 'lib');
+    final versions = Directory(p.join(lib, 'clang'));
+    final candidates = <String>[];
+    if (versions.existsSync()) {
+      final byVersion =
+          versions
+              .listSync()
+              .whereType<Directory>()
+              .map((entity) => p.basename(entity.path))
+              .toList()
+            ..sort(_compareClangVersions);
+      candidates.addAll(
+        byVersion.map((version) => p.join(lib, 'clang', version, 'include')),
       );
     }
-    return source;
+    candidates.add(p.join(lib, 'swift', 'clang', 'include'));
+    for (final candidate in candidates) {
+      if (Directory(candidate).existsSync()) return candidate;
+    }
+    return null;
+  }
+
+  /// Newest resource directory first, over the dotted numeric versions clang
+  /// uses for its resource directories (`21` sorts above `19.1.7`).
+  static int _compareClangVersions(String a, String b) {
+    final left = _versionSegments(a);
+    final right = _versionSegments(b);
+    for (var i = 0; i < left.length && i < right.length; i++) {
+      final order = right[i].compareTo(left[i]);
+      if (order != 0) return order;
+    }
+    return right.length.compareTo(left.length);
+  }
+
+  static List<int> _versionSegments(String version) => version
+      .split('.')
+      .map((segment) => int.tryParse(segment) ?? -1)
+      .toList(growable: false);
+
+  /// Why clang could not report its resource directory, including the hint
+  /// Windows withholds: a process killed by `STATUS_DLL_NOT_FOUND` writes
+  /// nothing to either stream, it only exits with the raw NTSTATUS.
+  static String _clangFailureDetail(CapturedProcess? result, Object? failure) {
+    if (result == null) return '\n$failure';
+    final detail = <String>[
+      '`clang -print-resource-dir` exited ${result.exitCode}.',
+    ];
+    for (final output in [result.stdout.trim(), result.stderr.trim()]) {
+      if (output.isNotEmpty) detail.add(output);
+    }
+    if (result.exitCode == _statusDllNotFound ||
+        result.exitCode == _statusDllNotFound - 0x100000000) {
+      detail.add(
+        'That is STATUS_DLL_NOT_FOUND: the Swift toolchain binaries cannot '
+        'start because their runtime DLLs are not on PATH. Open a new terminal '
+        'so the installer PATH applies, or add '
+        r'%LOCALAPPDATA%\Programs\Swift\Runtimes\<version>\usr\bin to PATH.',
+      );
+    }
+    return '\n${detail.join('\n')}';
   }
 
   /// The destination may be a real directory, a file, or a symlink Xcode

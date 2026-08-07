@@ -7,6 +7,7 @@ import 'package:darwin_sdk_kit/darwin_sdk_kit.dart';
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 import 'package:xcross/src/cli/basic/sdk_command.dart';
+import 'package:xcross/src/errors.dart';
 
 import '../../../darwin_sdk_kit/test/test_fixtures.dart';
 
@@ -305,6 +306,83 @@ void main() {
       'arm_neon.h',
     );
     expect(File(destination).readAsStringSync(), 'swift clang');
+  });
+
+  test('falls back to shipped headers when clang cannot run', () async {
+    final temp = Directory.systemTemp.createTempSync('xcross-sdk-dll-');
+    addTearDown(() => temp.deleteSync(recursive: true));
+    final usr = p.join(temp.path, 'usr');
+    final bin = await Directory(p.join(usr, 'bin')).create(recursive: true);
+    File(
+      p.join(bin.path, ProcessRunner.hostExecutableName('swift')),
+    ).createSync();
+    File(
+      p.join(bin.path, ProcessRunner.hostExecutableName('clang')),
+    ).createSync();
+    for (final version in ['9.0.1', '21', '19.1.7']) {
+      final include = await Directory(
+        p.join(usr, 'lib', 'clang', version, 'include'),
+      ).create(recursive: true);
+      await File(p.join(include.path, 'arm_neon.h')).writeAsString(version);
+    }
+
+    await SdkInstall.replaceClangBuiltinHeaders(
+      temp.path,
+      locateTool: (name) async =>
+          p.join(bin.path, ProcessRunner.hostExecutableName('swift')),
+      // 0xC0000135 (STATUS_DLL_NOT_FOUND) with no output on either stream is
+      // exactly what Windows reports when the Swift runtime is off PATH.
+      runProcess: (executable, arguments) async =>
+          const CapturedProcess(0xC0000135, '', ''),
+    );
+
+    final destination = p.join(
+      temp.path,
+      'Developer',
+      'Toolchains',
+      'XcodeDefault.xctoolchain',
+      'usr',
+      'lib',
+      'swift',
+      'clang',
+      'include',
+      'arm_neon.h',
+    );
+    expect(File(destination).readAsStringSync(), '21');
+  });
+
+  test('reports the DLL hint when no shipped headers exist', () async {
+    final temp = Directory.systemTemp.createTempSync('xcross-sdk-nodir-');
+    addTearDown(() => temp.deleteSync(recursive: true));
+    final bin = await Directory(
+      p.join(temp.path, 'usr', 'bin'),
+    ).create(recursive: true);
+    File(
+      p.join(bin.path, ProcessRunner.hostExecutableName('swift')),
+    ).createSync();
+    File(
+      p.join(bin.path, ProcessRunner.hostExecutableName('clang')),
+    ).createSync();
+
+    await expectLater(
+      SdkInstall.replaceClangBuiltinHeaders(
+        temp.path,
+        locateTool: (name) async =>
+            p.join(bin.path, ProcessRunner.hostExecutableName('swift')),
+        runProcess: (executable, arguments) async =>
+            const CapturedProcess(0xC0000135, '', ''),
+      ),
+      throwsA(
+        isA<XcrossError>().having(
+          (error) => error.message,
+          'message',
+          allOf(
+            contains('exited 3221225781'),
+            contains('STATUS_DLL_NOT_FOUND'),
+          ),
+        ),
+      ),
+    );
   });
 
   test('writes Swift SDK artifact metadata for the extracted tree', () async {
