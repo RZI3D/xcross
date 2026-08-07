@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:cli_kit/cli_kit.dart';
 import 'package:darwin_sdk_kit/src/darwin_sdk.dart';
 import 'package:darwin_sdk_kit/src/errors.dart';
 import 'package:path/path.dart' as p;
@@ -160,6 +161,73 @@ void main() {
           ),
         ),
       );
+    });
+  });
+
+  group('probeIosSupport', () {
+    test('accepts a linker that only misses its input file', () async {
+      final failure = await DarwinSdk.probeIosSupport(
+        p.join(tmp.path, 'good-ld64.lld'),
+        runProcess: (executable, arguments) async => const CapturedProcess(
+          1,
+          '',
+          'ld64.lld: error: cannot open xcross-ld64-probe.o: No such file',
+        ),
+      );
+      expect(failure, isNull);
+    });
+
+    test('rejects a linker that refuses the iOS platform', () async {
+      final failure = await DarwinSdk.probeIosSupport(
+        p.join(tmp.path, 'swift-ld64.lld'),
+        runProcess: (executable, arguments) async => const CapturedProcess(
+          1,
+          '',
+          'ld64.lld: error: This version of lld does not support linking for '
+              'platform iOS',
+        ),
+      );
+      expect(failure, contains('does not support linking for platform iOS'));
+    });
+
+    test('rejects a linker that dies without saying anything', () async {
+      final failure = await DarwinSdk.probeIosSupport(
+        p.join(tmp.path, 'crashing-ld64.lld'),
+        runProcess: (executable, arguments) async =>
+            const CapturedProcess(-1073740791, '', ''),
+      );
+      expect(failure, allOf(contains('crashed'), contains('0xC0000409')));
+    });
+
+    test('probes each linker once', () async {
+      var runs = 0;
+      final linker = p.join(tmp.path, 'counted-ld64.lld');
+      Future<CapturedProcess> run(String executable, List<String> arguments) {
+        runs++;
+        return Future.value(
+          const CapturedProcess(1, '', 'ld64.lld: error: cannot open'),
+        );
+      }
+
+      await DarwinSdk.probeIosSupport(linker, runProcess: run);
+      await DarwinSdk.probeIosSupport(linker, runProcess: run);
+      expect(runs, 1);
+    });
+
+    test('asks the linker for an iOS dylib', () async {
+      late List<String> seen;
+      await DarwinSdk.probeIosSupport(
+        p.join(tmp.path, 'recorded-ld64.lld'),
+        runProcess: (executable, arguments) async {
+          seen = arguments;
+          return const CapturedProcess(1, '', 'cannot open');
+        },
+      );
+      expect(
+        seen,
+        containsAllInOrder(['-platform_version', 'ios', '13.0', '13.0']),
+      );
+      expect(seen, contains('-dylib'));
     });
   });
 }

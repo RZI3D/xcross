@@ -327,4 +327,44 @@ void main() {
       },
     );
   });
+
+  group('describeExitCode', () {
+    test('names a Windows NTSTATUS reported as a raw DWORD', () {
+      expect(
+        ProcessRunner.describeExitCode(0xC0000135),
+        contains('STATUS_DLL_NOT_FOUND'),
+      );
+    });
+
+    test('names the same status when dart:io sign-extends it', () {
+      expect(
+        ProcessRunner.describeExitCode(-1073740791),
+        allOf(contains('0xC0000409'), contains('abort()')),
+      );
+    });
+
+    test('still explains an NTSTATUS it has no name for', () {
+      expect(
+        ProcessRunner.describeExitCode(0xC0000123),
+        contains('died instead of exiting'),
+      );
+    });
+
+    test('reads a small negative code as a POSIX signal', () {
+      expect(ProcessRunner.describeExitCode(-11), 'killed by signal 11');
+    });
+
+    test('says nothing about an ordinary non-zero exit', () {
+      expect(ProcessRunner.describeExitCode(1), isNull);
+      expect(ProcessRunner.describeExitCode(255), isNull);
+    });
+
+    test('separates a crash from a chosen exit status', () {
+      expect(ProcessRunner.crashed(1), isFalse);
+      expect(ProcessRunner.crashed(255), isFalse);
+      expect(ProcessRunner.crashed(-11), isTrue);
+      expect(ProcessRunner.crashed(-1073740791), isTrue);
+      expect(ProcessRunner.crashed(0xC0000409), isTrue);
+    });
+  });
 }

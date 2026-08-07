@@ -484,13 +484,15 @@ abstract final class SdkInstall {
     for (final output in [result.stdout.trim(), result.stderr.trim()]) {
       if (output.isNotEmpty) detail.add(output);
     }
+    final status = ProcessRunner.describeExitCode(result.exitCode);
+    if (status != null) detail.add('That is $status.');
     if (result.exitCode == _statusDllNotFound ||
         result.exitCode == _statusDllNotFound - 0x100000000) {
       detail.add(
-        'That is STATUS_DLL_NOT_FOUND: the Swift toolchain binaries cannot '
-        'start because their runtime DLLs are not on PATH. Open a new terminal '
-        'so the installer PATH applies, or add '
-        r'%LOCALAPPDATA%\Programs\Swift\Runtimes\<version>\usr\bin to PATH.',
+        'The Swift toolchain binaries cannot start because their runtime DLLs '
+        'are not on PATH. Open a new terminal so the installer PATH applies, '
+        r'or add %LOCALAPPDATA%\Programs\Swift\Runtimes\<version>\usr\bin to '
+        'PATH.',
       );
     }
     return '\n${detail.join('\n')}';

@@ -1,16 +1,17 @@
 import 'package:meta/meta.dart';
 
-/// Resolved toolchain for the App.framework stub build. [lldToolsetBin] is the
-/// directory containing the PATH-resolved `ld64.lld`.
+/// Resolved toolchain for the App.framework stub build. [linker] is the
+/// vetted `ld64.lld` from [DarwinSdk.resolveLd64Lld], passed to clang by path
+/// so the driver cannot pick a different one off PATH.
 @immutable
 final class Toolchain {
   const Toolchain({
     required this.clang,
     required this.iosSdk,
-    required this.lldToolsetBin,
+    required this.linker,
   });
 
   final String clang;
   final String iosSdk;
-  final String lldToolsetBin;
+  final String linker;
 }

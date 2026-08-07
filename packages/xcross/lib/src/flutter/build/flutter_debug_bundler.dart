@@ -411,7 +411,7 @@ final class FlutterDebugBundler {
         Platform.isWindows ? 'clang.exe' : 'clang',
       ),
       iosSdk: darwin.iPhoneOSSdk(),
-      lldToolsetBin: p.dirname(await DarwinSdk.resolveLd64Lld(darwin)),
+      linker: await DarwinSdk.resolveLd64Lld(darwin),
     );
   }
 
@@ -459,8 +459,10 @@ final class FlutterDebugBundler {
   }) {
     return <String>[
       '-fuse-ld=lld',
-      '-B',
-      toolchain.lldToolsetBin,
+      // By path, not by -B: a bare -B lets clang link with whichever
+      // ld64.lld happens to sit in that directory, and the Swift toolchain
+      // ships one that cannot link Mach-O for iOS.
+      '--ld-path=${toolchain.linker}',
       '--target=${IosDeploymentConstants.buildTriple}',
       '-arch',
       'arm64',

@@ -154,26 +154,123 @@ final class DarwinSdk {
   /// The `ld64.lld` a Swift toolchain ships beside its own `swift` refuses to
   /// link for iOS ("This version of lld does not support linking for platform
   /// iOS"), on Linux through swiftly's proxy shims and on Windows through the
-  /// official installer's copy. Stock LLVM ships no `swift`, so prefer a
-  /// candidate without one next to it — but still accept a co-located linker
-  /// when that is all PATH offers, since distributions that install Swift and
-  /// LLVM into the same `bin` are fine.
-  static Future<String> resolveLd64Lld(DarwinSdk _) async {
+  /// official installer's copy. Stock LLVM ships no `swift`, so candidates
+  /// without one next to them come first — but a co-located linker is still
+  /// tried, since distributions that install Swift and LLVM into the same
+  /// `bin` are fine.
+  ///
+  /// Every candidate is asked to link for iOS before it is handed out
+  /// ([probeIosSupport]): a linker that cannot is worse than none at all,
+  /// because it fails deep inside a build, and on Windows it can die with no
+  /// output whatsoever.
+  static Future<String> resolveLd64Lld(
+    DarwinSdk _, {
+    Future<CapturedProcess> Function(String, List<String>)? runProcess,
+  }) async {
     final candidates = await ProcessRunner.whichAll(
       'ld64.lld',
       accept: usableLd64Lld,
     );
-    final linker =
-        candidates.where((path) => !_besideSwift(path)).firstOrNull ??
-        candidates.firstOrNull;
-    return linker ??
-        (throw DarwinSdkError(
-          "No usable 'ld64.lld' on PATH.\n"
-          "swiftly's bundled lld cannot link for iOS, so it is skipped. "
-          'Install the LLVM one — `xcross setup`, or `sudo apt install lld` '
-          'on Linux — and make sure it is on PATH.',
-        ));
+    final ordered = [
+      ...candidates.where((path) => !_besideSwift(path)),
+      ...candidates.where(_besideSwift),
+    ];
+
+    final rejected = <String>[];
+    for (final candidate in ordered) {
+      final failure = await probeIosSupport(candidate, runProcess: runProcess);
+      if (failure == null) return candidate;
+      Log.logTrace('ld64.lld: skipping $candidate — $failure');
+      rejected.add('  $candidate\n    $failure');
+    }
+
+    throw DarwinSdkError(
+      rejected.isEmpty
+          ? "No usable 'ld64.lld' on PATH.\n$_installLinkerHint"
+          : "No 'ld64.lld' on PATH can link for iOS.\n"
+                '${rejected.join('\n')}\n$_installLinkerHint',
+    );
   }
+
+  static String get _installLinkerHint => Platform.isWindows
+      ? 'Install stock LLVM — `winget install --id LLVM.LLVM --exact` — and '
+            r'put its bin directory (C:\Program Files\LLVM\bin) on PATH. The '
+            "Swift toolchain's own ld64.lld cannot link Mach-O for iOS."
+      : 'Install the LLVM one — `xcross setup`, or `sudo apt install lld` — '
+            'and make sure it is on PATH.';
+
+  /// Why [linker] cannot link for iOS, or null when it can.
+  ///
+  /// Asks for an iOS dylib with an input that does not exist: a working linker
+  /// gets as far as complaining about the missing file, while one built
+  /// without Mach-O iOS support rejects the platform first. Only positive
+  /// evidence of failure counts, so an unfamiliar diagnostic is treated as a
+  /// working linker rather than locking a user out of their own toolchain.
+  static Future<String?> probeIosSupport(
+    String linker, {
+    Future<CapturedProcess> Function(String, List<String>)? runProcess,
+  }) async {
+    final cached = _iosSupport[linker];
+    if (cached != null) return cached.isEmpty ? null : cached;
+
+    // Inside a directory that is never created, so the probe cannot pick up a
+    // stray object file and actually link something.
+    final missing = p.join(
+      Directory.systemTemp.path,
+      'xcross-ld64-probe',
+      'probe.o',
+    );
+    final CapturedProcess result;
+    try {
+      result = await (runProcess ?? ProcessRunner.run)(linker, [
+        '-arch',
+        'arm64',
+        '-platform_version',
+        'ios',
+        '13.0',
+        '13.0',
+        '-dylib',
+        '-o',
+        '$missing.dylib',
+        missing,
+      ]);
+    } on Object catch (error) {
+      return _rememberIosSupport(linker, 'could not be run: $error');
+    }
+
+    final output = '${result.stdout}\n${result.stderr}';
+    if (_unsupportedPlatform.hasMatch(output)) {
+      return _rememberIosSupport(
+        linker,
+        output
+            .split('\n')
+            .firstWhere(_unsupportedPlatform.hasMatch)
+            .trim()
+            .replaceFirst(RegExp('^.*?: *'), ''),
+      );
+    }
+    if (ProcessRunner.crashed(result.exitCode)) {
+      return _rememberIosSupport(
+        linker,
+        'crashed on an iOS link: '
+        '${ProcessRunner.describeExitCode(result.exitCode)}',
+      );
+    }
+    return _rememberIosSupport(linker, null);
+  }
+
+  static String? _rememberIosSupport(String linker, String? failure) {
+    _iosSupport[linker] = failure ?? '';
+    return failure;
+  }
+
+  /// Probe verdicts by linker path; the empty string means "usable".
+  static final Map<String, String> _iosSupport = {};
+
+  static final RegExp _unsupportedPlatform = RegExp(
+    'does not support linking for platform|unknown platform',
+    caseSensitive: false,
+  );
 
   /// PATH filter for [resolveLd64Lld] and the `xcross setup` requirement check.
   static bool usableLd64Lld(String path) => !ProcessRunner.isSwiftlyProxy(path);
