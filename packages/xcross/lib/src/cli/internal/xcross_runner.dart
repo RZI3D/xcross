@@ -1,6 +1,7 @@
 import 'package:args/command_runner.dart';
 import 'package:build_cli_annotations/build_cli_annotations.dart';
 import 'package:cli_kit/cli_kit.dart';
+import 'package:xcross/src/version.dart';
 
 part 'xcross_runner.g.dart';
 
@@ -13,6 +14,9 @@ final class XcrossGlobalArgs {
     negatable: false,
   )
   late bool verbose;
+
+  @CliOption(help: 'Print the xcross version and exit.', negatable: false)
+  late bool version;
 }
 
 /// Adds a global `-v` so every command can surface its trace output, not just
@@ -20,6 +24,28 @@ final class XcrossGlobalArgs {
 final class XcrossRunner extends CommandRunner<void> {
   XcrossRunner(super.executableName, super.description) {
     _$populateXcrossGlobalArgsParser(argParser);
+  }
+
+  /// `--version` has to be handled here rather than in [runCommand], which a
+  /// bare `xcross --version` never reaches: CommandRunner rejects the missing
+  /// subcommand first.
+  @override
+  Future<void> run(Iterable<String> args) async {
+    if (_wantsVersion(args)) {
+      Log.logStatus(XcrossVersion.describe());
+      return;
+    }
+    return super.run(args);
+  }
+
+  /// Bad input is left for [CommandRunner] to reject, so it still surfaces as
+  /// a UsageException with the full help text.
+  bool _wantsVersion(Iterable<String> args) {
+    try {
+      return _$parseXcrossGlobalArgsResult(argParser.parse(args)).version;
+    } on FormatException {
+      return false;
+    }
   }
 
   @override

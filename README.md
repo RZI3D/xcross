@@ -105,6 +105,20 @@ gh attestation verify xcross-linux-x64.tar.gz \
   --source-digest <commit-sha-from-the-release-notes>
 ```
 
+### Updating
+
+```sh
+xcross --version          # what you are running
+xcross update --check     # what the latest release is
+xcross update             # download, verify, and swap it in
+```
+
+`xcross update` downloads the release archive for your platform, verifies it against the release's `SHA256SUMS.txt` before touching anything, and replaces the installed `bin/` and `lib/` files in place. A checksum that does not match aborts the update, and a failure part-way through restores the previous version. On Linux a system-wide install (`/usr/local/...`) prompts for `sudo`; on Windows a machine-wide install needs an Administrator terminal.
+
+Other commands print a one-line hint when a newer release exists. That hint comes from a cache refreshed at most once a day, so it costs no time on the command you actually ran. Set `XCROSS_NO_UPDATE_CHECK=1` to turn it off; it is already off in CI, for non-interactive output, and for builds from source.
+
+Use `xcross update --to <tag>` to pin a specific release, and `--force` to reinstall the current one.
+
 ## Authentication
 
 xcross talks to Apple's Developer Services directly. Two options:
@@ -170,6 +184,7 @@ With multiple iPhones connected, an interactive terminal shows a numbered device
 | `xcross flutter dap` | Run the Debug Adapter Protocol server (used by IDEs) |
 | `xcross ide vscode` | Upsert `.vscode/*` for Run & Debug / Hot Reload |
 | `xcross ide idea` | Write a JetBrains DAP run configuration (needs LSP4IJ) |
+| `xcross update` | Update xcross to the latest release, verified against its checksums |
 | `xcross completion` | Print a shell-completion script |
 
 <details>

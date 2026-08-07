@@ -1,3 +1,11 @@
+## Unreleased
+
+- Add `xcross --version`, stamped from the git tag at release build time.
+- Add `xcross update` to self-update an installed xcross from the latest
+  GitHub release, verified against the release's `SHA256SUMS.txt`.
+- Print a cached, once-a-day "update available" hint on other commands;
+  disable it with `XCROSS_NO_UPDATE_CHECK`.
+
 ## 1.0.0
 
 - Build, sign, install, launch, and hot-reload Flutter iOS apps natively on

@@ -12,11 +12,16 @@ import 'package:xcross/src/cli/basic/completion_command.dart';
 import 'package:xcross/src/cli/basic/sdk_command.dart';
 import 'package:xcross/src/cli/basic/setup_command.dart';
 import 'package:xcross/src/cli/basic/tunnel_command.dart';
+import 'package:xcross/src/cli/basic/update_command.dart';
 import 'package:xcross/src/cli/flutter/flutter_command.dart';
 import 'package:xcross/src/cli/ide/ide_command.dart';
 import 'package:xcross/src/cli/internal/xcross_runner.dart';
 import 'package:xcross/src/errors.dart';
 import 'package:xcross/src/flutter/flutter.dart';
+import 'package:xcross/src/update/install_layout.dart';
+import 'package:xcross/src/update/self_update.dart';
+import 'package:xcross/src/update/update_check.dart';
+import 'package:xcross/src/version.dart';
 
 /// Namespace for building and running the xcross CLI.
 abstract final class XcrossCli {
@@ -31,13 +36,18 @@ abstract final class XcrossCli {
         ..addCommand(AuthCommand())
         ..addCommand(SdkCommand())
         ..addCommand(IdeCommand())
+        ..addCommand(UpdateCommand())
         ..addCommand(CompletionCommand());
 
   /// Entry point used by `bin/xcross.dart`.
   static Future<int> run(List<String> args) async {
     final runner = buildRunner();
     _completeArgs(args, runner);
-    if (!_ownsStdout(args)) _printCredits();
+    final ownsStdout = _ownsStdout(args);
+    if (!ownsStdout) _printCredits();
+
+    final checkUpdates = UpdateCheck.isEnabled(ownsStdout: ownsStdout);
+    if (checkUpdates) UpdateCheck.printHintFromCache();
 
     try {
       await runner.run(args);
@@ -48,6 +58,23 @@ abstract final class XcrossCli {
     } on Object catch (error, stackTrace) {
       _reportFailure(error, stackTrace);
       return 1;
+    } finally {
+      // After the command, never before: neither of these is worth a millisecond
+      // of startup latency, and the sweep is deliberately not tied to the
+      // update-check opt-out, which says nothing about disk hygiene.
+      _sweepUpdateLeftovers();
+      if (checkUpdates) await UpdateCheck.refreshIfStale();
+    }
+  }
+
+  /// Windows cannot delete the executable it is running, so a previous update
+  /// may have left its predecessor behind for this run to collect.
+  static void _sweepUpdateLeftovers() {
+    if (XcrossVersion.isDev) return;
+    try {
+      SelfUpdate.sweepStaleBackups(InstallLayout.resolve());
+    } on Object {
+      // A dev checkout or an unrecognised layout has nothing to sweep.
     }
   }
 
