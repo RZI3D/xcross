@@ -215,7 +215,7 @@ jobs:
             $sample
           Set-Location $sample
           $fixturePath = Resolve-Path `
-            "$env:GITHUB_WORKSPACE/test/fixtures/spm_plugin"
+            "$env:GITHUB_WORKSPACE/packages/xcross/test/flutter/fixtures/spm_plugin"
           $fixture = $fixturePath.Path.Replace('\', '/')
           $descriptor = 'spm_plugin@{path: ' + $fixture + '}'
           flutter pub add -- $descriptor
