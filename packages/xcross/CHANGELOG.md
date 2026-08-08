@@ -1,3 +1,13 @@
+## 1.0.1
+
+- Add `xcross auth clear` to sign out: deletes the saved App Store Connect
+  key, the Apple ID session and its machine attestation state, and every
+  certificate, private key, and provisioning profile xcross minted.
+- Reject unexpected positional arguments to `xcross auth` instead of silently
+  starting an Apple ID login.
+- Accept certificates and profiles Apple minted up to an hour ahead of a
+  lagging host clock, and name both clocks in the error when it is worse.
+
 ## 1.0.0
 
 - Build, sign, install, launch, and hot-reload Flutter iOS apps natively on

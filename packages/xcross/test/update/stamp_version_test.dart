@@ -10,6 +10,17 @@ final String _packageRoot = File.fromUri(
 
 final String _toolPath = p.join(_packageRoot, 'tool', 'stamp_version.dart');
 
+final _currentConstant = RegExp("static const String current = '([^']*)';");
+
+String _constantIn(String versionDartPath) =>
+    _currentConstant.firstMatch(File(versionDartPath).readAsStringSync())![1]!;
+
+/// The committed pre-release constant, read rather than hard-coded so a
+/// version bump never has to touch this test.
+final String _committedVersion = _constantIn(
+  p.join(_packageRoot, 'lib', 'src', 'version.dart'),
+);
+
 void main() {
   late Directory sandbox;
 
@@ -36,11 +47,7 @@ void main() {
   );
 
   String stampedConstant() =>
-      RegExp("static const String current = '([^']*)';").firstMatch(
-        File(
-          p.join(sandbox.path, 'lib', 'src', 'version.dart'),
-        ).readAsStringSync(),
-      )![1]!;
+      _constantIn(p.join(sandbox.path, 'lib', 'src', 'version.dart'));
 
   setUp(() => sandbox = Directory.systemTemp.createTempSync('xcross-stamp-'));
   tearDown(() => sandbox.deleteSync(recursive: true));
@@ -81,7 +88,11 @@ void main() {
     final result = stamp('1.2.3');
     expect(result.exitCode, isNot(0));
     expect(result.stderr, contains('does not match pubspec version'));
-    expect(stampedConstant(), '1.0.0-dev', reason: 'must not have been edited');
+    expect(
+      stampedConstant(),
+      _committedVersion,
+      reason: 'must not have been edited',
+    );
   });
 
   test('refuses a malformed tag', () {
@@ -89,7 +100,7 @@ void main() {
     for (final bad in ['latest', '1.0', 'release-1.0.0', '']) {
       final result = stamp(bad);
       expect(result.exitCode, isNot(0), reason: 'accepted "$bad"');
-      expect(stampedConstant(), '1.0.0-dev');
+      expect(stampedConstant(), _committedVersion);
     }
   });
 
