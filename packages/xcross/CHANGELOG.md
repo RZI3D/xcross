@@ -1,3 +1,12 @@
+## 1.0.2
+
+- Recover automatically when `tunneld` refuses to create an RSD tunnel:
+  `xcross flutter run` now mounts the Developer Disk Image and starts a
+  lockdown tunnel itself instead of stalling 60s and silently degrading to
+  the userspace transport.
+- Say why hot reload is unavailable, and answer `r`/`R` with that reason
+  instead of ignoring the keypress.
+
 ## 1.0.1
 
 - Add `xcross auth clear` to sign out: deletes the saved App Store Connect
