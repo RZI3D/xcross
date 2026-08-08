@@ -173,11 +173,9 @@ final class NativeBackend implements DeviceBackend {
       client: AscClient(credentials),
       anisette: null,
       identityId: credentials.issuerId,
-      identityDir: p.join(
+      identityDir: SigningSession.identityDirFor(
         configDirectory,
-        'signing',
         'appstoreconnect-${credentials.issuerId}',
-        'identity',
       ),
     );
   }
@@ -203,11 +201,9 @@ final class NativeBackend implements DeviceBackend {
       client: client,
       anisette: anisette,
       identityId: session.teamId,
-      identityDir: p.join(
+      identityDir: SigningSession.identityDirFor(
         configDirectory,
-        'signing',
         'developer-services-${session.teamId}',
-        'identity',
       ),
     );
   }

@@ -5,7 +5,9 @@ import 'package:apple_developer_kit/apple_developer_kit.dart';
 import 'package:args/command_runner.dart';
 import 'package:build_cli_annotations/build_cli_annotations.dart';
 import 'package:cli_kit/cli_kit.dart';
+import 'package:meta/meta.dart';
 import 'package:path/path.dart' as p;
+import 'package:xcross/src/device/internal/signing_session.dart';
 import 'package:xcross/src/errors.dart';
 
 part 'auth_command.g.dart';
@@ -56,6 +58,15 @@ final class AuthArgs {
 
 const _adiLibraryNames = ['libCoreADI.so', 'libstoreservicescore.so'];
 
+const _authOptionNames = [
+  'issuer-id',
+  'key-id',
+  'private-key',
+  'apple-id',
+  'password',
+  'adi-library-dir',
+];
+
 /// `xcross auth` — save credentials for the native (no-Swift) signing
 /// pipeline. Supports both App Store Connect API keys and Apple ID/password
 /// GrandSlam login.
@@ -69,12 +80,93 @@ final class AuthCommand extends _$AuthArgsCommand<void> {
       'for the native (no-Swift) signing pipeline.';
 
   @override
+  String get invocation =>
+      'xcross auth [arguments]\n'
+      '       xcross auth clear';
+
+  @override
+  String get usageFooter =>
+      '\n"xcross auth clear" signs out: it deletes the saved App Store Connect '
+      'key, the Apple ID session and its machine attestation state, and every '
+      'certificate, private key, and provisioning profile xcross minted.';
+
+  @override
   Future<void> run() {
+    final rest = argResults!.rest;
+    if (rest.isNotEmpty) {
+      if (rest case ['clear']) return _clear();
+      throw XcrossError(
+        'Unexpected argument "${rest.first}".\nUsage: $invocation',
+      );
+    }
+
     final usesAscKey =
         _options.issuerIdWasParsed ||
         _options.keyIdWasParsed ||
         _options.privateKeyWasParsed;
     return usesAscKey ? _saveAscCredentials() : _appleIdLogin();
+  }
+
+  // ------------------------------------------------------------------ clear
+
+  /// Per-user files and directories holding Apple authentication or signing
+  /// material, under [configDirectory] (defaults to the xcross config dir).
+  ///
+  /// Deliberately an explicit list rather than the whole config directory:
+  /// unrelated state (the update-check cache) and the architecture-specific
+  /// ADI libraries live there too, and neither identifies an account.
+  @visibleForTesting
+  static List<FileSystemEntity> authArtifacts([String? configDirectory]) {
+    final dir = configDirectory ?? xcrossConfigDir();
+    return [
+      File(p.join(dir, 'appstoreconnect.json')),
+      File(p.join(dir, 'grandslam-session.json')),
+      File(p.join(dir, 'anisette-state.json')),
+      File(p.join(dir, 'local.key')),
+      Directory(p.join(dir, 'adi')),
+      Directory(SigningSession.signingRoot(dir)),
+    ];
+  }
+
+  Future<void> _clear() async {
+    final given = _authOptionNames.where(argResults!.wasParsed);
+    if (given.isNotEmpty) {
+      throw XcrossError(
+        'xcross auth clear takes no options (got --${given.first}).',
+      );
+    }
+
+    final configDirectory = xcrossConfigDir();
+    final removed = await deleteAuthArtifacts(configDirectory);
+    for (final name in removed) {
+      Log.logInfo('Removed', name);
+    }
+
+    if (removed.isEmpty) {
+      Log.logDone('Nothing to clear in $configDirectory');
+      return;
+    }
+    Log.logDone(
+      'Signed out. Run xcross auth to sign in again.',
+      configDirectory,
+    );
+  }
+
+  /// Deletes every [authArtifacts] entry that exists under [configDirectory],
+  /// returning the names removed, relative to it.
+  @visibleForTesting
+  static Future<List<String>> deleteAuthArtifacts(
+    String configDirectory,
+  ) async {
+    final removed = <String>[];
+    for (final artifact in authArtifacts(configDirectory)) {
+      if (!artifact.existsSync()) continue;
+      // Directories hold minted certificates and their private keys, so the
+      // delete has to be recursive to leave nothing behind.
+      await artifact.delete(recursive: true);
+      removed.add(p.relative(artifact.path, from: configDirectory));
+    }
+    return removed;
   }
 
   // ---------------------------------------------------------------- ASC key

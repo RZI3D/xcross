@@ -142,6 +142,14 @@ Machine attestation uses Android ADI libraries (`libCoreADI.so`, `libstoreservic
 xcross auth --issuer-id <uuid> --key-id <id> --private-key /path/to/AuthKey.p8
 ```
 
+### Sign out
+
+```sh
+xcross auth clear
+```
+
+Deletes the saved App Store Connect key, the Apple ID session and its machine attestation state, and every certificate, private key, and provisioning profile xcross minted. The downloaded ADI libraries stay - they are architecture-specific binaries that identify no account.
+
 ## Quick start
 
 ```sh
@@ -179,6 +187,7 @@ With multiple iPhones connected, an interactive terminal shows a numbered device
 | `xcross setup` | Install host dependencies (apt/dnf/pacman packages, `pipx`, `pymobiledevice3`) |
 | `xcross sdk install <Xcode.xip>` | Extract a private Darwin Swift SDK from an Xcode archive |
 | `xcross auth` | Save Apple ID or App Store Connect credentials |
+| `xcross auth clear` | Delete saved credentials, sessions, and signing material |
 | `xcross tunnel` | Mount the Developer Disk Image + start the iOS 17+ RSD tunnel |
 | `xcross flutter run` | Build → sign → install → launch → hot reload |
 | `xcross flutter dap` | Run the Debug Adapter Protocol server (used by IDEs) |

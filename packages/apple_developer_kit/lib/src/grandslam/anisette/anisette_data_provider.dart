@@ -22,7 +22,6 @@ import 'package:apple_developer_kit/src/grandslam/anisette/internal/adi_provisio
 import 'package:apple_developer_kit/src/grandslam/anisette/internal/real_adi_provisioning.dart';
 import 'package:apple_developer_kit/src/grandslam/internal/grandslam_response_decoder.dart';
 import 'package:http/http.dart' as http;
-import 'package:path/path.dart' as p;
 import 'package:propertylistserialization/propertylistserialization.dart';
 
 /// Produces Anisette headers from a locally-loaded ADI native library.
@@ -84,7 +83,7 @@ final class AnisetteDataProvider implements AnisetteProvider {
 
   AdiProvisioning _adiFor(AnisetteState state) => _adi ??= _adiFactory(
     adiLibraryDirectory: adiLibraryDirectory,
-    provisioningPath: p.join(p.dirname(_stateStore.path), 'adi'),
+    provisioningPath: _stateStore.provisioningDirectory,
     identifier: _androidId(state.localUserUid),
   );
 

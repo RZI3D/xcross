@@ -99,6 +99,13 @@ final class AnisetteStateStore {
   static String defaultPath() =>
       p.join(xcrossConfigDir(), 'anisette-state.json');
 
+  /// Directory the ADI library provisions itself into, next to [path].
+  ///
+  /// Holds the machine attestation material ADI writes itself; it belongs to
+  /// the same install identity as [path] and is only meaningful with it.
+  @useResult
+  String get provisioningDirectory => p.join(p.dirname(path), 'adi');
+
   /// Loads the persisted state, creating and saving a fresh one (with a
   /// new [AnisetteState.localUserUid]) if none exists yet.
   Future<AnisetteState> load() async {
