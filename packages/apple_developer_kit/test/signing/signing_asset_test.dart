@@ -395,7 +395,7 @@ void main() {
         privateKeyPem: privateKeyPem,
         certificatePem: certificatePem,
         developerCertificates: [certificateDer],
-        creationDate: now.add(const Duration(minutes: 2)),
+        creationDate: now.add(const Duration(minutes: 30)),
         expirationDate: DateTime.utc(2040),
       );
 
@@ -417,7 +417,7 @@ void main() {
       privateKeyPem: privateKeyPem,
       certificatePem: certificatePem,
       developerCertificates: [certificateDer],
-      creationDate: now.add(const Duration(minutes: 10)),
+      creationDate: now.add(const Duration(hours: 3)),
       expirationDate: DateTime.utc(2040),
     );
 

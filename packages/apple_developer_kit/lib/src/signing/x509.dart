@@ -367,7 +367,10 @@ void checkValidity(
   final end = notAfter.toUtc();
   if (now.isBefore(start.subtract(_notBeforeSkew))) {
     throw AppleError(
-      '$context is not yet valid (starts ${start.toIso8601String()}).',
+      '$context is not yet valid (starts ${start.toIso8601String()}, '
+      'this machine reads ${now.toIso8601String()}). '
+      'Apple issues these against its own clock - synchronise the system '
+      'clock and time zone, then retry.',
     );
   }
   if (now.isAfter(end)) {
@@ -542,7 +545,9 @@ const _embeddedAppleCertificateBase64 = <String, String>{
       '1A3UT82NQz60imOlM27jbdoXt2QfyFMm+YhidDkLF1vLUagM6BgD56KyKA==',
 };
 
-/// Apple's portal clock is often a few seconds ahead of the local machine;
-/// freshly issued profiles then fail a strict `CreationDate` check. Five
-/// minutes covers NTP drift without accepting obviously-future material.
-const _notBeforeSkew = Duration(minutes: 5);
+/// Apple's portal clock is authoritative; the local machine's is not. A
+/// certificate or profile minted seconds ago by Apple looks "not yet valid"
+/// to any host whose clock lags, and Windows hosts routinely drift by minutes
+/// between NTP syncs. One hour absorbs that drift while still rejecting
+/// obviously-future material; `notAfter` remains strictly enforced.
+const _notBeforeSkew = Duration(hours: 1);
