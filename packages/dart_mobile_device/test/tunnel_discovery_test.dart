@@ -84,6 +84,53 @@ void main() {
       expect(tunnel.port, 54321);
     });
 
+    test(
+      'stops waiting the moment tunneld refuses to create a tunnel',
+      () async {
+        if (!bound) return;
+        final paths = <String>[];
+        final subscription = server.listen((request) async {
+          paths.add(request.uri.path);
+          final refused = request.uri.path == '/start-tunnel';
+          request.response
+            ..statusCode = refused ? HttpStatus.notFound : HttpStatus.ok
+            ..write(
+              refused
+                  ? '{"error": "something went wrong during tunnel creation"}'
+                  : '{}',
+            );
+          await request.response.close();
+        });
+        addTearDown(subscription.cancel);
+
+        final startedAt = DateTime.now();
+        await expectLater(
+          TunnelDiscovery.discoverTunnel(
+            udid: 'udidC',
+            timeout: const Duration(seconds: 30),
+            pollInterval: const Duration(milliseconds: 50),
+          ),
+          throwsA(
+            isA<TunnelCreationError>().having(
+              (e) => e.message,
+              'message',
+              allOf(
+                contains('xcross tunnel'),
+                contains('something went wrong during tunnel creation'),
+              ),
+            ),
+          ),
+        );
+
+        expect(paths, contains('/start-tunnel'));
+        expect(
+          DateTime.now().difference(startedAt),
+          lessThan(const Duration(seconds: 10)),
+          reason: 'a refusal must not burn the whole discovery timeout',
+        );
+      },
+    );
+
     test('falls back to the first device when udid is null', () async {
       if (!bound) return;
       unawaited(

@@ -11,7 +11,11 @@ import 'package:xcross/src/flutter/flutter.dart';
 /// dispatches `r`/`R`/`q` keypresses to hot reload, and stops on SIGINT or when
 /// the app exits.
 final class SessionConsole {
-  SessionConsole({required this.gdb, required this.hotReload});
+  SessionConsole({
+    required this.gdb,
+    required this.hotReload,
+    this.hotReloadUnavailable,
+  });
 
   /// Drain and keypress loops are already unwinding via [_stop] by the time we
   /// await them; this only bounds a wedged stdin cancel that would otherwise
@@ -20,6 +24,12 @@ final class SessionConsole {
 
   final GdbRemoteClient gdb;
   final HotReloadController? hotReload;
+
+  /// Why [hotReload] is null, shown when `r`/`R` are pressed anyway.
+  ///
+  /// A key that does nothing at all reads as a broken terminal, so the session
+  /// answers every press even when it has nothing to reload.
+  final String? hotReloadUnavailable;
 
   /// Completes the moment [_stop] is first called. `run()` awaits it instead of
   /// polling, and [_drainGdbReplies] uses it to bail out without waiting for a
@@ -242,9 +252,13 @@ final class SessionConsole {
     _flushAppOutput();
   }
 
+  void _reportHotReloadUnavailable() => Log.logWarn(
+    hotReloadUnavailable ?? 'hot reload is not available in this session.',
+  );
+
   Future<void> _handleHotReload() async {
     final controller = hotReload;
-    if (controller == null) return;
+    if (controller == null) return _reportHotReloadUnavailable();
     final step = Log.beginStep('Hot reload');
     try {
       if (await controller.reload()) {
@@ -260,7 +274,7 @@ final class SessionConsole {
 
   Future<void> _handleHotRestart() async {
     final controller = hotReload;
-    if (controller == null) return;
+    if (controller == null) return _reportHotReloadUnavailable();
     final step = Log.beginStep('Hot restart');
     try {
       await controller.restart();

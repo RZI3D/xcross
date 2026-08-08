@@ -28,6 +28,22 @@ abstract final class DevicePrepare {
   /// Mount DDI, ensure tunneld, and start a lockdown RSD tunnel in the
   /// background. Leaves long-lived processes running after return.
   static Future<void> prepare() async {
+    await _prepareSteps();
+    Log.logDone(
+      'Device ready '
+      '${Log.ansi.subtle('— DDI mounted, RSD tunnel up')}',
+    );
+    Log.logInfo('Next', Log.ansi.subtle('xcross flutter run -u <UDID>'));
+  }
+
+  /// The same steps as [prepare], without the closing banner.
+  ///
+  /// Called mid-session when tunneld itself refused to create a tunnel: every
+  /// step is idempotent, so a session that only lacks the Developer Disk Image
+  /// or a lockdown tunnel repairs itself instead of silently degrading.
+  static Future<void> repairRsdTunnel() => _prepareSteps();
+
+  static Future<void> _prepareSteps() async {
     if (!await Pymd.ensureInstalled()) {
       throw TunnelError(
         'pymobiledevice3 is required but could not be installed automatically.',
@@ -48,12 +64,6 @@ abstract final class DevicePrepare {
     await _autoMount();
     await TunnelDaemon().ensureRunning();
     await _ensureLockdownTunnel();
-
-    Log.logDone(
-      'Device ready '
-      '${Log.ansi.subtle('— DDI mounted, RSD tunnel up')}',
-    );
-    Log.logInfo('Next', Log.ansi.subtle('xcross flutter run -u <UDID>'));
   }
 
   /// `sudo pymobiledevice3 mounter auto-mount` (one-shot).

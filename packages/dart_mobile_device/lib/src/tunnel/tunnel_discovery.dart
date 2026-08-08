@@ -26,15 +26,26 @@ abstract final class TunnelDiscovery {
     var requestedStart = false;
     var loggedWaiting = false;
 
+    // A hand-rolled loop rather than ProcessRunner.pollUntil: a tunneld that
+    // refuses to create the tunnel has to abort the wait immediately, and
+    // pollUntil has no way to say "stop, more waiting cannot help".
     final step = Log.beginStep('Waiting for RSD tunnel');
-    final found = await ProcessRunner.pollUntil<Tunnel>(
-      timeout: timeout,
-      interval: pollInterval,
-      attempt: () async {
-        final data = await _fetch(TunnelConstants.tunneldUrl);
+    final deadline = DateTime.now().add(timeout);
+    while (DateTime.now().isBefore(deadline)) {
+      Map<String, dynamic>? data;
+      try {
+        data = await _fetch(TunnelConstants.tunneldUrl);
         lastUnreachable = false;
+      } on Object catch (e) {
+        Log.logTrace('tunneld list request failed: $e');
+      }
+
+      if (data != null) {
         final tunnel = _parseTunnelList(data, udid);
-        if (tunnel != null) return tunnel;
+        if (tunnel != null) {
+          step.done();
+          return tunnel;
+        }
 
         // tunneld is up but has no tunnels yet — ask it to create one.
         if (udid != null && !requestedStart) {
@@ -43,21 +54,24 @@ abstract final class TunnelDiscovery {
             '[pymobiledevice3] no RSD tunnel yet — requesting '
             '/start-tunnel for $udid…',
           );
-          return _requestStartTunnel(udid);
-        }
-        if (!loggedWaiting) {
+          final started = await _requestStartTunnel(udid);
+          if (started.tunnel case final tunnel?) {
+            step.done();
+            return tunnel;
+          }
+          if (started.failure case final failure?) {
+            step.fail();
+            throw _cannotCreateTunnel(udid, failure);
+          }
+        } else if (!loggedWaiting) {
           loggedWaiting = true;
           Log.logTrace(
             '[pymobiledevice3] waiting for RSD tunnel'
             '${udid != null ? ' ($udid)' : ''}…',
           );
         }
-        return null;
-      },
-    );
-    if (found != null) {
-      step.done();
-      return found;
+      }
+      await Future<void>.delayed(pollInterval);
     }
     step.fail();
 
@@ -97,21 +111,41 @@ abstract final class TunnelDiscovery {
     }
   }
 
-  /// `GET /start-tunnel?udid=` — returns a single `{address,port}` tunnel or
-  /// null if tunneld could not create one (501/404).
-  static Future<Tunnel?> _requestStartTunnel(String udid) async {
+  /// `GET /start-tunnel?udid=` — a `{address,port}` tunnel, or the reason
+  /// tunneld refused to create one (typically 404/501).
+  ///
+  /// Both fields are null when tunneld answered with a body that carries no
+  /// usable endpoint: nothing went wrong, so the caller keeps waiting.
+  static Future<({Tunnel? tunnel, String? failure})> _requestStartTunnel(
+    String udid,
+  ) async {
     final uri = Uri.parse(TunnelConstants.tunneldUrl).replace(
       path: '/start-tunnel',
       queryParameters: <String, String>{'udid': udid},
     );
     try {
       final data = await _fetch(uri.toString());
-      return _tunnelFromJson(data);
+      return (tunnel: _tunnelFromJson(data), failure: null);
     } on Object catch (e) {
-      Log.logWarn('tunneld /start-tunnel failed: $e');
+      Log.logTrace('tunneld /start-tunnel failed: $e');
+      return (tunnel: null, failure: '$e');
     }
-    return null;
   }
+
+  /// tunneld is running but cannot build the tunnel itself: it needs the
+  /// Developer Disk Image mounted and a lockdown tunnel, which is what
+  /// `xcross tunnel` sets up.
+  static TunnelError _cannotCreateTunnel(String udid, String detail) =>
+      TunnelCreationError(
+        'tunneld could not create an RSD tunnel for $udid.\n\n'
+        'Run:\n\n'
+        '    xcross tunnel\n\n'
+        'Or manually (leave the second one running):\n\n'
+        '    ${Pymd.elevatedCommand('mounter auto-mount')}\n'
+        '    ${Pymd.elevatedCommand('lockdown start-tunnel')}\n\n'
+        'Keep the phone unlocked and trusted.\n\n'
+        'tunneld said: $detail',
+      );
 
   static Future<Map<String, dynamic>> _fetch(String url) async {
     final client = HttpClient();

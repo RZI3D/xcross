@@ -72,6 +72,9 @@ abstract final class CoreDeviceLauncher {
       final transport = await DeviceTransportResolver.resolve(
         udid: udid,
         discoveryTimeout: _terminateDiscoveryTimeout,
+        // Best-effort cleanup: never mount a DDI or start a tunnel for it.
+        // The launch that follows does that, with the budget for it.
+        allowTunnelRepair: false,
       );
       try {
         final pid = await Pymd.processIdForBundleId(
@@ -109,20 +112,29 @@ abstract final class CoreDeviceLauncher {
 
     final gdb = await _attachDebugger(endpoint: debugproxy, pid: pid);
 
+    ({HotReloadController? controller, String? unavailable}) hotReloadSetup = (
+      controller: null,
+      unavailable: null,
+    );
     HotReloadController? hotReloadController;
     PortForwarder? vmService;
     // Hot-reload setup is inside the same cleanup boundary as the session. A
     // failed VM connection must not leak the attached debugger or leave a DAP
     // launch paused forever.
     try {
-      hotReloadController = await _trySpinUpHotReload(
+      hotReloadSetup = await _trySpinUpHotReload(
         hotReload: hotReload,
         transport: transport,
       );
+      hotReloadController = hotReloadSetup.controller;
       if (hotReloadController != null) {
         vmService = await _publishVmService(transport: transport);
       }
-      await SessionConsole(gdb: gdb, hotReload: hotReloadController).run();
+      await SessionConsole(
+        gdb: gdb,
+        hotReload: hotReloadController,
+        hotReloadUnavailable: hotReloadSetup.unavailable,
+      ).run();
     } finally {
       // Every step is timed out: a single hung flush/close on Windows left `q`
       // in a silent stuck state (no further input or output).
@@ -267,9 +279,13 @@ abstract final class CoreDeviceLauncher {
     return pid;
   }
 
-  /// Spin up hot reload if [hotReload] config is provided; log and return null
-  /// on failure.
-  static Future<HotReloadController?> _trySpinUpHotReload({
+  /// Spin up hot reload if [hotReload] config is provided.
+  ///
+  /// Returns the reason alongside a null controller instead of swallowing it:
+  /// the session stays alive without hot reload, and `r`/`R` have to be able
+  /// to say why they do nothing.
+  static Future<({HotReloadController? controller, String? unavailable})>
+  _trySpinUpHotReload({
     required HotReloadConfig? hotReload,
     required DeviceTransport transport,
   }) async {
@@ -277,7 +293,12 @@ abstract final class CoreDeviceLauncher {
       Log.logInfo(
         'Streaming app output ${Log.ansi.subtle('— Ctrl-C to stop')}',
       );
-      return null;
+      return (
+        controller: null,
+        unavailable:
+            'hot reload is off for this session: the Flutter frontend_server '
+            'artifacts it needs were not found.',
+      );
     }
     DartVmServiceClient? vm;
     HotReloadController? controller;
@@ -304,7 +325,7 @@ abstract final class CoreDeviceLauncher {
         'Hot reload ready '
         '${Log.ansi.subtle('— r reload  ·  R restart  ·  q quit')}',
       );
-      return controller;
+      return (controller: controller, unavailable: null);
     } catch (e) {
       if (controller != null) {
         await controller.close();
@@ -313,7 +334,12 @@ abstract final class CoreDeviceLauncher {
       }
       if (_isDap) throw XcrossError('Hot reload setup failed: $e');
       Log.logWarn('hot reload unavailable: $e');
-      return null;
+      return (
+        controller: null,
+        unavailable:
+            'hot reload could not start over the ${transport.description}: '
+            '$e\nRun `xcross tunnel`, then start the app again.',
+      );
     }
   }
 
