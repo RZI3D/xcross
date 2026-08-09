@@ -131,6 +131,9 @@ xcross auth --apple-id you@example.com
 
 The command prompts for your password and 2FA code, then stores **only** the resulting Developer Services session - never your password.
 
+> [!IMPORTANT]
+> Use a separate Apple account, not your main one. xcross signs in through a non-standard path for non-macOS systems, and Apple may treat that as unusual activity. Nothing has gone wrong in months of use before the public release, but the risk is not zero - and if an account does get flagged, you do not want it to be the one holding your purchases, iCloud data, and devices. Creating a throwaway Apple ID for xcross takes a minute and works fine, since a free account is all you need.
+
 Machine attestation uses Android ADI libraries (`libCoreADI.so`, `libstoreservicescore.so`):
 
 - **Windows x64 / Linux x86_64** - downloaded automatically from the Apple Music APK into `%APPDATA%\xcross\adi-libs` (Windows) or `~/.config/xcross/adi-libs` (Linux) on first use.
