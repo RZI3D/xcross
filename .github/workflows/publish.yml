@@ -3,11 +3,11 @@ name: Publish xcross to pub.dev
 # pub.dev only accepts automated publishing from a tag push, and the tag must
 # match the tag-pattern configured under
 # pub.dev/packages/xcross/admin -> Automated publishing.
-# Pattern to configure there: '{{version}}' (bare, matching this repo's tags).
+# Pattern to configure there: 'v{{version}}'.
 on:
   push:
     tags:
-      - "[0-9]+.[0-9]+.[0-9]+"
+      - "v[0-9]+.[0-9]+.[0-9]+"
 
 jobs:
   publish:
