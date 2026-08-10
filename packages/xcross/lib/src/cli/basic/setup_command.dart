@@ -11,9 +11,9 @@ import 'package:xcross/src/errors.dart';
 
 const _requiredTools = ['swift', 'clang', 'clang++', 'llvm-ar', 'ld64.lld'];
 
-/// `xcross setup` — install every distro-installable Requirement through the
-/// host's package manager (apt, dnf, or pacman), then pipx and
-/// pymobiledevice3.
+/// `xcross setup` — install host requirements through apt/dnf/pacman (Linux)
+/// or Homebrew (macOS), then pipx and pymobiledevice3. On Windows, verifies
+/// tools already on PATH and installs pymobiledevice3.
 final class SetupCommand extends Command<void> {
   @override
   String get name => 'setup';
@@ -22,7 +22,11 @@ final class SetupCommand extends Command<void> {
   String get description => 'Install or verify host requirements';
 
   @override
-  Future<void> run() => Platform.isWindows ? _setupWindows() : _setupLinux();
+  Future<void> run() {
+    if (Platform.isWindows) return _setupWindows();
+    if (Platform.isMacOS) return _setupMacos();
+    return _setupLinux();
+  }
 
   Future<void> _setupLinux() async {
     final manager = await _resolvePackageManager();
@@ -41,7 +45,39 @@ final class SetupCommand extends Command<void> {
       );
     }
 
-    final pipx = await _ensurePipx(manager);
+    final pipx = await _ensurePipx(
+      attempts: await _pipxInstallAttempts(manager),
+      manualHint: manager.manualHint([manager.pipxPackage]),
+    );
+    await _ensurePymd();
+    await _pipxEnsurePath(pipx);
+    Log.logDone('Requirements installed');
+  }
+
+  Future<void> _setupMacos() async {
+    if (await ProcessRunner.which('brew') == null) {
+      throw XcrossError(
+        'Homebrew is required for `xcross setup` on macOS.\n'
+        'Install it from https://brew.sh and retry.',
+      );
+    }
+
+    await _brewInstall(const ['lld', 'llvm']);
+
+    final missing = await _missingTools(_requiredTools);
+    if (missing.isNotEmpty) {
+      throw XcrossError(
+        'Missing macOS requirements after Homebrew install: '
+        '${missing.join(', ')}.\n'
+        'Install the Swift toolchain manually and ensure its bin directory is '
+        'on PATH. LLVM tools come from `brew install lld llvm`.',
+      );
+    }
+
+    final pipx = await _ensurePipx(
+      attempts: await _pipxInstallAttemptsMacos(),
+      manualHint: 'Install manually:\n    brew install pipx',
+    );
     await _ensurePymd();
     await _pipxEnsurePath(pipx);
     Log.logDone('Requirements installed');
@@ -58,6 +94,22 @@ final class SetupCommand extends Command<void> {
     }
     await _ensurePymd();
     Log.logDone('Windows requirements found');
+  }
+
+  Future<void> _brewInstall(List<String> packages) async {
+    final step = Log.beginStep('Installing Homebrew requirements');
+    try {
+      await ProcessRunner.runChecked(
+        'brew',
+        ['install', ...packages],
+        label: 'brew install',
+        tail: step,
+      );
+      step.done();
+    } on Object {
+      step.fail();
+      rethrow;
+    }
   }
 
   /// The package manager to drive: the detected one when it is unambiguous,
@@ -195,14 +247,17 @@ final class SetupCommand extends Command<void> {
   }
 
   /// pipx is the only pip route left on PEP 668 distros, and it keeps
-  /// pymobiledevice3 in its own venv. Prefer the distro package; fall back to
-  /// a `--user` pip install when the distro is too old to ship one.
-  static Future<String> _ensurePipx(LinuxPackageManager manager) async {
+  /// pymobiledevice3 in its own venv. Prefer the host package manager; fall
+  /// back to a `--user` pip install when that fails.
+  static Future<String> _ensurePipx({
+    required List<List<String>> attempts,
+    required String manualHint,
+  }) async {
     final existing = await Pymd.resolvePipx();
     if (existing != null) return existing;
 
     final step = Log.beginStep('Installing pipx');
-    for (final attempt in await _pipxInstallAttempts(manager)) {
+    for (final attempt in attempts) {
       Log.logTrace('[pipx] running: ${attempt.join(' ')}');
       final result = await ProcessRunner.run(attempt.first, attempt.sublist(1));
       if (result.exitCode != 0) continue;
@@ -214,9 +269,7 @@ final class SetupCommand extends Command<void> {
     }
 
     step.fail();
-    throw XcrossError(
-      'Could not install pipx.\n${manager.manualHint([manager.pipxPackage])}',
-    );
+    throw XcrossError('Could not install pipx.\n$manualHint');
   }
 
   static Future<List<List<String>>> _pipxInstallAttempts(
@@ -225,6 +278,15 @@ final class SetupCommand extends Command<void> {
     final py = await ProcessRunner.which('python3') ?? 'python3';
     return <List<String>>[
       ...await manager.installAttempts([manager.pipxPackage]),
+      [py, '-m', 'pip', 'install', '--user', '--break-system-packages', 'pipx'],
+      [py, '-m', 'pip', 'install', '--user', 'pipx'],
+    ];
+  }
+
+  static Future<List<List<String>>> _pipxInstallAttemptsMacos() async {
+    final py = await ProcessRunner.which('python3') ?? 'python3';
+    return <List<String>>[
+      ['brew', 'install', 'pipx'],
       [py, '-m', 'pip', 'install', '--user', '--break-system-packages', 'pipx'],
       [py, '-m', 'pip', 'install', '--user', 'pipx'],
     ];
@@ -257,10 +319,12 @@ final class SetupCommand extends Command<void> {
     return missing;
   }
 
-  /// PATH lookup that refuses swiftly's `ld64.lld` shim — see
-  /// [DarwinSdk.resolveLd64Lld] for why that one cannot link iOS.
+  /// PATH lookup that also reaches [DarwinSdk.llvmToolDirs] (Homebrew keg-only
+  /// LLVM, Debian versioned prefixes) and refuses swiftly's `ld64.lld` shim —
+  /// see [DarwinSdk.resolveLd64Lld] for why that one cannot link iOS.
   static Future<String?> _locate(String tool) => ProcessRunner.which(
     tool,
     accept: tool == 'ld64.lld' ? DarwinSdk.usableLd64Lld : null,
+    extraDirectories: DarwinSdk.llvmToolDirs(),
   );
 }
