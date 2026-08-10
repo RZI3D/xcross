@@ -1,3 +1,11 @@
+## 1.0.3
+
+- Teach `xcross setup` to install host requirements on macOS via Homebrew
+  and to verify the Windows toolchain more clearly.
+- Find Homebrew LLVM/`lld` installs on Apple Silicon and Intel Macs when
+  resolving Darwin SDK link tools.
+- Recommend using a separate Apple account for auth in the README.
+
 ## 1.0.2
 
 - Recover automatically when `tunneld` refuses to create an RSD tunnel:
