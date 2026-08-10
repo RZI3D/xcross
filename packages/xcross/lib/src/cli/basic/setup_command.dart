@@ -224,7 +224,13 @@ final class SetupCommand extends Command<void> {
   /// Some distros only ship `ld64.lld-<version>`; point a stable name at the
   /// newest one so the toolchain lookup finds it.
   Future<void> _linkVersionedLd64Lld() async {
-    if (await _locate('ld64.lld') != null) return;
+    if (await ProcessRunner.which(
+          'ld64.lld',
+          accept: DarwinSdk.usableLd64Lld,
+        ) !=
+        null) {
+      return;
+    }
 
     final versioned =
         Directory('/usr/bin')
