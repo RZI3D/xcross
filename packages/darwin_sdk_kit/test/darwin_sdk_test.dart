@@ -227,6 +227,18 @@ void main() {
         isEmpty,
       );
     });
+
+    test('covers Homebrew lld and llvm prefixes', () {
+      expect(
+        DarwinSdk.llvmToolDirs(windows: false),
+        containsAll([
+          '/opt/homebrew/opt/lld/bin',
+          '/opt/homebrew/opt/llvm/bin',
+          '/usr/local/opt/lld/bin',
+          '/usr/local/opt/llvm/bin',
+        ]),
+      );
+    });
   });
 
   group('probeIosSupport', () {

@@ -203,7 +203,9 @@ final class DarwinSdk {
   /// winget's LLVM package registers no PATH entry at all
   /// (microsoft/winget-pkgs#11767), and Debian keeps versioned toolchains
   /// under `/usr/lib`, so the tools are installed but invisible to a plain
-  /// PATH lookup.
+  /// PATH lookup. Homebrew is keg-only for `llvm` and split `lld` into its
+  /// own formula (`ld64.lld` lives in `opt/lld/bin`), under `/opt/homebrew`
+  /// (Apple Silicon) or `/usr/local` (Intel).
   static List<String> llvmToolDirs({
     Map<String, String>? environment,
     bool? windows,
@@ -224,7 +226,13 @@ final class DarwinSdk {
             p.windows.join(env[root.key]!, root.value, 'bin'),
       ];
     }
-    return [..._versionedLlvmBins(), '/usr/local/opt/llvm/bin'];
+    return [
+      ..._versionedLlvmBins(),
+      '/opt/homebrew/opt/lld/bin',
+      '/opt/homebrew/opt/llvm/bin',
+      '/usr/local/opt/lld/bin',
+      '/usr/local/opt/llvm/bin',
+    ];
   }
 
   /// Debian's `/usr/lib/llvm-<version>/bin`, newest version first.
@@ -254,6 +262,9 @@ final class DarwinSdk {
             'Install stock LLVM — `winget install --id LLVM.LLVM --exact` — '
             'into one of the directories above, or add the bin directory of '
             'an existing install to PATH.'
+      : Platform.isMacOS
+      ? 'Install the LLVM one — `brew install lld && brew install llvm`, or `xcross setup` — '
+            'and make sure it is on PATH.'
       : 'Install the LLVM one — `xcross setup`, or `sudo apt install lld` — '
             'and make sure it is on PATH.';
 
