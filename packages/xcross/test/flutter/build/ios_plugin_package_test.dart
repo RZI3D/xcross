@@ -1778,7 +1778,12 @@ let package = Package(
           p.join('flutter', 'build', 'assets', 'preview_macro_stub.c'),
         ),
       ).readAsStringSync();
-      expect(previewMacroStubSource.trimRight(), tracked.trimRight());
+      // Git may check the tracked .c file out with CRLF on Windows while the
+      // generated Dart string keeps the LF it was embedded with, so compare
+      // the content, not the host's line endings.
+      String normalize(String source) =>
+          source.replaceAll('\r\n', '\n').trimRight();
+      expect(normalize(previewMacroStubSource), normalize(tracked));
     });
 
     test(
