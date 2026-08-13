@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:isolate';
 import 'dart:typed_data';
 
 import 'package:path/path.dart' as p;
@@ -12,6 +13,15 @@ import 'package:xcross/src/flutter/build/preview_macro_stub_source.dart';
 import 'package:xcross/src/flutter/errors.dart';
 
 String swiftPath(String path) => p.absolute(path).replaceAll(r'\', '/');
+
+/// Resolves a path under `lib/src/` without depending on the working
+/// directory the suite happens to be launched from.
+String packageSrcPath(String relative) => p.join(
+  File.fromUri(
+    Isolate.resolvePackageUriSync(Uri.parse('package:xcross/src/'))!,
+  ).path,
+  relative,
+);
 
 void main() {
   late Directory tmp;
@@ -1764,13 +1774,8 @@ let package = Package(
       // against the embedded copy drifting from the tracked file, which
       // would need `dart run build_runner build` to fix.
       final tracked = File(
-        p.join(
-          'lib',
-          'src',
-          'flutter',
-          'build',
-          'assets',
-          'preview_macro_stub.c',
+        packageSrcPath(
+          p.join('flutter', 'build', 'assets', 'preview_macro_stub.c'),
         ),
       ).readAsStringSync();
       expect(previewMacroStubSource.trimRight(), tracked.trimRight());

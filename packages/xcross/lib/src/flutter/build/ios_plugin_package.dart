@@ -455,12 +455,14 @@ abstract final class GeneratedPluginsPackage {
       // flag as well as the C/Objective-C targets.
       ...noImplicitModuleLockArguments,
       ...interopSearchPaths,
-      if (previewMacroStubPath != null) ...[
-        '-Xswiftc',
-        '-load-plugin-executable',
-        '-Xswiftc',
-        '$previewMacroStubPath#PreviewsMacros',
-      ],
+    ],
+    // Apple's `PreviewsMacros` plugin ships only inside Xcode, so `#Preview`
+    // needs the stub on every cross host, not just Windows.
+    if (previewMacroStubPath != null) ...[
+      '-Xswiftc',
+      '-load-plugin-executable',
+      '-Xswiftc',
+      '$previewMacroStubPath#PreviewsMacros',
     ],
     // On macOS, SwiftPM's host toolchain can override the Swift SDK bundle's
     // sdkRootPath with the host MacOSX SDK. Pin the installed iPhoneOS SDK for
