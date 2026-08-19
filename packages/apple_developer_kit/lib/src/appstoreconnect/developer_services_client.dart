@@ -199,6 +199,53 @@ final class DeveloperServicesClient implements DevelopmentProvisioningClient {
     ),
   );
 
+  /// developerservices2 filters App Groups by prefix like it does bundle ids,
+  /// so the exact identifier is picked out of the returned page.
+  @override
+  Future<AscAppGroup?> findAppGroup(String identifier) async {
+    final page = await _getCollection(
+      '/v1/appGroups?filter[identifier]='
+      '${Uri.encodeQueryComponent(identifier)}',
+    );
+    for (final entry in page) {
+      final group = AscAppGroup.fromJson(
+        (entry! as Map).cast<String, dynamic>(),
+      );
+      if (group.identifier == identifier) return group;
+    }
+    return null;
+  }
+
+  @override
+  Future<AscAppGroup> registerAppGroup({
+    required String identifier,
+    required String name,
+  }) async => AscAppGroup.fromJson(
+    _data(
+      await _post(
+        '/v1/appGroups',
+        AscPayloads.appGroup(identifier: identifier, name: name),
+      ),
+    ),
+  );
+
+  @override
+  Future<void> assignAppGroups({
+    required String bundleIdResourceId,
+    required List<String> appGroupResourceIds,
+  }) async {
+    // The capability is its own sub-resource of the bundle id. Patching the
+    // bundle id with an inline relationship is rejected ("relationship with
+    // an invalid value"), and the parent resource refuses POST outright.
+    await _post(
+      '/v1/bundleIds/$bundleIdResourceId/bundleIdCapabilities',
+      AscPayloads.appGroupsCapability(
+        bundleIdResourceId: bundleIdResourceId,
+        appGroupResourceIds: appGroupResourceIds,
+      ),
+    );
+  }
+
   @override
   Future<List<String>> listProfileIdsForBundle(
     String bundleIdResourceId,
@@ -286,7 +333,12 @@ final class DeveloperServicesClient implements DevelopmentProvisioningClient {
   /// Connect infers it from the API key.
   Map<String, dynamic> _withTeamId(Map<String, dynamic> body) {
     final data = (body['data'] as Map).cast<String, dynamic>();
-    final attributes = (data['attributes'] as Map).cast<String, dynamic>();
+    // A relationship-only payload (e.g. attaching capabilities to a bundle
+    // id) carries no attributes of its own; teamId still has to go somewhere.
+    final rawAttributes = data['attributes'];
+    final attributes = rawAttributes is Map
+        ? rawAttributes.cast<String, dynamic>()
+        : <String, dynamic>{};
     return {
       ...body,
       'data': {

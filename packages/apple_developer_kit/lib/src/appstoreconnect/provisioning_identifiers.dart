@@ -31,6 +31,22 @@ abstract final class ProvisioningIdentifiers {
     return '$idPrefix$segment.$sanitized';
   }
 
+  /// `group.XCR-<identity>.<rest>` for an App Group identifier.
+  ///
+  /// App Group ids share one global namespace with every other developer, so
+  /// a project's literal `group.com.example.Shared` is usually already taken
+  /// (Apple answers HTTP 409 "not available"). The same per-account
+  /// qualification used for App IDs is applied after the mandatory `group.`
+  /// prefix, which Apple requires to come first.
+  @useResult
+  static String qualifyAppGroup(String identifier, String identityId) {
+    const groupPrefix = 'group.';
+    final body = identifier.startsWith(groupPrefix)
+        ? identifier.substring(groupPrefix.length)
+        : identifier;
+    return '$groupPrefix${qualify(body, identityId)}';
+  }
+
   /// Portal display name for a (possibly already-qualified) bundle id.
   /// Apple rejects anything but letters, digits, and spaces here.
   @useResult

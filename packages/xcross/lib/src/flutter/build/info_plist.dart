@@ -15,6 +15,10 @@ abstract final class InfoPlist {
   static String setBundleIdentifier(String plistXml, String bundleId) =>
       _setPlistKey(plistXml, 'CFBundleIdentifier', bundleId);
 
+  /// Set an arbitrary string key, inserting it when absent.
+  static String setPlistString(String plistXml, String key, String value) =>
+      _setPlistKey(plistXml, key, value);
+
   /// Read `CFBundleIdentifier`, or null when absent.
   static String? readBundleIdentifier(String plistXml) {
     final match = RegExp(

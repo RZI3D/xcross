@@ -154,9 +154,27 @@ abstract final class IosAppExtensions {
     return null;
   }
 
+  /// Absolute path to the application target's `CODE_SIGN_ENTITLEMENTS`, or
+  /// null when the project declares none.
+  static String? applicationEntitlements(String projectRoot) {
+    final pbxprojPath = findPbxproj(projectRoot);
+    if (pbxprojPath == null) return null;
+    final project = PbxProject.parseFile(pbxprojPath);
+    if (project == null) return null;
+
+    for (final target in project.nativeTargets) {
+      if (target.string('productType') != _applicationProductType) continue;
+      final entitlements = _resolveProjectPath(
+        project,
+        project.buildSetting(target, 'CODE_SIGN_ENTITLEMENTS'),
+      );
+      if (entitlements != null) return entitlements;
+    }
+    return null;
+  }
+
   /// `com.apple.security.application-groups` entries in the entitlements
   /// plist at [path]. Empty when the file is missing or declares no groups.
-  @visibleForTesting
   static List<String> readAppGroups(String? path) {
     if (path == null) return const [];
     final file = File(path);

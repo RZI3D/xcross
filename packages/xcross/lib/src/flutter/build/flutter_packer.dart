@@ -9,6 +9,7 @@ import 'package:xcross/src/flutter/build/flutter_debug_bundler.dart';
 import 'package:xcross/src/flutter/build/info_plist.dart';
 import 'package:xcross/src/flutter/build/internal/runner_binary.dart';
 import 'package:xcross/src/flutter/build/ios_app_extensions.dart';
+import 'package:xcross/src/flutter/build/ios_bundle_versions.dart';
 import 'package:xcross/src/flutter/build/ios_deployment_target.dart';
 import 'package:xcross/src/flutter/build/ios_engine_cache.dart';
 import 'package:xcross/src/flutter/build/ios_plugin_package.dart';
@@ -44,7 +45,15 @@ final class FlutterPacker {
     required this.projectRoot,
     required this.bundleId,
     required this.options,
-  }) : appName = PubspecInfo.loadSync(projectRoot).name;
+  }) : appName = PubspecInfo.loadSync(projectRoot).name,
+       _versions = IosBundleVersions.resolve(
+         projectRoot,
+         buildName: options.buildName,
+         buildNumber: options.buildNumber,
+       );
+
+  /// Versions the app and every embedded extension must agree on.
+  final IosBundleVersions _versions;
 
   /// Build the Flutter iOS app.
   /// Returns path to `<projectRoot>/build/xcross-ios/<appName>.app`.
@@ -250,14 +259,6 @@ final class FlutterPacker {
         );
         continue;
       }
-      if (extension.appGroups.isNotEmpty) {
-        Log.logWarn(
-          'App extension "${extension.name}" declares App Groups '
-          '(${extension.appGroups.join(', ')}). xcross does not provision App '
-          'Groups yet, so the extension and the app cannot share a container: '
-          'shared files/data will not reach the app.',
-        );
-      }
       buildable.add(extension);
     }
 
@@ -266,6 +267,7 @@ final class FlutterPacker {
       extensions: buildable,
       deploymentTarget: deploymentTarget,
       outputDir: p.join(projectRoot, 'build', 'xcross-flutter-extensions'),
+      versions: _versions,
       flutterXcframework: flutterXcframework,
       pluginsLibrary: pluginsBuild?.libraryPath,
       pluginModulesDir: pluginsBuild?.modulesDir,
@@ -437,8 +439,19 @@ final class FlutterPacker {
     );
     plistXml = InfoPlist.stripUnsatisfiableStoryboards(plistXml, bundleDir);
     plistXml = InfoPlist.normalizeObjCClassNames(plistXml);
+    // Carry the app's own App Groups forward so the sign/install stage can
+    // provision them alongside its extensions'.
+    plistXml = AppExtensionPlist.setAppGroups(plistXml, _hostAppGroups());
 
     await File(p.join(bundleDir, 'Info.plist')).writeAsString(plistXml);
+  }
+
+  /// App Groups declared by the application target's entitlements file.
+  List<String> _hostAppGroups() {
+    final extensionGroups = IosAppExtensions.applicationEntitlements(
+      projectRoot,
+    );
+    return IosAppExtensions.readAppGroups(extensionGroups);
   }
 
   /// Read `ios/Runner/Info.plist`, falling back to [InfoPlist.fallback].
@@ -463,6 +476,11 @@ final class FlutterPacker {
       'DEVELOPMENT_LANGUAGE': 'en',
       'FLUTTER_BUILD_NAME': PlistDefaults.shortVersion,
       'FLUTTER_BUILD_NUMBER': PlistDefaults.bundleVersion,
+      // Xcode expands these from the application target's build settings.
+      // Without them, `ios/Runner/Info.plist` (which references them by
+      // default) ships a literal "$(MARKETING_VERSION)" as the app version.
+      'MARKETING_VERSION': _versions.shortVersion,
+      'CURRENT_PROJECT_VERSION': _versions.bundleVersion,
     };
 
     final xcconfigFile = File(
@@ -474,9 +492,11 @@ final class FlutterPacker {
 
     if (options.buildName != null) {
       subs['FLUTTER_BUILD_NAME'] = options.buildName!;
+      subs['MARKETING_VERSION'] = options.buildName!;
     }
     if (options.buildNumber != null) {
       subs['FLUTTER_BUILD_NUMBER'] = options.buildNumber!;
+      subs['CURRENT_PROJECT_VERSION'] = options.buildNumber!;
     }
 
     return subs;

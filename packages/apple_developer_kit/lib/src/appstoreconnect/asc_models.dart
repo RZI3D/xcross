@@ -101,6 +101,33 @@ final class AscBundleId {
   final String name;
 }
 
+/// An App Group a bundle id can be associated with, letting an app and its
+/// extensions share a container.
+@immutable
+final class AscAppGroup {
+  const AscAppGroup({
+    required this.id,
+    required this.identifier,
+    required this.name,
+  });
+
+  factory AscAppGroup.fromJson(Map<String, dynamic> json) {
+    final attributes = _attributesOf(json);
+    return AscAppGroup(
+      id: json['id'] as String,
+      identifier: attributes['identifier'] as String,
+      name: attributes['name'] as String? ?? '',
+    );
+  }
+
+  /// The App Group's resource id, used to link it to a bundle id.
+  final String id;
+
+  /// The `group.com.foo` string carried in the entitlements.
+  final String identifier;
+  final String name;
+}
+
 /// A generated provisioning profile.
 @immutable
 final class AscProfile {

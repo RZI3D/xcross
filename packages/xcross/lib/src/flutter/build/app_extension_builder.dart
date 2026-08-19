@@ -4,7 +4,9 @@ import 'package:cli_kit/cli_kit.dart';
 import 'package:darwin_sdk_kit/darwin_sdk_kit.dart';
 import 'package:meta/meta.dart';
 import 'package:path/path.dart' as p;
+import 'package:xcross/src/device/internal/embedded_extension.dart';
 import 'package:xcross/src/flutter/build/ios_app_extensions.dart';
+import 'package:xcross/src/flutter/build/ios_bundle_versions.dart';
 import 'package:xcross/src/flutter/build/ios_deployment_target.dart';
 import 'package:xcross/src/flutter/errors.dart';
 
@@ -41,6 +43,7 @@ abstract final class AppExtensionBuilder {
     required IosDeploymentTarget deploymentTarget,
     required String outputDir,
     required String flutterXcframework,
+    required IosBundleVersions versions,
     String? pluginsLibrary,
     String? pluginModulesDir,
   }) async {
@@ -66,6 +69,7 @@ abstract final class AppExtensionBuilder {
             deploymentTarget: deploymentTarget,
             outputDir: outputDir,
             flutterXcframework: flutterXcframework,
+            versions: versions,
             pluginsLibrary: pluginsLibrary,
             pluginModulesDir: pluginModulesDir,
           ),
@@ -82,6 +86,7 @@ abstract final class AppExtensionBuilder {
     required IosDeploymentTarget deploymentTarget,
     required String outputDir,
     required String flutterXcframework,
+    required IosBundleVersions versions,
     String? pluginsLibrary,
     String? pluginModulesDir,
   }) async {
@@ -120,6 +125,7 @@ abstract final class AppExtensionBuilder {
       extension: extension,
       bundleDir: bundleDir,
       deploymentTarget: target,
+      versions: versions,
     );
     await _copyResources(extension: extension, bundleDir: bundleDir);
 
@@ -270,13 +276,14 @@ abstract final class AppExtensionBuilder {
     required IosAppExtension extension,
     required String bundleDir,
     required IosDeploymentTarget deploymentTarget,
+    required IosBundleVersions versions,
   }) async {
     final source = extension.infoPlistPath;
     var xml = source != null && File(source).existsSync()
         ? await File(source).readAsString()
         : _fallbackInfoPlist;
 
-    xml = expandExtensionVars(xml, extension: extension);
+    xml = expandExtensionVars(xml, extension: extension, versions: versions);
     // Storyboards can't be compiled off macOS, so an NSExtensionMainStoryboard
     // entry would point at a file that isn't in the bundle and the extension
     // would fail to launch. Swap it for the principal class the storyboard
@@ -288,7 +295,11 @@ abstract final class AppExtensionBuilder {
       executableName: extension.executableName,
       bundleName: extension.name,
       minimumOsVersion: deploymentTarget.version,
+      versions: versions,
     );
+    // Record the target's App Groups so the sign/install stage can provision
+    // them without re-reading the Xcode project.
+    xml = AppExtensionPlist.setAppGroups(xml, extension.appGroups);
 
     await File(p.join(bundleDir, 'Info.plist')).writeAsString(xml);
   }
@@ -300,14 +311,17 @@ abstract final class AppExtensionBuilder {
   static String expandExtensionVars(
     String xml, {
     required IosAppExtension extension,
+    IosBundleVersions versions = IosBundleVersions.fallback,
   }) {
     final substitutions = <String, String>{
       'PRODUCT_BUNDLE_IDENTIFIER': extension.bundleId,
       'PRODUCT_NAME': extension.name,
       'EXECUTABLE_NAME': extension.executableName,
       'DEVELOPMENT_LANGUAGE': 'en',
-      'FLUTTER_BUILD_NAME': '1.0.0',
-      'FLUTTER_BUILD_NUMBER': '1',
+      'FLUTTER_BUILD_NAME': versions.shortVersion,
+      'FLUTTER_BUILD_NUMBER': versions.bundleVersion,
+      'MARKETING_VERSION': versions.shortVersion,
+      'CURRENT_PROJECT_VERSION': versions.bundleVersion,
       if (extension.appGroups.isNotEmpty)
         'CUSTOM_GROUP_ID': extension.appGroups.first,
     };
@@ -534,6 +548,7 @@ abstract final class AppExtensionPlist {
     required String executableName,
     required String bundleName,
     required String minimumOsVersion,
+    IosBundleVersions versions = IosBundleVersions.fallback,
   }) {
     var result = xml;
     final keys = <String, String>{
@@ -546,14 +561,39 @@ abstract final class AppExtensionPlist {
       'CFBundlePackageType': 'XPC!',
       'MinimumOSVersion': minimumOsVersion,
       'CFBundleInfoDictionaryVersion': '6.0',
-      'CFBundleShortVersionString': '1.0.0',
-      'CFBundleVersion': '1',
+      // iOS requires an extension's versions to match its host app's.
+      'CFBundleShortVersionString': versions.shortVersion,
+      'CFBundleVersion': versions.bundleVersion,
       'CFBundleDevelopmentRegion': 'en',
     };
     for (final entry in keys.entries) {
       result = setKey(result, entry.key, entry.value);
     }
     return result;
+  }
+
+  /// Record [appGroups] under [AppExtensionEntitlements.appGroupsInfoKey].
+  static String setAppGroups(String xml, List<String> appGroups) {
+    if (appGroups.isEmpty) return xml;
+    const key = AppExtensionEntitlements.appGroupsInfoKey;
+    final entries = appGroups
+        .map((group) => '\n\t\t<string>$group</string>')
+        .join();
+
+    final existing = RegExp(
+      '<key>\\s*${RegExp.escape(key)}\\s*</key>\\s*<array>.*?</array>',
+      dotAll: true,
+    );
+    final replacement = '<key>$key</key>\n\t<array>$entries\n\t</array>';
+    if (existing.hasMatch(xml)) {
+      return xml.replaceFirst(existing, replacement);
+    }
+
+    final dictIndex = xml.indexOf('<dict>');
+    if (dictIndex == -1) return xml;
+    final insertAt = dictIndex + '<dict>'.length;
+    return '${xml.substring(0, insertAt)}\n\t$replacement'
+        '${xml.substring(insertAt)}';
   }
 
   /// Replace `<key>[key]</key><string>…</string>`, inserting when absent.

@@ -73,6 +73,7 @@ abstract final class AscProvisioning {
     required List<String> deviceUdids,
     required String outputDir,
     String? identityDir,
+    List<String> appGroups = const [],
     ProvisioningProgress? onProgress,
   }) async {
     final signingIdentityDir = identityDir ?? outputDir;
@@ -94,6 +95,12 @@ abstract final class AscProvisioning {
     );
 
     final bundleIdResource = await _findOrRegisterBundleId(client, bundleId);
+    await _assignAppGroups(
+      client,
+      bundleIdResource: bundleIdResource,
+      appGroups: appGroups,
+      onProgress: onProgress,
+    );
     for (final udid in deviceUdids) {
       await client.findDeviceByUdid(udid) ??
           await client.registerDevice(udid: udid, name: udid);
@@ -128,6 +135,59 @@ abstract final class AscProvisioning {
         identifier: bundleId,
         name: ProvisioningIdentifiers.appName(bundleId),
       );
+
+  /// Registers any missing App Groups and enables the App Groups capability
+  /// on the bundle id, so the issued profile's entitlements actually carry
+  /// `com.apple.security.application-groups`.
+  ///
+  /// Without this an app and its share extension are each sandboxed into
+  /// their own container and cannot exchange the shared files/data an
+  /// extension exists to hand over.
+  static Future<void> _assignAppGroups(
+    DevelopmentProvisioningClient client, {
+    required AscBundleId bundleIdResource,
+    required List<String> appGroups,
+    ProvisioningProgress? onProgress,
+  }) async {
+    if (appGroups.isEmpty) return;
+
+    final resourceIds = <String>[];
+    for (final identifier in appGroups) {
+      final existing = await client.findAppGroup(identifier);
+      if (existing != null) {
+        resourceIds.add(existing.id);
+        continue;
+      }
+      final created = await client.registerAppGroup(
+        identifier: identifier,
+        name: ProvisioningIdentifiers.appName(identifier),
+      );
+      resourceIds.add(created.id);
+    }
+
+    try {
+      await client.assignAppGroups(
+        bundleIdResourceId: bundleIdResource.id,
+        appGroupResourceIds: resourceIds,
+      );
+    } on Object catch (error) {
+      // A personal (free) Apple ID team is refused with HTTP 403 "The API key
+      // in use does not allow this request": Apple only lets paid Developer
+      // Program teams manage capabilities. That must not sink an otherwise
+      // working install, so it degrades to a warning; the app and extension
+      // simply won't share a container.
+      final forbidden = error is AppleApiError && error.statusCode == 403;
+      onProgress?.call(
+        forbidden
+            ? 'App Groups (${appGroups.join(', ')}) could not be enabled: '
+                  'Apple only allows paid Developer Program teams to manage '
+                  'capabilities. The extension will run, but it cannot share '
+                  'data with the app.'
+            : 'Could not enable App Groups (${appGroups.join(', ')}) on '
+                  '${bundleIdResource.identifier}: $error',
+      );
+    }
+  }
 
   /// xtool: if the bundle already has exactly one profile, delete it before
   /// creating a fresh one (free teams are limited; paid teams with >1 are

@@ -1,6 +1,11 @@
+import 'dart:io';
+
+import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
+import 'package:xcross/src/device/internal/embedded_extension.dart';
 import 'package:xcross/src/flutter/build/app_extension_builder.dart';
 import 'package:xcross/src/flutter/build/ios_app_extensions.dart';
+import 'package:xcross/src/flutter/build/ios_bundle_versions.dart';
 import 'package:xcross/src/flutter/build/ios_deployment_target.dart';
 
 IosAppExtension _extension({
@@ -202,6 +207,41 @@ void main() {
     });
   });
 
+  group('AppExtensionPlist.setAppGroups', () {
+    test('round-trips app groups through a built appex Info.plist', () async {
+      final xml = AppExtensionPlist.setAppGroups('<dict>\n</dict>', const [
+        'group.com.example.Shared',
+        'group.com.example.Other',
+      ]);
+
+      final dir = await Directory.systemTemp.createTemp('xcross_appex_groups-');
+      addTearDown(() => dir.delete(recursive: true));
+      await File(p.join(dir.path, 'Info.plist')).writeAsString(xml);
+
+      // The sign/install stage recovers the groups without the Xcode project.
+      expect(AppExtensionEntitlements.appGroupsOf(dir.path), [
+        'group.com.example.Shared',
+        'group.com.example.Other',
+      ]);
+    });
+
+    test('leaves the plist untouched when there are no groups', () {
+      const source = '<dict>\n</dict>';
+
+      expect(AppExtensionPlist.setAppGroups(source, const []), source);
+    });
+
+    test('replaces a previous group list instead of appending', () {
+      final once = AppExtensionPlist.setAppGroups('<dict>\n</dict>', const [
+        'group.old',
+      ]);
+      final twice = AppExtensionPlist.setAppGroups(once, const ['group.new']);
+
+      expect(twice, isNot(contains('group.old')));
+      expect(twice, contains('group.new'));
+    });
+  });
+
   group('AppExtensionPlist.forceKeys', () {
     String forced(String xml) => AppExtensionPlist.forceKeys(
       xml,
@@ -209,6 +249,10 @@ void main() {
       executableName: 'Share Extension',
       bundleName: 'Share Extension',
       minimumOsVersion: '15.0',
+      versions: const IosBundleVersions(
+        shortVersion: '2.4.1',
+        bundleVersion: '37',
+      ),
     );
 
     test('sets the identity keys installd validates', () {
@@ -220,6 +264,15 @@ void main() {
       expect(xml, contains('<key>CFBundleDisplayName</key>'));
       expect(xml, contains('<string>XPC!</string>'));
       expect(xml, contains('<key>MinimumOSVersion</key>'));
+    });
+
+    test('versions match the host app instead of being hardcoded', () {
+      // iOS refuses an extension whose versions differ from its host app's.
+      final xml = forced('<dict>\n</dict>');
+
+      expect(xml, contains('<string>2.4.1</string>'));
+      expect(xml, contains('<string>37</string>'));
+      expect(xml, isNot(contains('<string>1.0.0</string>')));
     });
 
     test('overwrites an existing value instead of duplicating the key', () {

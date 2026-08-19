@@ -79,6 +79,110 @@ void main() {
     expect(client.createdProfileName, matches(r'^xcross Development \d+$'));
   });
 
+  test('registers and links App Groups when the app declares them', () async {
+    final temp = Directory.systemTemp.createTempSync('xcross_app_groups');
+    addTearDown(() => temp.deleteSync(recursive: true));
+    final client = _FakeProvisioningClient();
+
+    await AscProvisioning.provisionDevelopmentIdentity(
+      client: client,
+      bundleId: 'com.example.app',
+      deviceUdids: const ['UDID'],
+      outputDir: temp.path,
+      appGroups: const ['group.com.example.Shared'],
+    );
+
+    expect(client.registeredAppGroups, ['group.com.example.Shared']);
+    expect(client.assignedAppGroupIds, [
+      'group-resource-group.com.example.Shared',
+    ]);
+    expect(client.appGroupsBundleResourceId, isNotNull);
+  });
+
+  test('reuses an App Group that already exists on the team', () async {
+    final temp = Directory.systemTemp.createTempSync('xcross_app_groups_reuse');
+    addTearDown(() => temp.deleteSync(recursive: true));
+    final client = _FakeProvisioningClient();
+    client.existingAppGroups['group.com.example.Shared'] = const AscAppGroup(
+      id: 'existing-id',
+      identifier: 'group.com.example.Shared',
+      name: 'xcross group com example Shared',
+    );
+
+    await AscProvisioning.provisionDevelopmentIdentity(
+      client: client,
+      bundleId: 'com.example.app',
+      deviceUdids: const ['UDID'],
+      outputDir: temp.path,
+      appGroups: const ['group.com.example.Shared'],
+    );
+
+    expect(client.registeredAppGroups, isEmpty);
+    expect(client.assignedAppGroupIds, ['existing-id']);
+  });
+
+  test('never touches App Groups when the app declares none', () async {
+    final temp = Directory.systemTemp.createTempSync('xcross_no_app_groups');
+    addTearDown(() => temp.deleteSync(recursive: true));
+    final client = _FakeProvisioningClient();
+
+    await AscProvisioning.provisionDevelopmentIdentity(
+      client: client,
+      bundleId: 'com.example.app',
+      deviceUdids: const ['UDID'],
+      outputDir: temp.path,
+    );
+
+    expect(client.registeredAppGroups, isEmpty);
+    expect(client.assignedAppGroupIds, isNull);
+  });
+
+  test('still issues a profile when App Groups cannot be enabled', () async {
+    final temp = Directory.systemTemp.createTempSync('xcross_app_groups_fail');
+    addTearDown(() => temp.deleteSync(recursive: true));
+    final client = _FakeProvisioningClient()
+      ..assignAppGroupsFailure = Exception('boom');
+    final warnings = <String>[];
+
+    // Enabling the capability can fail for reasons outside our control; that
+    // must degrade to a warning, not sink an otherwise working install.
+    final result = await AscProvisioning.provisionDevelopmentIdentity(
+      client: client,
+      bundleId: 'com.example.app',
+      deviceUdids: const ['UDID'],
+      outputDir: temp.path,
+      appGroups: const ['group.com.example.Shared'],
+      onProgress: warnings.add,
+    );
+
+    expect(File(result.profilePath).existsSync(), isTrue);
+    expect(warnings, anyElement(contains('App Groups')));
+  });
+
+  test('explains that a free team may not manage capabilities', () async {
+    final temp = Directory.systemTemp.createTempSync('xcross_app_groups_403');
+    addTearDown(() => temp.deleteSync(recursive: true));
+    final client = _FakeProvisioningClient()
+      ..assignAppGroupsFailure = const AppleApiError(
+        403,
+        'The API key in use does not allow this request',
+      );
+    final warnings = <String>[];
+
+    // Apple answers 403 for a personal (free) team; the raw message is
+    // useless to a user, so it is translated into the real reason.
+    await AscProvisioning.provisionDevelopmentIdentity(
+      client: client,
+      bundleId: 'com.example.app',
+      deviceUdids: const ['UDID'],
+      outputDir: temp.path,
+      appGroups: const ['group.com.example.Shared'],
+      onProgress: warnings.add,
+    );
+
+    expect(warnings, anyElement(contains('paid Developer Program')));
+  });
+
   test('revokes team certificates and reissues on create 409', () async {
     final temp = Directory.systemTemp.createTempSync('xcross_cert_409');
     addTearDown(() => temp.deleteSync(recursive: true));
@@ -202,12 +306,48 @@ class _FakeProvisioningClient implements DevelopmentProvisioningClient {
 
   final revoked = <String>[];
   final deletedProfiles = <String>[];
+  final registeredAppGroups = <String>[];
+  final existingAppGroups = <String, AscAppGroup>{};
+  List<String>? assignedAppGroupIds;
+  String? appGroupsBundleResourceId;
+  Object? assignAppGroupsFailure;
   final teamSerials = <String, String>{};
   int certificateCreations = 0;
   String? registeredBundleName;
   String? createdProfileName;
   List<String>? lastProfileCertificateIds;
   List<String>? lastProfileDeviceIds;
+
+  @override
+  Future<AscAppGroup?> findAppGroup(String identifier) async =>
+      existingAppGroups[identifier];
+
+  @override
+  Future<AscAppGroup> registerAppGroup({
+    required String identifier,
+    required String name,
+  }) async {
+    registeredAppGroups.add(identifier);
+    final group = AscAppGroup(
+      id: 'group-resource-$identifier',
+      identifier: identifier,
+      name: name,
+    );
+    existingAppGroups[identifier] = group;
+    return group;
+  }
+
+  @override
+  Future<void> assignAppGroups({
+    required String bundleIdResourceId,
+    required List<String> appGroupResourceIds,
+  }) async {
+    final failure = assignAppGroupsFailure;
+    // ignore: only_throw_errors
+    if (failure != null) throw failure;
+    appGroupsBundleResourceId = bundleIdResourceId;
+    assignedAppGroupIds = appGroupResourceIds;
+  }
 
   @override
   Future<AscCertificate> createDevelopmentCertificate({

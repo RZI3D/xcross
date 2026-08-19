@@ -4,6 +4,7 @@ import 'package:apple_developer_kit/apple_developer_kit.dart';
 import 'package:cli_kit/cli_kit.dart';
 import 'package:dart_mobile_device/dart_mobile_device.dart';
 import 'package:path/path.dart' as p;
+import 'package:xcross/src/device/internal/embedded_extension.dart';
 import 'package:xcross/src/device/internal/signing_session.dart';
 import 'package:xcross/src/errors.dart';
 import 'package:xcross/src/flutter/flutter.dart';
@@ -79,12 +80,36 @@ final class NativeBackend implements DeviceBackend {
         hostBundleId: bundleId,
         signedHostBundleId: signedBundleId,
       );
+      // The app and its extensions must share the same App Groups, or the
+      // extension has no way to hand data back to the app.
+      // App Group ids are globally unique across all developers, so the
+      // project's literal group is usually taken. Qualify it per account the
+      // same way the App ID is.
+      final appGroups =
+          {
+                ...AppExtensionEntitlements.appGroupsOf(appOrIpaPath),
+                for (final extension in extensions) ...extension.appGroups,
+              }
+              .map(
+                (group) => ProvisioningIdentifiers.qualifyAppGroup(
+                  group,
+                  signing.identityId,
+                ),
+              )
+              .toList()
+            ..sort();
+      // The app and extension read the group name back at runtime from the
+      // AppGroupId Info.plist key, so it has to be rewritten to match.
+      if (appGroups.isNotEmpty) {
+        await _rewriteAppGroupId(appOrIpaPath, appGroups.first);
+      }
       final identity = await AscProvisioning.provisionDevelopmentIdentity(
         client: signing.client,
         bundleId: signedBundleId,
         deviceUdids: [udid],
         outputDir: outputDir,
         identityDir: signing.identityDir,
+        appGroups: appGroups,
         onProgress: Log.logWarn,
       );
       final asset = await SigningAsset.load(
@@ -97,6 +122,7 @@ final class NativeBackend implements DeviceBackend {
         signing: signing,
         udid: udid,
         profilesDir: profilesDir,
+        appGroups: appGroups,
       );
       await Log.logStep(
         'Signing app',
@@ -227,7 +253,7 @@ final class NativeBackend implements DeviceBackend {
   /// iOS requires an extension's bundle id to be `<app id>.<suffix>`, so
   /// qualifying the app id (`com.x.App` → `XCR-TEAM.com.x.App`) must carry the
   /// extensions along (`XCR-TEAM.com.x.App.Share-Extension`).
-  static Future<List<String>> _rewriteExtensionIdentifiers(
+  static Future<List<EmbeddedExtension>> _rewriteExtensionIdentifiers(
     String appPath, {
     required String hostBundleId,
     required String signedHostBundleId,
@@ -235,7 +261,7 @@ final class NativeBackend implements DeviceBackend {
     final plugIns = Directory(p.join(appPath, 'PlugIns'));
     if (!plugIns.existsSync()) return const [];
 
-    final identifiers = <String>[];
+    final identifiers = <EmbeddedExtension>[];
     for (final entity in plugIns.listSync()) {
       if (entity is! Directory || !entity.path.endsWith('.appex')) continue;
       final plist = File(p.join(entity.path, 'Info.plist'));
@@ -252,10 +278,49 @@ final class NativeBackend implements DeviceBackend {
       final signed = '$signedHostBundleId$suffix';
 
       await plist.writeAsString(InfoPlist.setBundleIdentifier(xml, signed));
-      identifiers.add(signed);
+      identifiers.add(
+        EmbeddedExtension(
+          bundleId: signed,
+          appGroups: AppExtensionEntitlements.appGroupsOf(entity.path),
+        ),
+      );
     }
-    identifiers.sort();
+    identifiers.sort((a, b) => a.bundleId.compareTo(b.bundleId));
     return identifiers;
+  }
+
+  /// Point the app and every embedded extension at the qualified App Group.
+  ///
+  /// Plugins such as `receive_sharing_intent` resolve the shared container at
+  /// runtime from the `AppGroupId` Info.plist key, so a qualified group that
+  /// is only written into the entitlements would leave both sides looking at
+  /// a container neither is entitled to.
+  static Future<void> _rewriteAppGroupId(
+    String appPath,
+    String appGroup,
+  ) async {
+    final plists = <File>[
+      File(p.join(appPath, 'Info.plist')),
+      ...?_plugInsPlists(appPath),
+    ];
+    for (final plist in plists) {
+      if (!plist.existsSync()) continue;
+      final xml = await plist.readAsString();
+      if (!xml.contains('<key>AppGroupId</key>')) continue;
+      await plist.writeAsString(
+        InfoPlist.setPlistString(xml, 'AppGroupId', appGroup),
+      );
+    }
+  }
+
+  static Iterable<File>? _plugInsPlists(String appPath) {
+    final plugIns = Directory(p.join(appPath, 'PlugIns'));
+    if (!plugIns.existsSync()) return null;
+    return [
+      for (final entity in plugIns.listSync())
+        if (entity is Directory && entity.path.endsWith('.appex'))
+          File(p.join(entity.path, 'Info.plist')),
+    ];
   }
 
   /// Provision a development identity per embedded app extension.
@@ -264,15 +329,17 @@ final class NativeBackend implements DeviceBackend {
   /// profile. Free Apple developer accounts cap App IDs, hence the explicit
   /// hint when the portal refuses one.
   static Future<Map<String, SigningAsset>> _provisionExtensions(
-    List<String> extensionBundleIds, {
+    List<EmbeddedExtension> extensions, {
     required SigningSession signing,
     required String udid,
     required String profilesDir,
+    required List<String> appGroups,
   }) async {
-    if (extensionBundleIds.isEmpty) return const {};
+    if (extensions.isEmpty) return const {};
 
     final assets = <String, SigningAsset>{};
-    for (final extensionBundleId in extensionBundleIds) {
+    for (final extension in extensions) {
+      final extensionBundleId = extension.bundleId;
       Log.logInfo('Extension', extensionBundleId);
       try {
         final identity = await AscProvisioning.provisionDevelopmentIdentity(
@@ -281,6 +348,7 @@ final class NativeBackend implements DeviceBackend {
           deviceUdids: [udid],
           outputDir: p.join(profilesDir, extensionBundleId),
           identityDir: signing.identityDir,
+          appGroups: appGroups,
           onProgress: Log.logWarn,
         );
         assets[extensionBundleId] = await SigningAsset.load(

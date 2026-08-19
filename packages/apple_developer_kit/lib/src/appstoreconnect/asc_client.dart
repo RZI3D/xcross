@@ -50,6 +50,22 @@ abstract interface class DevelopmentProvisioningClient {
     required String name,
   });
 
+  /// App Groups on the team whose `identifier` equals [identifier].
+  Future<AscAppGroup?> findAppGroup(String identifier);
+
+  /// Registers a new App Group.
+  Future<AscAppGroup> registerAppGroup({
+    required String identifier,
+    required String name,
+  });
+
+  /// Enables the App Groups capability on [bundleIdResourceId] and links
+  /// [appGroupResourceIds] to it.
+  Future<void> assignAppGroups({
+    required String bundleIdResourceId,
+    required List<String> appGroupResourceIds,
+  });
+
   /// Profile resource ids currently linked to [bundleIdResourceId].
   Future<List<String>> listProfileIdsForBundle(String bundleIdResourceId);
 
@@ -152,6 +168,41 @@ final class AscClient implements DevelopmentProvisioningClient {
       ),
     ),
   );
+
+  @override
+  Future<AscAppGroup?> findAppGroup(String identifier) async => _firstOrNull(
+    await _get(
+      '/appGroups?filter[identifier]=${Uri.encodeQueryComponent(identifier)}',
+    ),
+    AscAppGroup.fromJson,
+  );
+
+  @override
+  Future<AscAppGroup> registerAppGroup({
+    required String identifier,
+    required String name,
+  }) async => AscAppGroup.fromJson(
+    _data(
+      await _post(
+        '/appGroups',
+        AscPayloads.appGroup(identifier: identifier, name: name),
+      ),
+    ),
+  );
+
+  @override
+  Future<void> assignAppGroups({
+    required String bundleIdResourceId,
+    required List<String> appGroupResourceIds,
+  }) async {
+    await _post(
+      '/bundleIdCapabilities',
+      AscPayloads.appGroupsCapability(
+        bundleIdResourceId: bundleIdResourceId,
+        appGroupResourceIds: appGroupResourceIds,
+      ),
+    );
+  }
 
   @override
   Future<List<String>> listProfileIdsForBundle(
