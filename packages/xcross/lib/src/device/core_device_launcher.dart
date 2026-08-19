@@ -6,6 +6,7 @@ import 'package:cli_kit/cli_kit.dart';
 import 'package:dart_mobile_device/dart_mobile_device.dart';
 import 'package:pure/pure.dart';
 import 'package:xcross/src/constants.dart';
+import 'package:xcross/src/device/core_device_launch_profile.dart';
 import 'package:xcross/src/device/session_console.dart';
 import 'package:xcross/src/errors.dart';
 import 'package:xcross/src/flutter/flutter.dart';
@@ -30,8 +31,8 @@ abstract final class CoreDeviceLauncher {
   static Future<void> launch({
     required String udid,
     required String bundleId,
-    List<String> arguments = const [],
-    HotReloadConfig? hotReload,
+    required CoreDeviceLaunchProfile profile,
+    Future<bool> Function()? onRestartRequested,
   }) async {
     if (!await Pymd.ensureInstalled()) {
       throw XcrossError(
@@ -46,8 +47,9 @@ abstract final class CoreDeviceLauncher {
       await _runSession(
         transport: transport,
         bundleId: bundleId,
-        arguments: arguments,
-        hotReload: hotReload,
+        arguments: profile.argumentsForLaunch(isDap: _isDap),
+        hotReload: profile.hotReload,
+        onRestartRequested: onRestartRequested,
       );
     } finally {
       try {
@@ -100,6 +102,7 @@ abstract final class CoreDeviceLauncher {
     required String bundleId,
     required List<String> arguments,
     required HotReloadConfig? hotReload,
+    Future<bool> Function()? onRestartRequested,
   }) async {
     final resolvedBundleId = await _resolveBundleId(bundleId);
     final debugproxy = await transport.debugproxyEndpoint();
@@ -107,7 +110,7 @@ abstract final class CoreDeviceLauncher {
     final pid = await _launchSuspended(
       transport: transport,
       bundleId: resolvedBundleId,
-      appArgs: _buildAppArgs(arguments: arguments, hotReload: hotReload),
+      appArgs: arguments,
     );
 
     final gdb = await _attachDebugger(endpoint: debugproxy, pid: pid);
@@ -134,6 +137,7 @@ abstract final class CoreDeviceLauncher {
         gdb: gdb,
         hotReload: hotReloadController,
         hotReloadUnavailable: hotReloadSetup.unavailable,
+        onRestartRequested: onRestartRequested,
       ).run();
     } finally {
       // Every step is timed out: a single hung flush/close on Windows left `q`
@@ -237,28 +241,6 @@ abstract final class CoreDeviceLauncher {
     return matches.isNotEmpty ? matches.first : requested;
   }
 
-  /// Build the launch-argument list, prepending VM Service and checked-mode
-  /// flags as required.
-  static List<String> _buildAppArgs({
-    required List<String> arguments,
-    required HotReloadConfig? hotReload,
-  }) => [
-    // VM Service must bind IPv6-any (::): the RSD tunnel is IPv6, and `::`
-    // accepts IPv4-mapped peers too, so the usbmux relay path also reaches it.
-    if (hotReload != null) ...[
-      '--vm-service-host=::',
-      '--vm-service-port=${TunnelConstants.vmServicePort}',
-      '--disable-service-auth-codes',
-    ],
-    // DAP only: hold the root isolate at startup so the debug adapter can
-    // register breakpoints before main() runs, then resume it — the flag
-    // the reference Flutter adapter passes for the same reason. This is a
-    // VM-level pause, separate from the GDB process resume above; the
-    // interactive CLI has nothing that would resume it, so it stays off.
-    if (hotReload != null && _isDap) '--start-paused',
-    '--enable-checked-mode', '--verify-entry-points', ...arguments,
-  ];
-
   /// Launch the app suspended and return its device PID.
   static Future<int> _launchSuspended({
     required DeviceTransport transport,
@@ -295,9 +277,13 @@ abstract final class CoreDeviceLauncher {
       );
       return (
         controller: null,
+        // Compose (Kotlin/Native, AOT) has no in-place reload at all, so the
+        // Flutter-specific "frontend_server artifacts missing" wording would
+        // be actively misleading there. The Compose path supplies its own
+        // rebuild-and-restart handler instead, and never reaches this text.
         unavailable:
-            'hot reload is off for this session: the Flutter frontend_server '
-            'artifacts it needs were not found.',
+            'this session has no in-place reload: press Ctrl-C and run again '
+            'after changing sources.',
       );
     }
     DartVmServiceClient? vm;
