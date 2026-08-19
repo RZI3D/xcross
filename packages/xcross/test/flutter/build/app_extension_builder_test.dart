@@ -207,6 +207,38 @@ void main() {
     });
   });
 
+  group('buildAll', () {
+    test('skips a non-Swift extension instead of failing the app', () async {
+      // An Objective-C extension target must not sink the whole app build.
+      final built = await AppExtensionBuilder.buildAll(
+        projectRoot: '/project',
+        extensions: [
+          _extension(sources: const ['/ios/Share Extension/View.m']),
+        ],
+        deploymentTarget: const IosDeploymentTarget('15.0'),
+        outputDir: '/out',
+        flutterXcframework: '/engine/Flutter.xcframework',
+        versions: IosBundleVersions.fallback,
+      );
+
+      expect(built, isEmpty);
+    });
+
+    test('does nothing for a project with no extensions', () async {
+      expect(
+        await AppExtensionBuilder.buildAll(
+          projectRoot: '/project',
+          extensions: const [],
+          deploymentTarget: const IosDeploymentTarget('15.0'),
+          outputDir: '/out',
+          flutterXcframework: '/engine/Flutter.xcframework',
+          versions: IosBundleVersions.fallback,
+        ),
+        isEmpty,
+      );
+    });
+  });
+
   group('AppExtensionPlist.setAppGroups', () {
     test('round-trips app groups through a built appex Info.plist', () async {
       final xml = AppExtensionPlist.setAppGroups('<dict>\n</dict>', const [

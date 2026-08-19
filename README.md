@@ -281,14 +281,22 @@ Swift Package Manager iOS plugins work on both Windows and Linux. Their native c
 
 Plugins that only ship a CocoaPods podspec are currently **skipped with a warning** - prefer plugin releases that include `ios/<package_name>/Package.swift`.
 
+## App extensions
+
+Share and action extensions are built, embedded under `PlugIns/`, signed with their own provisioning profiles and installed alongside the app, so plugins like [receive_sharing_intent](https://github.com/KasemJaffer/receive_sharing_intent) put your app in the iOS share sheet. No configuration needed.
+
+Sharing data back to the app needs an App Group, which requires one manual step. See **[docs/app-extensions.md](docs/app-extensions.md)**.
+
 ## Bundle identity
 
 The bundle id is read from the Flutter iOS project, using the same sources as Flutter's own tooling on non-macOS hosts:
 
 1. A literal `CFBundleIdentifier` in `ios/Runner/Info.plist` (no `$(…)` variables), otherwise
-2. the first `PRODUCT_BUNDLE_IDENTIFIER` in `ios/Runner.xcodeproj/project.pbxproj`.
+2. the `PRODUCT_BUNDLE_IDENTIFIER` of the **application** target in `ios/Runner.xcodeproj/project.pbxproj`.
 
-The packed `.app`'s `Info.plist` is always derived from `ios/Runner/Info.plist` when present.
+Step 2 reads the application target specifically: a project with app extensions declares several `PRODUCT_BUNDLE_IDENTIFIER`s, and the extension's often comes first in the file.
+
+The packed `.app`'s `Info.plist` is always derived from `ios/Runner/Info.plist` when present. `$(MARKETING_VERSION)` and `$(CURRENT_PROJECT_VERSION)` are expanded from the application target's build settings, and embedded extensions inherit those versions, as iOS requires.
 
 ## IDE integration
 

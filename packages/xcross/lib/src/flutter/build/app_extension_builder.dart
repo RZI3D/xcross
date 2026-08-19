@@ -33,6 +33,23 @@ final class BuiltAppExtension {
 /// runtime through `@executable_path/../../Frameworks`, which points back into
 /// the host app's `Frameworks` directory.
 abstract final class AppExtensionBuilder {
+  /// Extensions xcross cannot build are skipped rather than failing the app
+  /// build: an unbuildable extension costs the share-sheet entry, while a
+  /// hard failure costs the whole app.
+  static bool _isBuildable(IosAppExtension extension) {
+    final hasSwift = extension.sources.any(
+      (source) => source.endsWith('.swift') && File(source).existsSync(),
+    );
+    if (!hasSwift) {
+      Log.logWarn(
+        'Skipping app extension "${extension.name}": it has no Swift sources '
+        'to compile (xcross builds Swift app extensions only). The app will '
+        'install without it.',
+      );
+    }
+    return hasSwift;
+  }
+
   /// Build every extension in [extensions], returning the staged bundles.
   ///
   /// [pluginsLibrary] and [pluginModulesDir] come from the aggregate Flutter
@@ -47,7 +64,8 @@ abstract final class AppExtensionBuilder {
     String? pluginsLibrary,
     String? pluginModulesDir,
   }) async {
-    if (extensions.isEmpty) return const [];
+    final buildable = extensions.where(_isBuildable).toList();
+    if (buildable.isEmpty) return const [];
 
     final darwin = DarwinSdk.current();
     if (darwin == null) {
@@ -58,7 +76,7 @@ abstract final class AppExtensionBuilder {
     }
 
     final built = <BuiltAppExtension>[];
-    for (final extension in extensions) {
+    for (final extension in buildable) {
       built.add(
         await Log.logStep(
           'Building ${extension.name}',
@@ -90,16 +108,11 @@ abstract final class AppExtensionBuilder {
     String? pluginsLibrary,
     String? pluginModulesDir,
   }) async {
+    // Non-Swift and missing sources are filtered by [_isBuildable].
     final sources = extension.sources
         .where((source) => source.endsWith('.swift'))
         .where((source) => File(source).existsSync())
         .toList();
-    if (sources.isEmpty) {
-      throw FlutterBuildError(
-        'App extension "${extension.name}" has no Swift sources to compile. '
-        'xcross builds Swift app extensions only.',
-      );
-    }
 
     final bundleDir = p.join(outputDir, extension.bundleName);
     final staging = Directory(bundleDir);
