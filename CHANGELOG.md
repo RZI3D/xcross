@@ -1,3 +1,22 @@
+## 1.1.0
+
+- Add Compose Multiplatform support: `xcross compose setup`, `xcross compose
+  build`, and `xcross compose run` build, sign, install, and launch Kotlin
+  Multiplatform iOS frameworks and `.app` bundles from Linux and Windows,
+  with a `--watch` rebuild loop and fingerprinted builds that skip `konanc`
+  when nothing changed.
+- Provision and patch the Kotlin/Native toolchain for cross-host iOS builds:
+  spoof Apple host checks, stage an Apple toolchain and the real compiler-rt
+  archives, keep dependency resolution off the network, and disable
+  Apple-only debug transparent stepping.
+- Pass explicit `-arch` and `-platform_version` through the Swift runner
+  link, and degrade a missing Windows `dsymutil` to a no-op.
+- Build `sharedDarwinSource` Flutter plugins from their `darwin/` directory,
+  and warn instead of silently dropping a plugin whose iOS manifest is
+  missing.
+- Generate and run the Dart plugin registrant, so federated plugins that
+  register through `dartPluginClass` no longer fail at first use.
+
 ## 1.0.5
 
 - Enhance Windows SwiftPM support and normalize staged plugin manifests.
