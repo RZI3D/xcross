@@ -15,6 +15,28 @@ import 'package:darwin_sdk_kit/src/xar_reader.dart';
 
 /// Streams the decoded `Content` entry of an Xcode `.xip` as [CpioEntry]s.
 abstract final class XcodeXipExtractor {
+  /// Verifies [xipPath] is a XAR archive carrying the `Content` entry an
+  /// Xcode `.xip` must have, throwing [DarwinSdkError] otherwise.
+  ///
+  /// Reads only the header and table of contents, so it is fast enough to run
+  /// before anything destructive. `sdk install` replaces a working SDK, and
+  /// discovering "not a XAR file" *after* deleting it costs the user a
+  /// multi-gigabyte reinstall over a typo.
+  static Future<void> validate(String xipPath) async {
+    final file = await File(xipPath).open();
+    try {
+      final entry = await XarReader.findEntry(file, 'Content');
+      if (entry == null) {
+        throw DarwinSdkError(
+          '$xipPath: no "Content" entry in the XAR table of contents.\n'
+          'This does not look like a complete Xcode.xip.',
+        );
+      }
+    } finally {
+      await file.close();
+    }
+  }
+
   /// Decodes the format layers of [xipPath] only — filtering entries, writing
   /// them to disk, etc. is the caller's job (a follow-up `xcode_xip install`
   /// CLI command and wiring into `DarwinSdk` resolution, not this function).

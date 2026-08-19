@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:args/command_runner.dart';
 import 'package:cli_kit/cli_kit.dart';
 import 'package:darwin_sdk_kit/darwin_sdk_kit.dart';
+import 'package:xcross/src/cli/basic/internal/swift_requirement.dart';
 import 'package:xcross/src/cli/basic/sdk_install.dart';
 import 'package:xcross/src/errors.dart';
 
@@ -40,6 +41,23 @@ final class SdkInstallCommand extends Command<void> {
     if (!File(xipPath).existsSync()) {
       throw XcrossError('No file found at "$xipPath".');
     }
+
+    // Checked before the archive is touched: extraction takes a long while
+    // and tens of gigabytes, and its whole point is to produce a bundle
+    // patched against — and stamped with — the selected Swift toolchain. With
+    // no Swift on PATH that work is wasted, and the old failure came only
+    // after the extraction had already finished.
+    final swift = await SwiftRequirement.require('install the Darwin SDK');
+    await SwiftRequirement.requireSiblingClang(swift);
+
+    // Everything that can reject the input must run before the previous SDK
+    // is removed: this command's next act is deleting a working install, and
+    // a wrong path or a partial download would otherwise leave the host with
+    // no SDK at all and an hours-long reinstall to get back.
+    await Log.logStep(
+      'Verifying archive',
+      () => XcodeXipExtractor.validate(xipPath),
+    );
 
     final destDir = DarwinSdk.nativeInstallDir();
     final previous = Directory(SdkInstall.ioPath(destDir));

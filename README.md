@@ -45,6 +45,13 @@ Both platforms need the same five ingredients:
 | Python 3 + [`pymobiledevice3`](https://github.com/doronz88/pymobiledevice3) | Device communication and the iOS 17+ RSD tunnel |
 | A complete `Xcode.xip` ([xcodereleases.com](https://xcodereleases.com/)) | Processed **once** by `xcross sdk install` into a private Darwin Swift SDK |
 
+> [!IMPORTANT]
+> **Install the Swift toolchain before running `xcross setup` or `xcross sdk install`.** xcross never installs Swift for you on any host, and both commands refuse to run without it.
+>
+> `xcross sdk install` patches the Darwin SDK with the *selected* Swift toolchain's clang headers and records which toolchain that was. The resulting SDK is only usable by that toolchain, so changing Swift afterwards (`swiftly use`, `mise use`, a distro upgrade) means re-running `xcross sdk install`. Pick your Swift version first and stay on it.
+>
+> On Linux, `xcross setup` can also install Swift's *own* build dependencies. If that is why you are running it before Swift exists, use `xcross setup --no-swift-check`.
+
 > [!NOTE]
 > Download the Xcode archive from [xcodereleases.com](https://xcodereleases.com/) (requires an Apple ID). It is only used as SDK *input* - neither Xcode nor macOS is ever installed or executed. xcross extracts the iOS SDK and frameworks from the archive with its own pure-Dart xar/pbzx/cpio readers. Don't redistribute the extracted Apple SDK.
 
@@ -75,6 +82,8 @@ Both installers download the latest release, install it, **add xcross to your `P
    xcross sdk install C:\Downloads\Xcode.xip   # once, takes a while
    ```
 
+   Open a new terminal after installing Swift so its `bin` directory is on `PATH`; both commands refuse to run without it. The SDK is tied to the Swift active here, so re-run `xcross sdk install` if you later switch Swift versions.
+
 ### Linux
 
 1. One-line install:
@@ -83,7 +92,17 @@ Both installers download the latest release, install it, **add xcross to your `P
    curl -fsSL https://raw.githubusercontent.com/arxdeus/xcross/main/install.sh | sh
    ```
 
-2. Let xcross install its distro dependencies and `pymobiledevice3` (via `pipx`), and build the Darwin SDK:
+2. Install the Swift toolchain, which xcross does not install for you ([swiftly](https://www.swift.org/install/linux/) is the easiest route):
+
+   ```sh
+   curl -fsSL https://swiftlang.github.io/swiftly/swiftly-install.sh | bash
+   swiftly install latest
+   swift --version   # must work before the next step
+   ```
+
+   Swift needs a few distro packages of its own. If it will not start, run `xcross setup --no-swift-check` first, then install Swift and continue.
+
+3. Let xcross install its distro dependencies and `pymobiledevice3` (via `pipx`), and build the Darwin SDK:
 
    ```sh
    xcross setup
@@ -91,6 +110,8 @@ Both installers download the latest release, install it, **add xcross to your `P
    ```
 
    `xcross setup` detects `apt`, `dnf`, or `pacman` (and asks which to use when the answer is ambiguous). It also installs `usbmuxd`, `usbutils`, and `libimobiledevice` for USB device access and diagnostics. `pymobiledevice3` goes into its own `pipx` venv, and `pipx ensurepath` puts `~/.local/bin` on your `PATH` - open a new shell for that to take effect.
+
+   The SDK is tied to the Swift you had active here. If you later switch Swift versions, re-run `xcross sdk install`.
 
 ### Verifying a release
 
@@ -157,6 +178,8 @@ Deletes the saved App Store Connect key, the Apple ID session and its machine at
 
 ```sh
 # 1. One-time machine setup (see Installation above)
+#    Swift must already be installed: xcross does not install it, and both
+#    commands below refuse to run without it.
 xcross setup
 xcross sdk install ~/Downloads/Xcode.xip
 xcross auth --apple-id you@example.com
@@ -187,8 +210,8 @@ With multiple iPhones connected, an interactive terminal shows a numbered device
 
 | Command | Description |
 |---|---|
-| `xcross setup` | Install host dependencies (apt/dnf/pacman packages, `pipx`, `pymobiledevice3`) |
-| `xcross sdk install <Xcode.xip>` | Extract a private Darwin Swift SDK from an Xcode archive |
+| `xcross setup` | Install host dependencies (apt/dnf/pacman packages, `pipx`, `pymobiledevice3`). Requires Swift on `PATH`; `--no-swift-check` skips that to bootstrap Swift's own dependencies |
+| `xcross sdk install <Xcode.xip>` | Extract a private Darwin Swift SDK from an Xcode archive, patched against the Swift toolchain currently on `PATH` |
 | `xcross auth` | Save Apple ID or App Store Connect credentials |
 | `xcross auth clear` | Delete saved credentials, sessions, and signing material |
 | `xcross tunnel` | Mount the Developer Disk Image + start the iOS 17+ RSD tunnel |

@@ -7,6 +7,7 @@ import 'package:darwin_sdk_kit/darwin_sdk_kit.dart';
 import 'package:path/path.dart' as p;
 import 'package:pure/pure.dart';
 import 'package:xcross/src/cli/basic/internal/linux_package_manager.dart';
+import 'package:xcross/src/cli/basic/internal/swift_requirement.dart';
 import 'package:xcross/src/errors.dart';
 
 const _requiredTools = ['swift', 'clang', 'clang++', 'llvm-ar', 'ld64.lld'];
@@ -15,6 +16,19 @@ const _requiredTools = ['swift', 'clang', 'clang++', 'llvm-ar', 'ld64.lld'];
 /// or Homebrew (macOS), then pipx and pymobiledevice3. On Windows, verifies
 /// tools already on PATH and installs pymobiledevice3.
 final class SetupCommand extends Command<void> {
+  SetupCommand() {
+    argParser.addFlag(
+      _skipSwiftCheckFlag,
+      negatable: false,
+      help:
+          'Install the host packages without requiring Swift on PATH. Use '
+          "this to pull in Swift's own build dependencies before installing "
+          'Swift itself.',
+    );
+  }
+
+  static const _skipSwiftCheckFlag = 'no-swift-check';
+
   @override
   String get name => 'setup';
 
@@ -22,7 +36,24 @@ final class SetupCommand extends Command<void> {
   String get description => 'Install or verify host requirements';
 
   @override
-  Future<void> run() {
+  Future<void> run() async {
+    // Swift is manual on every host: `setup` installs LLVM, device tooling,
+    // and Swift's own *dependencies*, never Swift itself. It already refused
+    // to finish without it, but only after a full package transaction and a
+    // sudo prompt. Checking first turns that into an immediate, actionable
+    // message.
+    //
+    // The flag exists because this command has a second, legitimate use:
+    // installing the very packages a Swift toolchain needs to run, which by
+    // definition happens before Swift is on PATH.
+    if (!(argResults?[_skipSwiftCheckFlag] as bool? ?? false)) {
+      await SwiftRequirement.require(
+        'set up this host',
+        extra:
+            "Already installing Swift's dependencies? Re-run with "
+            '`xcross setup --$_skipSwiftCheckFlag`.',
+      );
+    }
     if (Platform.isWindows) return _setupWindows();
     if (Platform.isMacOS) return _setupMacos();
     return _setupLinux();

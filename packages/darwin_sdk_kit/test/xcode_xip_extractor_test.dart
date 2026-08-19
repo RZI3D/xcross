@@ -64,4 +64,61 @@ void main() {
       );
     });
   });
+
+  group('XcodeXipExtractor.validate', () {
+    late Directory tempDir;
+
+    setUp(() async {
+      tempDir = await Directory.systemTemp.createTemp('xip_validate_test_');
+    });
+
+    tearDown(() async {
+      await tempDir.delete(recursive: true);
+    });
+
+    test('accepts an archive carrying a Content entry', () async {
+      final path = '${tempDir.path}/ok.xip';
+      await File(path).writeAsBytes(
+        buildXar({'Content': utf8.encode('payload')}),
+      );
+
+      await expectLater(XcodeXipExtractor.validate(path), completes);
+    });
+
+    test('rejects a file that is not a XAR archive at all', () async {
+      final path = '${tempDir.path}/not_a_xar.xip';
+      // The realistic mistake: a wrong path, or an HTML error page saved by
+      // a download that silently failed.
+      await File(path).writeAsString('<!DOCTYPE html>not your Xcode archive');
+
+      await expectLater(
+        XcodeXipExtractor.validate(path),
+        throwsA(
+          isA<DarwinSdkError>().having(
+            (error) => error.toString(),
+            'message',
+            contains('XAR'),
+          ),
+        ),
+      );
+    });
+
+    test('rejects a XAR archive with no Content entry', () async {
+      final path = '${tempDir.path}/no_content.xip';
+      await File(path).writeAsBytes(
+        buildXar({'Metadata': utf8.encode('only metadata')}),
+      );
+
+      await expectLater(
+        XcodeXipExtractor.validate(path),
+        throwsA(
+          isA<DarwinSdkError>().having(
+            (error) => error.toString(),
+            'message',
+            contains('complete Xcode.xip'),
+          ),
+        ),
+      );
+    });
+  });
 }
