@@ -8,10 +8,12 @@ import 'package:frontend_server_kit/frontend_server_kit.dart';
 import 'package:meta/meta.dart';
 import 'package:path/path.dart' as p;
 import 'package:standard_message_codec/standard_message_codec.dart';
+import 'package:xcross/src/flutter/build/dart_plugin_registrant.dart';
 import 'package:xcross/src/flutter/build/internal/kernel_compiler.dart';
 import 'package:xcross/src/flutter/build/internal/toolchain.dart';
 import 'package:xcross/src/flutter/build/ios_deployment_target.dart';
 import 'package:xcross/src/flutter/build/ios_engine_cache.dart';
+import 'package:xcross/src/flutter/build/ios_plugins.dart';
 import 'package:xcross/src/flutter/constants.dart';
 import 'package:xcross/src/flutter/errors.dart';
 import 'package:xcross/src/flutter/models/pubspec_info.dart';
@@ -112,12 +114,32 @@ final class FlutterDebugBundler {
     final outputDill = await _prepareKernelScratch();
     final packageConfig = await PackageConfigResolver.require(projectRoot);
 
+    final entrypointArg = await _resolveEntrypointArg(packageConfig);
+
+    // Federated plugins install their Dart-side implementation from here.
+    // Without it the app boots but the first plugin call throws
+    // "a platform implementation has not been set", usually before runApp,
+    // which reaches the device as a black screen.
+    final registrant = await DartPluginRegistrant.generate(
+      projectRoot: projectRoot,
+      plugins: await PluginDiscovery.discover(projectRoot),
+      entrypointUri: entrypointArg,
+    );
+    final packageUris = await PackageUris.load(packageConfig);
+    final registrantUri = registrant == null
+        ? null
+        : dartPluginRegistrantUri(registrant, packageUris);
+    if (registrantUri != null) {
+      Log.logTrace('dart plugin registrant: $registrantUri');
+    }
+
     final args = _frontendServerArgs(
       compiler: compiler,
       engineCache: engineCache,
       packageConfig: packageConfig,
       outputDill: outputDill,
-      entrypointArg: await _resolveEntrypointArg(packageConfig),
+      entrypointArg: entrypointArg,
+      dartPluginRegistrantUri: registrantUri,
     );
 
     await Log.logStep(
@@ -221,12 +243,30 @@ final class FlutterDebugBundler {
   /// trailing slash: frontend_server resolves platform_strong.dill by string
   /// concatenation. The -Ddart.* / --track-widget-creation quartet is what
   /// makes the kernel hot-reloadable.
+  ///
+  /// The registrant [path] as the compiler and the VM must see it: a URI,
+  /// never a bare filesystem path.
+  ///
+  /// At runtime the engine compares `-Dflutter.dart_plugin_registrant` against
+  /// the kernel library's `importUri`; a bare path matches no library, so the
+  /// registrant is never run and every federated plugin stays unregistered —
+  /// with no error anywhere, which is exactly how this manifests as a blank
+  /// screen. The generated file sits in `.dart_tool/flutter_build/`, outside
+  /// any package `lib/`, so this is the `file://` form in practice; the
+  /// `package:` branch covers a project that relocates it inside a package.
+  @visibleForTesting
+  static String dartPluginRegistrantUri(String path, PackageUris? packageUris) {
+    final fileUri = Uri.file(path);
+    return packageUris?.toPackageUri(fileUri)?.toString() ?? fileUri.toString();
+  }
+
   List<String> _frontendServerArgs({
     required KernelCompiler compiler,
     required IosEngineCache engineCache,
     required String packageConfig,
     required String outputDill,
     required String entrypointArg,
+    String? dartPluginRegistrantUri,
   }) => <String>[
     if (!compiler.isAot) '--disable-dart-dev',
     compiler.snapshot,
@@ -246,6 +286,16 @@ final class FlutterDebugBundler {
     if (flavor != null &&
         !dartDefines.any((d) => d.startsWith('FLUTTER_APP_FLAVOR=')))
       '-DFLUTTER_APP_FLAVOR=$flavor',
+    // All three go together: the generated registrant, the flutter library
+    // that calls it, and the define naming which library to look in. Passing
+    // fewer means the VM never runs the registrant.
+    if (dartPluginRegistrantUri != null) ...[
+      '--source',
+      dartPluginRegistrantUri,
+      '--source',
+      'package:flutter/src/dart_plugin_registrant.dart',
+      '-Dflutter.dart_plugin_registrant=$dartPluginRegistrantUri',
+    ],
     entrypointArg,
   ];
 
