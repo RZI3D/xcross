@@ -4,8 +4,10 @@ import 'dart:io';
 import 'dart:isolate';
 import 'dart:typed_data';
 
+import 'package:cli_kit/cli_kit.dart';
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
+import 'package:xcross/src/cli/basic/sdk_install.dart';
 import 'package:xcross/src/flutter/build/ios_deployment_target.dart';
 import 'package:xcross/src/flutter/build/ios_plugin_package.dart';
 import 'package:xcross/src/flutter/build/ios_plugins.dart';
@@ -2111,6 +2113,44 @@ let package = Package(
         expect(Directory(outputDir).existsSync(), isFalse);
       },
     );
+  });
+
+  group('Swift SDK / toolchain mismatch', () {
+    test('replaces the raw compiler diagnostic with actionable guidance', () {
+      expect(
+        () => GeneratedPluginsPackage.buildTranslatingSdkMismatch(
+          () => throw CliError(
+            "error: failed to build module 'UIKit'; "
+            "$swiftSdkMismatchMarker (the SDK is built with 'Apple Swift "
+            "version 6.3.2', while this compiler is 'Swift version 6.3.2 "
+            "(swift-6.3.2-RELEASE)'). Please select a toolchain which "
+            'matches the SDK.',
+          ),
+        ),
+        throwsA(
+          isA<FlutterBuildError>().having(
+            (error) => error.message,
+            'message',
+            allOf(contains('xcross sdk install'), contains('switching Swift')),
+          ),
+        ),
+      );
+    });
+
+    test('leaves every other build failure untouched', () {
+      expect(
+        () => GeneratedPluginsPackage.buildTranslatingSdkMismatch(
+          () => throw CliError('error: use of unresolved identifier'),
+        ),
+        throwsA(
+          isA<CliError>().having(
+            (error) => error.message,
+            'message',
+            contains('unresolved identifier'),
+          ),
+        ),
+      );
+    });
   });
 }
 

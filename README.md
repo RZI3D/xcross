@@ -321,6 +321,27 @@ Yes. Use `xcross compose setup`, then `xcross compose build` or `xcross compose 
 No. `xcross auth` performs the login handshake locally and persists only the resulting Developer Services session token.
 </details>
 
+<details>
+<summary><b>Builds fail with "this SDK is not supported by the compiler"</b></summary>
+
+`xcross sdk install` patches the Darwin SDK against the Swift toolchain that was selected at the time, and the SDK's Swift module interfaces can only be compiled by that toolchain. Changing the active Swift afterwards (`swiftly use`, `mise use`, or a distro upgrade) invalidates the pairing, and Swift then reports the mismatch once per importing source file:
+
+```
+error: failed to build module 'UIKit'; this SDK is not supported by the compiler
+(the SDK is built with 'Apple Swift version 6.3.2 …', while this compiler is
+'Swift version 6.3.2 (swift-6.3.2-RELEASE)'). Please select a toolchain which
+matches the SDK.
+```
+
+xcross records the toolchain each SDK was installed with and stops the build with this explanation before Swift gets there. Either select the Swift toolchain the SDK was installed with, or reinstall the SDK against the current one:
+
+```sh
+xcross sdk install ~/Downloads/Xcode.xip
+```
+
+Note that the two versions in Swift's own message can look identical: the mismatch is between compiler *builds* (an Apple/vendor build vs a swift.org release), not just version numbers.
+</details>
+
 ---
 
 ## Under the hood

@@ -284,6 +284,14 @@ void main() {
         return swift.path;
       },
       runProcess: (executable, arguments) async {
+        // Stamping the bundle asks the selected Swift for its version.
+        if (arguments.contains('--version')) {
+          expect(
+            File(executable).resolveSymbolicLinksSync(),
+            swift.resolveSymbolicLinksSync(),
+          );
+          return const CapturedProcess(0, 'Swift version 6.3.2', '');
+        }
         expect(
           File(executable).resolveSymbolicLinksSync(),
           clang.resolveSymbolicLinksSync(),
@@ -482,5 +490,161 @@ void main() {
       },
     });
     expect(DarwinSdk.isValidBundle(bundle.path), isTrue);
+  });
+
+  group('host toolchain stamp', () {
+    /// A fake toolchain layout: `bin/swift` with a sibling `clang` that
+    /// reports [resourceDir], and a `swift --version` answering [version].
+    ({
+      String swift,
+      Future<String> Function(String) locate,
+      Future<CapturedProcess> Function(String, List<String>) run,
+    })
+    fakeToolchain(Directory root, String version) {
+      final bin = Directory(p.join(root.path, 'bin'))
+        ..createSync(recursive: true);
+      final swift = File(
+        p.join(bin.path, ProcessRunner.hostExecutableName('swift')),
+      )..createSync();
+      File(
+        p.join(bin.path, ProcessRunner.hostExecutableName('clang')),
+      ).createSync();
+      final include = Directory(p.join(root.path, 'resource', 'include'))
+        ..createSync(recursive: true);
+      File(p.join(include.path, 'arm_neon.h')).writeAsStringSync('headers');
+      return (
+        swift: swift.path,
+        locate: (name) async => swift.path,
+        run: (executable, arguments) async => arguments.contains('--version')
+            ? CapturedProcess(0, version, '')
+            : CapturedProcess(0, p.dirname(include.path), ''),
+      );
+    }
+
+    test('records the toolchain the bundle was patched against', () async {
+      final temp = Directory.systemTemp.createTempSync('xcross-stamp-');
+      addTearDown(() => temp.deleteSync(recursive: true));
+      final bundle = Directory(p.join(temp.path, 'bundle'))..createSync();
+      final tools = fakeToolchain(
+        Directory(p.join(temp.path, 'tc')),
+        'Swift version 6.3.2',
+      );
+
+      await SdkInstall.replaceClangBuiltinHeaders(
+        bundle.path,
+        locateTool: tools.locate,
+        runProcess: tools.run,
+      );
+
+      final stamp = SdkInstall.readHostToolchainStamp(bundle.path);
+      expect(stamp, isNotNull);
+      expect(stamp!['version'], 'Swift version 6.3.2');
+      expect(
+        File(stamp['swift']!).resolveSymbolicLinksSync(),
+        File(tools.swift).resolveSymbolicLinksSync(),
+      );
+    });
+
+    test('no mismatch when the same toolchain is still selected', () async {
+      final temp = Directory.systemTemp.createTempSync('xcross-stamp-same-');
+      addTearDown(() => temp.deleteSync(recursive: true));
+      final bundle = Directory(p.join(temp.path, 'bundle'))..createSync();
+      final tools = fakeToolchain(
+        Directory(p.join(temp.path, 'tc')),
+        'Swift version 6.3.2',
+      );
+      await SdkInstall.replaceClangBuiltinHeaders(
+        bundle.path,
+        locateTool: tools.locate,
+        runProcess: tools.run,
+      );
+
+      expect(
+        await SdkInstall.hostToolchainMismatch(
+          bundle.path,
+          locateTool: tools.locate,
+          runProcess: tools.run,
+        ),
+        isNull,
+      );
+    });
+
+    test('reports both versions after the host Swift changes', () async {
+      final temp = Directory.systemTemp.createTempSync('xcross-stamp-drift-');
+      addTearDown(() => temp.deleteSync(recursive: true));
+      final bundle = Directory(p.join(temp.path, 'bundle'))..createSync();
+      final installed = fakeToolchain(
+        Directory(p.join(temp.path, 'tc')),
+        'Swift version 6.3.2',
+      );
+      await SdkInstall.replaceClangBuiltinHeaders(
+        bundle.path,
+        locateTool: installed.locate,
+        runProcess: installed.run,
+      );
+
+      // Same install path, upgraded in place: exactly what swiftly and mise do.
+      final upgraded = fakeToolchain(
+        Directory(p.join(temp.path, 'tc')),
+        'Swift version 6.3.3',
+      );
+      final mismatch = await SdkInstall.hostToolchainMismatch(
+        bundle.path,
+        locateTool: upgraded.locate,
+        runProcess: upgraded.run,
+      );
+
+      expect(mismatch, isNotNull);
+      expect(mismatch, contains('Swift version 6.3.2'));
+      expect(mismatch, contains('Swift version 6.3.3'));
+      expect(
+        SdkInstall.mismatchGuidance(mismatch),
+        contains('xcross sdk install'),
+      );
+    });
+
+    test('an unstamped bundle is never reported as mismatched', () async {
+      final temp = Directory.systemTemp.createTempSync('xcross-stamp-old-');
+      addTearDown(() => temp.deleteSync(recursive: true));
+      final tools = fakeToolchain(
+        Directory(p.join(temp.path, 'tc')),
+        'Swift version 6.3.3',
+      );
+
+      expect(SdkInstall.readHostToolchainStamp(temp.path), isNull);
+      expect(
+        await SdkInstall.hostToolchainMismatch(
+          temp.path,
+          locateTool: tools.locate,
+          runProcess: tools.run,
+        ),
+        isNull,
+      );
+    });
+
+    test(
+      'falls back to the toolchain path when versions are unavailable',
+      () async {
+        final temp = Directory.systemTemp.createTempSync('xcross-stamp-path-');
+        addTearDown(() => temp.deleteSync(recursive: true));
+        final bundle = Directory(p.join(temp.path, 'bundle'))..createSync();
+        final installed = fakeToolchain(Directory(p.join(temp.path, 'a')), '');
+        await SdkInstall.replaceClangBuiltinHeaders(
+          bundle.path,
+          locateTool: installed.locate,
+          runProcess: installed.run,
+        );
+
+        final other = fakeToolchain(Directory(p.join(temp.path, 'b')), '');
+        expect(
+          await SdkInstall.hostToolchainMismatch(
+            bundle.path,
+            locateTool: other.locate,
+            runProcess: other.run,
+          ),
+          contains('now resolves to'),
+        );
+      },
+    );
   });
 }

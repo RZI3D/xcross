@@ -5,6 +5,7 @@ import 'package:cli_kit/cli_kit.dart';
 import 'package:darwin_sdk_kit/darwin_sdk_kit.dart';
 import 'package:meta/meta.dart';
 import 'package:path/path.dart' as p;
+import 'package:xcross/src/cli/basic/sdk_install.dart';
 import 'package:xcross/src/flutter/build/ios_deployment_target.dart';
 import 'package:xcross/src/flutter/build/ios_plugins.dart';
 import 'package:xcross/src/flutter/build/macho_dylib_rewriter.dart';
@@ -117,6 +118,13 @@ abstract final class GeneratedPluginsPackage {
         '`xcross sdk install <Xcode.xip>` first.',
       );
     }
+    // The bundle only compiles against the toolchain it was patched with,
+    // so say so up front instead of letting Swift fail per source file with
+    // hundreds of "this SDK is not supported by the compiler" errors.
+    final mismatch = await SdkInstall.hostToolchainMismatch(sdk.swiftSdkPath);
+    if (mismatch != null) {
+      throw FlutterBuildError(SdkInstall.mismatchGuidance(mismatch));
+    }
     final swift = await ProcessRunner.locateTool('swift');
     // Real `Flutter.framework` (not our FlutterFramework binary-target
     // wrapper). Our own aggregate target resolves `import Flutter` via
@@ -190,10 +198,29 @@ abstract final class GeneratedPluginsPackage {
     );
 
     if (!windows) {
-      await build();
+      await buildTranslatingSdkMismatch(build);
       return;
     }
-    await _buildWithInteropRetry(build: build, targetBuildDir: targetBuildDir);
+    await buildTranslatingSdkMismatch(
+      () => _buildWithInteropRetry(build: build, targetBuildDir: targetBuildDir),
+    );
+  }
+
+  /// Swift reports a toolchain/SDK ABI mismatch once per importing file and
+  /// never names the cause a user can act on, so replace it with the one
+  /// instruction that fixes it. A stamped bundle is caught before the build
+  /// starts; this covers bundles installed by an older xcross, which carry
+  /// no stamp to compare against.
+  @visibleForTesting
+  static Future<void> buildTranslatingSdkMismatch(
+    Future<void> Function() build,
+  ) async {
+    try {
+      await build();
+    } on Object catch (error) {
+      if (!'$error'.contains(swiftSdkMismatchMarker)) rethrow;
+      throw FlutterBuildError(SdkInstall.mismatchGuidance(null));
+    }
   }
 
   /// Resolves Windows dependencies with the external toolset, materializes
