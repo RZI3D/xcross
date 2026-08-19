@@ -93,4 +93,63 @@ void main() {
       ),
     );
   });
+
+  test(
+    'prefers the application target over a share extension target',
+    () async {
+      await writePlist(r'$(PRODUCT_BUNDLE_IDENTIFIER)');
+      final dir = Directory(p.join(tmp.path, 'ios', 'Runner.xcodeproj'));
+      await dir.create(recursive: true);
+      await File(p.join(dir.path, 'project.pbxproj')).writeAsString('''
+/* Begin PBXNativeTarget section */
+		AA00000000000001 /* Share Extension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = BB00000000000001 /* list */;
+			name = "Share Extension";
+			productType = "com.apple.product-type.app-extension";
+		};
+		AA00000000000002 /* Runner */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = BB00000000000002 /* list */;
+			name = Runner;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin XCBuildConfiguration section */
+		CC00000000000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				PRODUCT_BUNDLE_IDENTIFIER = "com.example.Share-Extension";
+			};
+			name = Debug;
+		};
+		CC00000000000002 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				PRODUCT_BUNDLE_IDENTIFIER = com.example.MainApp;
+			};
+			name = Debug;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		BB00000000000001 /* list */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				CC00000000000001 /* Debug */,
+			);
+		};
+		BB00000000000002 /* list */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				CC00000000000002 /* Debug */,
+			);
+		};
+/* End XCConfigurationList section */
+''');
+
+      expect(IosBundleId.resolve(tmp.path), 'com.example.MainApp');
+    },
+  );
 }
