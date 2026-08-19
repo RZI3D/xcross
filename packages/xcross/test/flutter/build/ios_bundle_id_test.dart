@@ -101,52 +101,50 @@ void main() {
       final dir = Directory(p.join(tmp.path, 'ios', 'Runner.xcodeproj'));
       await dir.create(recursive: true);
       await File(p.join(dir.path, 'project.pbxproj')).writeAsString('''
-/* Begin PBXNativeTarget section */
-		AA00000000000001 /* Share Extension */ = {
+{
+	archiveVersion = 1;
+	objects = {
+		AA01 = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = BB00000000000001 /* list */;
+			buildConfigurationList = BB01;
 			name = "Share Extension";
 			productType = "com.apple.product-type.app-extension";
 		};
-		AA00000000000002 /* Runner */ = {
+		AA02 = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = BB00000000000002 /* list */;
+			buildConfigurationList = BB02;
 			name = Runner;
 			productType = "com.apple.product-type.application";
 		};
-/* End PBXNativeTarget section */
-
-/* Begin XCBuildConfiguration section */
-		CC00000000000001 /* Debug */ = {
+		CC01 = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				PRODUCT_BUNDLE_IDENTIFIER = "com.example.Share-Extension";
 			};
 			name = Debug;
 		};
-		CC00000000000002 /* Debug */ = {
+		CC02 = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				PRODUCT_BUNDLE_IDENTIFIER = com.example.MainApp;
 			};
 			name = Debug;
 		};
-/* End XCBuildConfiguration section */
-
-/* Begin XCConfigurationList section */
-		BB00000000000001 /* list */ = {
+		BB01 = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				CC00000000000001 /* Debug */,
+				CC01,
 			);
 		};
-		BB00000000000002 /* list */ = {
+		BB02 = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				CC00000000000002 /* Debug */,
+				CC02,
 			);
 		};
-/* End XCConfigurationList section */
+	};
+	rootObject = DD01;
+}
 ''');
 
       expect(IosBundleId.resolve(tmp.path), 'com.example.MainApp');

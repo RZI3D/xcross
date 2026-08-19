@@ -15,6 +15,15 @@ abstract final class InfoPlist {
   static String setBundleIdentifier(String plistXml, String bundleId) =>
       _setPlistKey(plistXml, 'CFBundleIdentifier', bundleId);
 
+  /// Read `CFBundleIdentifier`, or null when absent.
+  static String? readBundleIdentifier(String plistXml) {
+    final match = RegExp(
+      r'<key>CFBundleIdentifier</key>\s*<string>([^<]*)</string>',
+    ).firstMatch(plistXml);
+    final value = match?.group(1)?.trim();
+    return (value == null || value.isEmpty) ? null : value;
+  }
+
   /// Keys Xcode would inject at build time, added only when the template
   /// doesn't already declare them, in this exact order.
   ///

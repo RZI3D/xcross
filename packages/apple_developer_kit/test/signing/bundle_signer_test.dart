@@ -373,6 +373,72 @@ void main() {
       ),
     );
   });
+
+  test('signs an embedded app extension with its own profile', () async {
+    final app = _app(temporaryDirectory, 'withappex', 'dev.xcross.Runner');
+    const extensionId = 'dev.xcross.Runner.Share';
+    _appExtension(app.path, 'Share', extensionId);
+    final extensionAsset = await _signingAsset(
+      temporaryDirectory,
+      'appex',
+      'TESTTEAM123.$extensionId',
+    );
+
+    await BundleSigner(
+      exactAsset,
+      extensionAssets: {extensionId: extensionAsset},
+    ).signApp(app.path, signingTime: signingTime);
+
+    final appexDir = p.join(app.path, 'PlugIns', 'Share.appex');
+    // The extension is independently provisioned, unlike a nested framework.
+    expect(
+      File(p.join(appexDir, 'embedded.mobileprovision')).readAsBytesSync(),
+      orderedEquals(extensionAsset.profileCmsBytes),
+    );
+    expect(
+      File(p.join(appexDir, '_CodeSignature', 'CodeResources')).existsSync(),
+      isTrue,
+    );
+    // The host app seals the extension into its own CodeResources.
+    final rootSeal = File(
+      p.join(app.path, '_CodeSignature', 'CodeResources'),
+    ).readAsStringSync();
+    expect(rootSeal, contains('PlugIns/Share.appex'));
+  });
+
+  test('refuses an app extension with no provisioning profile', () async {
+    final app = _app(temporaryDirectory, 'unprovisioned', 'dev.xcross.Runner');
+    _appExtension(app.path, 'Share', 'dev.xcross.Runner.Share');
+
+    await expectLater(
+      BundleSigner(exactAsset).signApp(app.path, signingTime: signingTime),
+      throwsA(
+        isA<AppleError>().having(
+          (error) => error.message,
+          'message',
+          contains('no provisioning profile'),
+        ),
+      ),
+    );
+  });
+
+  test('refuses a .appex outside PlugIns', () async {
+    final app = _app(temporaryDirectory, 'strayappex', 'dev.xcross.Runner');
+    final stray = Directory(p.join(app.path, 'Stray.appex'))..createSync();
+    _writeInfo(stray.path, 'Stray', 'dev.xcross.Runner.Stray');
+    File(p.join(stray.path, 'Stray')).writeAsBytesSync(_macho());
+
+    await expectLater(
+      BundleSigner(exactAsset).preflight(app.path),
+      throwsA(
+        isA<AppleError>().having(
+          (error) => error.message,
+          'message',
+          contains('PlugIns'),
+        ),
+      ),
+    );
+  });
 }
 
 Directory _app(Directory parent, String name, String identifier) {
@@ -386,6 +452,16 @@ Directory _app(Directory parent, String name, String identifier) {
     p.join(frameworks.path, 'plugin.dylib'),
   ).writeAsBytesSync(_macho(fileType: _mhDylib));
   return app;
+}
+
+/// An embedded app extension at `<app>/PlugIns/<name>.appex`.
+void _appExtension(String app, String name, String identifier) {
+  final plugIns = Directory(p.join(app, 'PlugIns'));
+  plugIns.createSync();
+  final directory = Directory(p.join(plugIns.path, '$name.appex'))
+    ..createSync();
+  _writeInfo(directory.path, name, identifier);
+  File(p.join(directory.path, name)).writeAsBytesSync(_macho());
 }
 
 void _framework(String frameworks, String name, String identifier) {

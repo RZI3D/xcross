@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:path/path.dart' as p;
+import 'package:xcross/src/flutter/build/pbxproj.dart';
 import 'package:xcross/src/flutter/errors.dart';
 
 /// Resolves the iOS product bundle identifier the way Flutter tooling does on
@@ -20,22 +21,6 @@ abstract final class IosBundleId {
 
   static final _cfBundleIdentifierPattern = RegExp(
     r'<key>CFBundleIdentifier</key>\s*<string>([^<]*)</string>',
-  );
-
-  /// One `PBXNativeTarget` object: name, build configuration list id and
-  /// product type. `productType` closes the interesting part of the block.
-  static final _nativeTargetPattern = RegExp(
-    r'isa\s*=\s*PBXNativeTarget;(.*?)productType\s*=\s*"?([^";]+)"?\s*;',
-    dotAll: true,
-  );
-
-  static final _buildConfigurationListRefPattern = RegExp(
-    r'buildConfigurationList\s*=\s*([0-9A-Fa-f]{8,})\b',
-  );
-
-  static final _targetNamePattern = RegExp(
-    r'''^\s*name\s*=\s*(["']?)(.*?)\1;\s*$''',
-    multiLine: true,
   );
 
   static const _applicationProductType = 'com.apple.product-type.application';
@@ -76,82 +61,37 @@ abstract final class IosBundleId {
   static String? _productBundleIdFromPbxproj(String projectRoot) {
     final pbxproj = _findPbxproj(projectRoot);
     if (pbxproj == null) return null;
-    final contents = pbxproj.readAsStringSync();
 
     // Projects with app extensions (share extensions, widgets, ...) declare
-    // several PRODUCT_BUNDLE_IDENTIFIERs; the extension's often comes first.
-    // Resolve through the application target when the project graph is
-    // readable, and only then fall back to the first match in the file.
-    final fromAppTarget = _appTargetBundleId(contents);
+    // several PRODUCT_BUNDLE_IDENTIFIERs, and the extension's often comes
+    // first in the file. Resolve through the application target when the
+    // project graph parses, and only then fall back to a first-match scan.
+    final fromAppTarget = _appTargetBundleId(pbxproj.path);
     if (fromAppTarget != null) return fromAppTarget;
 
-    final match = _productBundleIdPattern.firstMatch(contents);
+    final match = _productBundleIdPattern.firstMatch(
+      pbxproj.readAsStringSync(),
+    );
     return _clean(match?.group(2));
   }
 
-  /// Bundle id declared by the `com.apple.product-type.application` target,
-  /// preferring a target literally named `Runner`.
-  static String? _appTargetBundleId(String contents) {
+  /// Bundle id of the `com.apple.product-type.application` target, preferring
+  /// a target literally named `Runner`.
+  static String? _appTargetBundleId(String pbxprojPath) {
+    final project = PbxProject.parseFile(pbxprojPath);
+    if (project == null) return null;
+
     String? fallback;
-
-    for (final target in _nativeTargetPattern.allMatches(contents)) {
-      final body = target.group(1) ?? '';
-      if (target.group(2)?.trim() != _applicationProductType) continue;
-
-      final listId = _buildConfigurationListRefPattern
-          .firstMatch(body)
-          ?.group(1);
-      if (listId == null) continue;
-
-      final bundleId = _bundleIdFromConfigurationList(contents, listId);
+    for (final target in project.nativeTargets) {
+      if (target.string('productType') != _applicationProductType) continue;
+      final bundleId = _clean(
+        project.buildSetting(target, 'PRODUCT_BUNDLE_IDENTIFIER'),
+      );
       if (bundleId == null) continue;
-
-      final name = _targetNamePattern.firstMatch(body)?.group(2)?.trim();
-      if (name == 'Runner') return bundleId;
+      if (target.string('name') == 'Runner') return bundleId;
       fallback ??= bundleId;
     }
-
     return fallback;
-  }
-
-  /// Walk `XCConfigurationList` -> `XCBuildConfiguration` objects and return
-  /// the first literal `PRODUCT_BUNDLE_IDENTIFIER` found.
-  static String? _bundleIdFromConfigurationList(
-    String contents,
-    String listId,
-  ) {
-    final list = _objectBody(contents, listId);
-    if (list == null) return null;
-
-    for (final ref in RegExp(r'\b([0-9A-Fa-f]{8,})\b').allMatches(list)) {
-      final body = _objectBody(contents, ref.group(1)!);
-      if (body == null) continue;
-      if (!body.contains('isa = XCBuildConfiguration')) continue;
-      final value = _clean(_productBundleIdPattern.firstMatch(body)?.group(2));
-      if (value != null) return value;
-    }
-    return null;
-  }
-
-  /// The `{ ... }` body of the pbxproj object with [id], brace-balanced.
-  static String? _objectBody(String contents, String id) {
-    final header = RegExp(
-      '(?<![0-9A-Fa-f])$id(?![0-9A-Fa-f])[^\\n]*?=\\s*\\{',
-    ).firstMatch(contents);
-    if (header == null) return null;
-
-    var depth = 1;
-    final start = header.end;
-    for (var i = start; i < contents.length; i++) {
-      final char = contents[i];
-      if (char == '{') {
-        depth++;
-      } else if (char == '}') {
-        depth--;
-        if (depth == 0) return contents.substring(start, i);
-      }
-    }
-    return null;
   }
 
   static String? _clean(String? raw) {

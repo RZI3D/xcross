@@ -61,11 +61,8 @@ final class NativeBackend implements DeviceBackend {
       bundleId,
       signing.identityId,
     );
-    final outputDir = p.join(
-      p.dirname(signing.identityDir),
-      'profiles',
-      signedBundleId,
-    );
+    final profilesDir = p.join(p.dirname(signing.identityDir), 'profiles');
+    final outputDir = p.join(profilesDir, signedBundleId);
 
     try {
       await _rewriteBundleIdentifier(appOrIpaPath, signedBundleId);
@@ -75,6 +72,13 @@ final class NativeBackend implements DeviceBackend {
           '$bundleId ${Log.ansi.subtle('→')} $signedBundleId',
         );
       }
+      // Embedded extensions must be renamed under the qualified app id and
+      // provisioned in their own right before the app can be signed.
+      final extensions = await _rewriteExtensionIdentifiers(
+        appOrIpaPath,
+        hostBundleId: bundleId,
+        signedHostBundleId: signedBundleId,
+      );
       final identity = await AscProvisioning.provisionDevelopmentIdentity(
         client: signing.client,
         bundleId: signedBundleId,
@@ -88,9 +92,18 @@ final class NativeBackend implements DeviceBackend {
         certificatePemPath: identity.certificatePemPath,
         provisioningProfilePath: identity.profilePath,
       );
+      final extensionAssets = await _provisionExtensions(
+        extensions,
+        signing: signing,
+        udid: udid,
+        profilesDir: profilesDir,
+      );
       await Log.logStep(
         'Signing app',
-        () => BundleSigner(asset).signApp(appOrIpaPath),
+        () => BundleSigner(
+          asset,
+          extensionAssets: extensionAssets,
+        ).signApp(appOrIpaPath),
       );
       await PymdDevices.install(appOrIpaPath, udid: udid);
     } finally {
@@ -206,6 +219,84 @@ final class NativeBackend implements DeviceBackend {
         'developer-services-${session.teamId}',
       ),
     );
+  }
+
+  /// Rewrite every embedded `PlugIns/*.appex` identifier so it stays nested
+  /// under the qualified host App ID, and return the new identifiers.
+  ///
+  /// iOS requires an extension's bundle id to be `<app id>.<suffix>`, so
+  /// qualifying the app id (`com.x.App` → `XCR-TEAM.com.x.App`) must carry the
+  /// extensions along (`XCR-TEAM.com.x.App.Share-Extension`).
+  static Future<List<String>> _rewriteExtensionIdentifiers(
+    String appPath, {
+    required String hostBundleId,
+    required String signedHostBundleId,
+  }) async {
+    final plugIns = Directory(p.join(appPath, 'PlugIns'));
+    if (!plugIns.existsSync()) return const [];
+
+    final identifiers = <String>[];
+    for (final entity in plugIns.listSync()) {
+      if (entity is! Directory || !entity.path.endsWith('.appex')) continue;
+      final plist = File(p.join(entity.path, 'Info.plist'));
+      if (!plist.existsSync()) continue;
+
+      final xml = await plist.readAsString();
+      final current = InfoPlist.readBundleIdentifier(xml);
+      if (current == null) continue;
+
+      // Preserve the suffix the project declared beneath the app id.
+      final suffix = current.startsWith('$hostBundleId.')
+          ? current.substring(hostBundleId.length)
+          : '.${p.basenameWithoutExtension(entity.path)}';
+      final signed = '$signedHostBundleId$suffix';
+
+      await plist.writeAsString(InfoPlist.setBundleIdentifier(xml, signed));
+      identifiers.add(signed);
+    }
+    identifiers.sort();
+    return identifiers;
+  }
+
+  /// Provision a development identity per embedded app extension.
+  ///
+  /// Each extension is a separate App ID on the portal, so it gets its own
+  /// profile. Free Apple developer accounts cap App IDs, hence the explicit
+  /// hint when the portal refuses one.
+  static Future<Map<String, SigningAsset>> _provisionExtensions(
+    List<String> extensionBundleIds, {
+    required SigningSession signing,
+    required String udid,
+    required String profilesDir,
+  }) async {
+    if (extensionBundleIds.isEmpty) return const {};
+
+    final assets = <String, SigningAsset>{};
+    for (final extensionBundleId in extensionBundleIds) {
+      Log.logInfo('Extension', extensionBundleId);
+      try {
+        final identity = await AscProvisioning.provisionDevelopmentIdentity(
+          client: signing.client,
+          bundleId: extensionBundleId,
+          deviceUdids: [udid],
+          outputDir: p.join(profilesDir, extensionBundleId),
+          identityDir: signing.identityDir,
+          onProgress: Log.logWarn,
+        );
+        assets[extensionBundleId] = await SigningAsset.load(
+          privateKeyPemPath: identity.privateKeyPemPath,
+          certificatePemPath: identity.certificatePemPath,
+          provisioningProfilePath: identity.profilePath,
+        );
+      } on Object catch (error) {
+        throw XcrossError(
+          'Could not provision the app extension "$extensionBundleId": $error\n'
+          'Free Apple developer accounts allow only 10 App IDs per 7 days, '
+          'and each extension needs its own.',
+        );
+      }
+    }
+    return assets;
   }
 
   /// Point the built `.app` at the qualified App ID before codesign.

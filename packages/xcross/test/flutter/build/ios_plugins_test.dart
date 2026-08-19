@@ -193,9 +193,7 @@ void main() {
       File(
         p.join(pluginRoot, 'darwin', name, 'Package.swift'),
       ).writeAsStringSync('');
-      File(
-        p.join(pluginRoot, 'darwin', '$name.podspec'),
-      ).writeAsStringSync('');
+      File(p.join(pluginRoot, 'darwin', '$name.podspec')).writeAsStringSync('');
       File(p.join(pluginRoot, 'pubspec.yaml')).writeAsStringSync('''
 name: $name
 flutter:

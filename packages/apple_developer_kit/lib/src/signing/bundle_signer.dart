@@ -15,26 +15,34 @@ import 'package:apple_developer_kit/src/signing/signing_asset.dart';
 import 'package:path/path.dart' as p;
 
 /// Directory names that always imply nested code this signer cannot handle.
+///
+/// `PlugIns` is absent on purpose: embedded app extensions are supported, and
+/// are validated by shape instead (a `.appex` directly under `PlugIns/`).
 const _forbiddenDirectoryNames = {
   'Watch',
   'WatchKit',
   'com.apple.WatchPlaceholder',
-  'PlugIns',
   'Extensions',
   'XPCServices',
 };
 
-/// Bundle suffixes that carry their own signature. `.framework` is the only
-/// nested bundle kind xcross knows how to sign.
+/// Bundle suffixes that carry their own signature. `.framework` and `.appex`
+/// are the nested bundle kinds xcross knows how to sign.
 const _unsupportedBundleSuffixes = {
   '.app',
-  '.appex',
   '.xctest',
   '.xpc',
   '.bundle',
   '.plugin',
   '.xcframework',
 };
+
+/// Nested bundle suffixes this signer handles itself.
+const _frameworkSuffix = '.framework';
+const _appExtensionSuffix = '.appex';
+
+/// The only directory an embedded app extension may live in.
+const _plugInsDirectory = 'PlugIns';
 
 /// Every Mach-O magic, read little-endian: fat and thin, 32- and 64-bit, both
 /// byte orders. Anything matching is code that would need a signature.
@@ -49,10 +57,19 @@ const _machoMagics = {
 
 /// Signs the constrained `.app` layout produced by xcross's FlutterPacker.
 class BundleSigner {
-  BundleSigner(this.asset) : _machoSigner = MachOSigner(asset);
+  /// [asset] signs the app itself. [extensionAssets] maps an embedded
+  /// extension's `CFBundleIdentifier` to the signing material provisioned for
+  /// it; each app extension needs its own App ID, profile and entitlements,
+  /// so it cannot be signed with the host app's asset.
+  BundleSigner(
+    this.asset, {
+    Map<String, SigningAsset> extensionAssets = const {},
+  }) : _machoSigner = MachOSigner(asset),
+       _extensionAssets = extensionAssets;
 
   final SigningAsset asset;
   final MachOSigner _machoSigner;
+  final Map<String, SigningAsset> _extensionAssets;
 
   /// Validates the whole bundle without changing it.
   Future<void> preflight(String appPath) async {
@@ -74,18 +91,31 @@ class BundleSigner {
       asset.profileCmsBytes,
       plan.root.path,
     );
+    // Each extension is its own signed, provisioned bundle.
+    for (final extension in plan.bundles.where((b) => b.isAppExtension)) {
+      await _atomicWrite(
+        p.join(extension.path, 'embedded.mobileprovision'),
+        _assetFor(extension).profileCmsBytes,
+        plan.root.path,
+      );
+    }
 
     // A bundle seals its children's signatures into its own CodeResources, so
     // the deepest nested code must be finished before its parent is sealed.
-    for (final framework in _deepestFirst(plan)) {
-      final resources = _codeResources(plan, framework);
-      await _writeCodeResources(plan, framework, resources);
-      await _machoSigner.signFile(
-        framework.executablePath,
-        identifier: framework.identifier,
-        teamIdentifier: asset.teamIdentifier,
-        entitlements: const {},
-        infoPlistBytes: framework.infoPlistBytes,
+    for (final nested in _deepestFirst(plan)) {
+      final resources = _codeResources(plan, nested);
+      await _writeCodeResources(plan, nested, resources);
+      final nestedAsset = _assetFor(nested);
+      await MachOSigner(nestedAsset).signFile(
+        nested.executablePath,
+        identifier: nested.identifier,
+        teamIdentifier: nestedAsset.teamIdentifier,
+        // A framework inherits the host's sandbox and needs no entitlements;
+        // an app extension is entitled in its own right.
+        entitlements: nested.isAppExtension
+            ? nestedAsset.entitlements
+            : const {},
+        infoPlistBytes: nested.infoPlistBytes,
         codeResourcesBytes: resources,
         signingTime: signingTime,
       );
@@ -112,6 +142,20 @@ class BundleSigner {
       codeResourcesBytes: rootResources,
       signingTime: signingTime,
     );
+  }
+
+  /// The signing material for [bundle]: its own provisioned asset when it is
+  /// an app extension, otherwise the app's.
+  SigningAsset _assetFor(ResolvedBundle bundle) {
+    if (!bundle.isAppExtension) return asset;
+    final extensionAsset = _extensionAssets[bundle.identifier];
+    if (extensionAsset == null) {
+      throw AppleError(
+        'App extension "${bundle.relativePath}" (${bundle.identifier}) has no '
+        "provisioning profile; it cannot be signed with the app's.",
+      );
+    }
+    return extensionAsset;
   }
 
   /// Nested bundles ordered deepest first, then by path, so signing is
@@ -175,8 +219,12 @@ class BundleSigner {
       root,
       for (final entry in entries)
         if (entry.type == FileSystemEntityType.directory &&
-            entry.relativePath.endsWith('.framework'))
+            entry.relativePath.endsWith(_frameworkSuffix))
           _readBundle(normalized, entry.path),
+      for (final entry in entries)
+        if (entry.type == FileSystemEntityType.directory &&
+            _isEmbeddedAppExtension(entry.relativePath))
+          _readBundle(normalized, entry.path, isAppExtension: true),
     ];
   }
 
@@ -247,10 +295,10 @@ class BundleSigner {
       if (executableOwners.containsKey(key)) continue;
 
       final relative = bundleRelativePath(normalized, path);
-      final insideFramework = bundles
+      final insideNestedBundle = bundles
           .skip(1)
           .any((bundle) => isWithinOrEqual(bundle.path, path));
-      if (!insideFramework && relative.split('/').contains('Frameworks')) {
+      if (!insideNestedBundle && relative.split('/').contains('Frameworks')) {
         looseBinaries.add(LooseBinary(path, relative, p.basename(path)));
       } else {
         bundleFail(normalized, path, 'unknown nested Mach-O code');
@@ -352,12 +400,32 @@ class BundleSigner {
           'unsupported nested code directory "$name"',
         );
       }
-      if (!name.endsWith('.framework') &&
+      if (name.endsWith(_appExtensionSuffix)) {
+        // A .appex is only loadable from PlugIns/ and only one level deep.
+        if (!_isEmbeddedAppExtension(entry.relativePath)) {
+          bundleFail(
+            root,
+            entry.path,
+            'app extension "$name" must live directly in $_plugInsDirectory/',
+          );
+        }
+        continue;
+      }
+      if (!name.endsWith(_frameworkSuffix) &&
           (_unsupportedBundleSuffixes.any(name.endsWith) ||
               _declaresBundleExecutable(entry.path))) {
         bundleFail(root, entry.path, 'unsupported nested code bundle "$name"');
       }
     }
+  }
+
+  /// True for `PlugIns/<Name>.appex` exactly: an app extension directly
+  /// inside the app's `PlugIns` directory.
+  static bool _isEmbeddedAppExtension(String relativePath) {
+    final segments = relativePath.split('/');
+    return segments.length == 2 &&
+        segments.first == _plugInsDirectory &&
+        segments.last.endsWith(_appExtensionSuffix);
   }
 
   /// True when a directory carries an `Info.plist` naming an executable, which
@@ -374,7 +442,12 @@ class BundleSigner {
     }
   }
 
-  ResolvedBundle _readBundle(String root, String path, {bool isRoot = false}) {
+  ResolvedBundle _readBundle(
+    String root,
+    String path, {
+    bool isRoot = false,
+    bool isAppExtension = false,
+  }) {
     final infoPath = p.join(path, 'Info.plist');
     if (FileSystemEntity.typeSync(infoPath, followLinks: false) !=
         FileSystemEntityType.file) {
@@ -425,6 +498,7 @@ class BundleSigner {
       executablePath,
       bytes,
       isRoot: isRoot,
+      isAppExtension: isAppExtension,
     );
   }
 

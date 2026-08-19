@@ -30,6 +30,7 @@ final class GeneratedPluginsBuildResult {
   const GeneratedPluginsBuildResult({
     required this.libraryPath,
     required this.dylibPaths,
+    required this.modulesDir,
   });
 
   /// Absolute path to the built `libFlutterPluginsGenerated.dylib`.
@@ -37,6 +38,11 @@ final class GeneratedPluginsBuildResult {
 
   /// Absolute paths to every dynamic library produced by SwiftPM.
   final List<String> dylibPaths;
+
+  /// Absolute path to SwiftPM's `Modules` directory holding the built
+  /// `.swiftmodule` files, or null when SwiftPM did not emit one. App
+  /// extensions that `import` a plugin module compile against this.
+  final String? modulesDir;
 }
 
 /// Synthesizes and builds a Swift Package Manager package that aggregates
@@ -202,7 +208,8 @@ abstract final class GeneratedPluginsPackage {
       return;
     }
     await buildTranslatingSdkMismatch(
-      () => _buildWithInteropRetry(build: build, targetBuildDir: targetBuildDir),
+      () =>
+          _buildWithInteropRetry(build: build, targetBuildDir: targetBuildDir),
     );
   }
 
@@ -568,9 +575,13 @@ abstract final class GeneratedPluginsPackage {
         producedDylibNames: dylibNames,
       );
     }
+    // SwiftPM emits .swiftmodule files into a sibling `Modules` directory;
+    // app-extension targets importing a plugin need it on their include path.
+    final modules = Directory(p.join(targetDebugDir, 'Modules'));
     return GeneratedPluginsBuildResult(
       libraryPath: aggregatePath,
       dylibPaths: List.unmodifiable(dylibPaths),
+      modulesDir: modules.existsSync() ? p.absolute(modules.path) : null,
     );
   }
 

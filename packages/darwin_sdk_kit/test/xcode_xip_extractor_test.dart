@@ -78,9 +78,9 @@ void main() {
 
     test('accepts an archive carrying a Content entry', () async {
       final path = '${tempDir.path}/ok.xip';
-      await File(path).writeAsBytes(
-        buildXar({'Content': utf8.encode('payload')}),
-      );
+      await File(
+        path,
+      ).writeAsBytes(buildXar({'Content': utf8.encode('payload')}));
 
       await expectLater(XcodeXipExtractor.validate(path), completes);
     });
@@ -105,9 +105,9 @@ void main() {
 
     test('rejects a XAR archive with no Content entry', () async {
       final path = '${tempDir.path}/no_content.xip';
-      await File(path).writeAsBytes(
-        buildXar({'Metadata': utf8.encode('only metadata')}),
-      );
+      await File(
+        path,
+      ).writeAsBytes(buildXar({'Metadata': utf8.encode('only metadata')}));
 
       await expectLater(
         XcodeXipExtractor.validate(path),

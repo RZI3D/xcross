@@ -4,9 +4,11 @@ import 'package:cli_kit/cli_kit.dart';
 import 'package:darwin_sdk_kit/darwin_sdk_kit.dart';
 import 'package:meta/meta.dart';
 import 'package:path/path.dart' as p;
+import 'package:xcross/src/flutter/build/app_extension_builder.dart';
 import 'package:xcross/src/flutter/build/flutter_debug_bundler.dart';
 import 'package:xcross/src/flutter/build/info_plist.dart';
 import 'package:xcross/src/flutter/build/internal/runner_binary.dart';
+import 'package:xcross/src/flutter/build/ios_app_extensions.dart';
 import 'package:xcross/src/flutter/build/ios_deployment_target.dart';
 import 'package:xcross/src/flutter/build/ios_engine_cache.dart';
 import 'package:xcross/src/flutter/build/ios_plugin_package.dart';
@@ -77,12 +79,19 @@ final class FlutterPacker {
       pluginsLibrary: pluginsBuild?.libraryPath,
     );
 
+    final extensions = await _buildAppExtensions(
+      deploymentTarget: deploymentTarget,
+      flutterXcframework: runnerResult.xcframework,
+      pluginsBuild: pluginsBuild,
+    );
+
     return _assembleAndPersistBundle(
       appFramework: appFramework,
       xcframework: runnerResult.xcframework,
       runnerBinary: runnerResult.runnerBinary,
       pluginLibraries: pluginsBuild?.dylibPaths ?? const [],
       deploymentTarget: deploymentTarget,
+      extensions: extensions,
     );
   }
 
@@ -219,6 +228,50 @@ final class FlutterPacker {
     );
   }
 
+  /// Build the project's iOS app extensions (share/action extensions), if any.
+  ///
+  /// Extensions whose bundle id is not nested under the host app's are
+  /// skipped with a warning: iOS refuses to install those, and dropping one
+  /// is better than failing an otherwise valid app build.
+  Future<List<BuiltAppExtension>> _buildAppExtensions({
+    required IosDeploymentTarget deploymentTarget,
+    required String flutterXcframework,
+    GeneratedPluginsBuildResult? pluginsBuild,
+  }) async {
+    final discovered = IosAppExtensions.discover(projectRoot);
+    if (discovered.isEmpty) return const [];
+
+    final buildable = <IosAppExtension>[];
+    for (final extension in discovered) {
+      if (extension.suffixUnder(bundleId) == null) {
+        Log.logWarn(
+          'Skipping app extension "${extension.name}": its bundle id '
+          '${extension.bundleId} is not nested under the app id $bundleId.',
+        );
+        continue;
+      }
+      if (extension.appGroups.isNotEmpty) {
+        Log.logWarn(
+          'App extension "${extension.name}" declares App Groups '
+          '(${extension.appGroups.join(', ')}). xcross does not provision App '
+          'Groups yet, so the extension and the app cannot share a container: '
+          'shared files/data will not reach the app.',
+        );
+      }
+      buildable.add(extension);
+    }
+
+    return AppExtensionBuilder.buildAll(
+      projectRoot: projectRoot,
+      extensions: buildable,
+      deploymentTarget: deploymentTarget,
+      outputDir: p.join(projectRoot, 'build', 'xcross-flutter-extensions'),
+      flutterXcframework: flutterXcframework,
+      pluginsLibrary: pluginsBuild?.libraryPath,
+      pluginModulesDir: pluginsBuild?.modulesDir,
+    );
+  }
+
   /// Compile the ObjC Runner shim and return both the xcframework path and the
   /// linked Runner binary path.
   Future<RunnerBinary> _buildRunnerBinary(
@@ -258,6 +311,7 @@ final class FlutterPacker {
     required String runnerBinary,
     required List<String> pluginLibraries,
     required IosDeploymentTarget deploymentTarget,
+    required List<BuiltAppExtension> extensions,
   }) async {
     // Stage in a temp dir so the destination is only touched once everything
     // is in place.
@@ -270,6 +324,7 @@ final class FlutterPacker {
       runnerBinary: runnerBinary,
       pluginLibraries: pluginLibraries,
       deploymentTarget: deploymentTarget,
+      extensions: extensions,
     );
 
     final dest = p.join(projectRoot, 'build', 'xcross-ios', '$appName.app');
@@ -293,6 +348,7 @@ final class FlutterPacker {
     required String runnerBinary,
     required List<String> pluginLibraries,
     required IosDeploymentTarget deploymentTarget,
+    required List<BuiltAppExtension> extensions,
   }) async {
     final frameworksDir = p.join(bundleDir, 'Frameworks');
     await Directory(frameworksDir).create(recursive: true);
@@ -308,8 +364,26 @@ final class FlutterPacker {
     await _copyDirectory(appFramework, p.join(frameworksDir, 'App.framework'));
     await copyPluginLibraries(pluginLibraries, frameworksDir);
 
+    await _embedAppExtensions(bundleDir, extensions);
     await _copyOptionalRunnerResources(bundleDir);
     await _writeInfoPlist(bundleDir, deploymentTarget: deploymentTarget);
+  }
+
+  /// Copy each built `.appex` into the app's `PlugIns` directory, the only
+  /// location iOS looks for embedded app extensions.
+  static Future<void> _embedAppExtensions(
+    String bundleDir,
+    List<BuiltAppExtension> extensions,
+  ) async {
+    if (extensions.isEmpty) return;
+    final plugInsDir = p.join(bundleDir, 'PlugIns');
+    await Directory(plugInsDir).create(recursive: true);
+    for (final extension in extensions) {
+      await _copyDirectory(
+        extension.bundlePath,
+        p.join(plugInsDir, extension.extension.bundleName),
+      );
+    }
   }
 
   /// Copies every SwiftPM-produced dylib into the app's Frameworks directory.
