@@ -247,9 +247,7 @@ ${entries.join('\n')}
 /// registration actually run, so it is worth pinning regardless.
 void _frontendServerFlags() {
   group('frontend_server registrant flags', () {
-    final source = File(
-      'lib/src/flutter/build/flutter_debug_bundler.dart',
-    ).readAsStringSync();
+    final source = _bundlerSource().readAsStringSync();
 
     test('passes the registrant, the flutter shim, and the define', () {
       expect(source, contains("'--source',\n      dartPluginRegistrantUri"));
@@ -277,4 +275,17 @@ void _frontendServerFlags() {
       );
     });
   });
+}
+
+/// Resolves the bundler source regardless of where `dart test` was invoked.
+///
+/// CI runs `dart test packages/xcross` from the repo root, so
+/// `Directory.current` is the repo root and the package-relative form does not
+/// resolve; running `dart test` from inside the package is the opposite. Try
+/// both rather than pinning the file load to one working directory.
+File _bundlerSource() {
+  const relative = 'lib/src/flutter/build/flutter_debug_bundler.dart';
+  final fromPackageRoot = File(relative);
+  if (fromPackageRoot.existsSync()) return fromPackageRoot;
+  return File(p.join('packages', 'xcross', relative));
 }
