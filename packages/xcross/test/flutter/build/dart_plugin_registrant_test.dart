@@ -247,7 +247,10 @@ ${entries.join('\n')}
 /// registration actually run, so it is worth pinning regardless.
 void _frontendServerFlags() {
   group('frontend_server registrant flags', () {
-    final source = _bundlerSource().readAsStringSync();
+    // Git may check this source out with CRLF on Windows, so normalize before
+    // matching against LF-embedded expectations. Same hazard the sibling
+    // preview-macro-stub test documents.
+    final source = _bundlerSource().readAsStringSync().replaceAll('\r\n', '\n');
 
     test('passes the registrant, the flutter shim, and the define', () {
       expect(source, contains("'--source',\n      dartPluginRegistrantUri"));
