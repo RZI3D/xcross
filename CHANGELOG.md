@@ -1,3 +1,21 @@
+## 1.1.1
+
+- Detect a Swift toolchain that no longer matches the installed Darwin SDK.
+  `xcross sdk install` patches the SDK with the selected toolchain's clang
+  headers, so switching Swift afterwards made every plugin build fail with
+  "this SDK is not supported by the compiler" and no mention of the SDK.
+  The toolchain is now recorded at install time and checked before building,
+  with a message naming the cause and the command that fixes it.
+- Require Swift on `PATH` before `xcross setup` and `xcross sdk install`,
+  which previously failed only after a sudo prompt and a full package
+  transaction, or after extracting tens of gigabytes. `xcross setup
+  --no-swift-check` still bootstraps Swift's own build dependencies.
+- Verify the Xcode archive before `xcross sdk install` removes the previous
+  SDK, so a wrong path or a partial download no longer leaves the host with
+  no SDK at all.
+- Fail the Windows release job on failing tests, and fix the 7 Windows-only
+  test bugs that gap had been hiding.
+
 ## 1.1.0
 
 - Add Compose Multiplatform support: `xcross compose setup`, `xcross compose
