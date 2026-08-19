@@ -1,3 +1,26 @@
+## 1.1.2
+
+- Build, embed, sign and install iOS **app extensions** (share and action
+  extensions). Extension targets are read from the Xcode project, compiled
+  against the Darwin SDK, embedded at `<App>.app/PlugIns/<Name>.appex`, and
+  each is given its own App ID and provisioning profile. This is what lets
+  plugins such as `receive_sharing_intent` appear in the iOS share sheet.
+  See `docs/app-extensions.md`. (#23)
+- Resolve the bundle id from the **application** target rather than the first
+  `PRODUCT_BUNDLE_IDENTIFIER` in `project.pbxproj`. A project with a share
+  extension usually lists the extension's first, so xcross signed, installed
+  and launched the extension instead of the app, showing a blank screen. (#23)
+- Expand `$(MARKETING_VERSION)` and `$(CURRENT_PROJECT_VERSION)` from the
+  application target's build settings. The default `ios/Runner/Info.plist`
+  references both, so apps were shipping a literal `$(MARKETING_VERSION)` as
+  their version string. Embedded extensions inherit the app's versions, which
+  iOS requires them to match.
+- Register App Groups declared by an app or its extensions, qualified per
+  account (`group.XCR-<TEAM>.…`) because App Group ids are globally unique.
+  Enabling the capability on the App IDs is still a manual step on
+  developer.apple.com; xcross reuses an existing group, so the next run picks
+  it up.
+
 ## 1.1.1
 
 - Detect a Swift toolchain that no longer matches the installed Darwin SDK.

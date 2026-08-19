@@ -1,4 +1,4 @@
-## Unreleased
+## 1.1.2
 
 - Build, embed, sign and install iOS **app extensions** (share and action
   extensions). Extension targets are read from the Xcode project, compiled
