@@ -1936,18 +1936,42 @@ let package = Package(
         // error, and an expansion request must return empty source so the
         // macro compiles away to nothing.
         final process = await Process.start(stubPath, const []);
+        // The stub redirects its own stdout to stderr, so anything arriving
+        // there is a crash or diagnostic. Drain it: it is the only evidence
+        // available when the wire protocol goes wrong.
+        final stderrBuffer = StringBuffer();
+        final stderrDone = process.stderr
+            .transform(utf8.decoder)
+            .forEach(stderrBuffer.write);
         // stdout is a single-subscription Stream<List<int>> of arbitrarily
         // sized chunks, not one event per byte, so exact-length reads need
         // their own buffer over one shared subscription.
         final incoming = <int>[];
         var chunkArrived = Completer<void>();
-        final subscription = process.stdout.listen((chunk) {
-          incoming.addAll(chunk);
-          if (!chunkArrived.isCompleted) chunkArrived.complete();
-        });
+        var stdoutClosed = false;
+        final subscription = process.stdout.listen(
+          (chunk) {
+            incoming.addAll(chunk);
+            if (!chunkArrived.isCompleted) chunkArrived.complete();
+          },
+          onDone: () {
+            // Without this the reader below would await a completer nobody
+            // completes and the test would die on the 30s suite timeout with
+            // no clue why, instead of reporting the stub's own exit.
+            stdoutClosed = true;
+            if (!chunkArrived.isCompleted) chunkArrived.complete();
+          },
+        );
         addTearDown(subscription.cancel);
         Future<Uint8List> readExact(int count) async {
           while (incoming.length < count) {
+            if (stdoutClosed) {
+              await stderrDone;
+              fail(
+                'stub closed stdout after ${incoming.length} of $count bytes; '
+                'exit=${await process.exitCode} stderr=$stderrBuffer',
+              );
+            }
             await chunkArrived.future;
             chunkArrived = Completer<void>();
           }

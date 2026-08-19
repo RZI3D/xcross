@@ -112,8 +112,14 @@ jobs:
         with:
           sdk: stable
 
+      # bash, not the pwsh default: GitHub only propagates $LASTEXITCODE from
+      # the final line of a pwsh `run` block, so a failing `dart test` on any
+      # earlier line is silently swallowed and the job reports success. bash
+      # with `set -e` fails the step on the first non-zero command.
       - name: Verify Dart code
+        shell: bash
         run: |
+          set -euo pipefail
           dart pub get
           dart analyze
           dart test packages/xcross

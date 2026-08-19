@@ -671,7 +671,10 @@ void main() {
             'cmd.exe',
             '/d',
             '/c',
-            allOf(contains('.compose-staging-'), endsWith('bin/konanc.bat')),
+            allOf(
+              contains('.compose-staging-'),
+              endsWith(p.join('bin', 'konanc.bat')),
+            ),
             contains('hello.kt'),
             '-target',
             'mingw_x64',
@@ -868,7 +871,10 @@ void main() {
 
           expect(
             commands.single.first,
-            allOf(contains('.compose-staging-'), endsWith('bin/konanc')),
+            allOf(
+              contains('.compose-staging-'),
+              endsWith(p.join('bin', 'konanc')),
+            ),
           );
           expect(commands.single[1], endsWith('hello.kt'));
           expect(commands.single[2], '-target');
@@ -1211,9 +1217,16 @@ void _writeCompleteMarker(ComposeSetupOptions options) {
     );
 }
 
+/// Snapshots a directory as `relative path -> contents`.
+///
+/// Keys are forward-slashed so callers can assert one literal path on every
+/// host; `p.relative` alone yields `bin\konanc` on Windows.
 Map<String, String> _snapshotDirectory(Directory directory) => {
   for (final file in directory.listSync(recursive: true).whereType<File>())
-    p.relative(file.path, from: directory.path): file.readAsStringSync(),
+    p
+        .relative(file.path, from: directory.path)
+        .replaceAll(String.fromCharCode(92), '/'): file
+        .readAsStringSync(),
 };
 
 String _matchingSha256(File file, ComposeSetupOptions options) {

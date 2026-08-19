@@ -561,7 +561,14 @@ void main() {
   });
 }
 
-String _slash(String value) => p.normalize(value).replaceAll(r'\\', '/');
+/// Mirrors `_slash` in konan_configuration.dart, which writes konan property
+/// values with forward slashes on every host.
+///
+/// This must match a *single* backslash. The raw string `r'\\'` is two
+/// characters, so it never matches a real Windows separator and silently
+/// leaves the path untouched.
+String _slash(String value) =>
+    p.normalize(value).replaceAll(String.fromCharCode(92), '/');
 
 final class _Fixture {
   _Fixture._(this.temp, this.host)
