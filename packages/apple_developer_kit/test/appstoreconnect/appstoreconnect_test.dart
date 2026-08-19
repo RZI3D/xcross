@@ -159,7 +159,7 @@ void main() {
     expect(warnings, anyElement(contains('App Groups')));
   });
 
-  test('explains that a free team may not manage capabilities', () async {
+  test('explains how to add App Groups by hand when refused', () async {
     final temp = Directory.systemTemp.createTempSync('xcross_app_groups_403');
     addTearDown(() => temp.deleteSync(recursive: true));
     final client = _FakeProvisioningClient()
@@ -169,8 +169,8 @@ void main() {
       );
     final warnings = <String>[];
 
-    // Apple answers 403 for a personal (free) team; the raw message is
-    // useless to a user, so it is translated into the real reason.
+    // Apple answers 403 "The API key in use does not allow this request";
+    // the raw message is useless, so it becomes an actionable instruction.
     await AscProvisioning.provisionDevelopmentIdentity(
       client: client,
       bundleId: 'com.example.app',
@@ -180,7 +180,7 @@ void main() {
       onProgress: warnings.add,
     );
 
-    expect(warnings, anyElement(contains('paid Developer Program')));
+    expect(warnings, anyElement(contains('developer.apple.com')));
   });
 
   test('revokes team certificates and reissues on create 409', () async {

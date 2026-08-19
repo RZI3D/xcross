@@ -171,18 +171,23 @@ abstract final class AscProvisioning {
         appGroupResourceIds: resourceIds,
       );
     } on Object catch (error) {
-      // A personal (free) Apple ID team is refused with HTTP 403 "The API key
-      // in use does not allow this request": Apple only lets paid Developer
-      // Program teams manage capabilities. That must not sink an otherwise
-      // working install, so it degrades to a warning; the app and extension
-      // simply won't share a container.
+      // developerservices2 (the Apple ID path) answers 403 "The API key in
+      // use does not allow this request" here on every team tried, free and
+      // company alike: this legacy endpoint appears not to expose capability
+      // management to Xcode-style sessions at all. Enabling App Groups by
+      // hand on developer.apple.com works and is picked up on the next run,
+      // since the group is looked up before being registered.
+      //
+      // Never fatal: the app, its extensions and their profiles are all
+      // valid without it. Only the shared container is missing.
       final forbidden = error is AppleApiError && error.statusCode == 403;
       onProgress?.call(
         forbidden
-            ? 'App Groups (${appGroups.join(', ')}) could not be enabled: '
-                  'Apple only allows paid Developer Program teams to manage '
-                  'capabilities. The extension will run, but it cannot share '
-                  'data with the app.'
+            ? 'App Groups (${appGroups.join(', ')}) could not be enabled '
+                  "automatically: Apple's developer session API refuses "
+                  'capability changes. Add the group to the App IDs at '
+                  'developer.apple.com and re-run to share data between the '
+                  'app and its extensions.'
             : 'Could not enable App Groups (${appGroups.join(', ')}) on '
                   '${bundleIdResource.identifier}: $error',
       );
