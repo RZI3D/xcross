@@ -180,14 +180,27 @@ final class FlutterPacker {
     final plugins = await PluginDiscovery.discover(projectRoot);
     final spmPlugins = <IosPlugin>[];
     for (final plugin in plugins) {
+      final dir = plugin.platformDirectoryName;
       if (plugin.usesSwiftPackageManager) {
         spmPlugins.add(plugin);
       } else if (plugin.usesCocoaPods) {
         Log.logWarn(
           'Plugin "${plugin.name}" only ships a CocoaPods podspec '
-          '(no ios/${plugin.name}/Package.swift); its native iOS code will '
+          '(no $dir/${plugin.name}/Package.swift); its native iOS code will '
           'not be included. xcross only supports Swift Package Manager '
           'plugins.',
+        );
+      } else if (plugin.declaresNativeIosCode) {
+        // The plugin's pubspec claims a native iOS pluginClass, but neither a
+        // Package.swift nor a podspec turned up where they were looked for.
+        // Staying silent here is what made a dropped plugin present as a black
+        // screen: the app launches, then the first method channel call to the
+        // missing implementation never returns.
+        Log.logWarn(
+          'Plugin "${plugin.name}" declares native iOS code but no '
+          '$dir/${plugin.name}/Package.swift or $dir/${plugin.name}.podspec '
+          'was found under ${plugin.packageRoot}; its plugin channels will '
+          'not respond at runtime.',
         );
       }
     }

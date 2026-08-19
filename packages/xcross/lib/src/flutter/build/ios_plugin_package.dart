@@ -689,6 +689,7 @@ abstract final class GeneratedPluginsPackage {
       pluginPackageDirs[plugin.name] = await _stagePluginPackage(
         alias: packageAlias,
         target: plugin.swiftPackageDir,
+        platformDir: plugin.platformDirectoryName,
         vendorDir: shouldVendor ? vendorDir : null,
       );
     }
@@ -704,9 +705,15 @@ abstract final class GeneratedPluginsPackage {
   /// Stages [target] at [alias], using a shallow overlay when the Swift
   /// manifest needs host fixes (linker flags, Windows CRT imports) or when
   /// remote URL dependencies are vendored to path deps.
+  ///
+  /// [platformDir] is the package-root subdirectory [target] sits in — `ios`
+  /// normally, `darwin` for shared-source Apple plugins. The staged tree keeps
+  /// the same shape so relative paths inside the plugin's `Package.swift`
+  /// (`../../src`, shared header search paths) still resolve.
   static Future<String> _stagePluginPackage({
     required String alias,
     required String target,
+    String platformDir = 'ios',
     String? vendorDir,
   }) async {
     var stagedPackage = alias;
@@ -717,12 +724,13 @@ abstract final class GeneratedPluginsPackage {
         sourceRoot: packageRoot,
         destinationRoot: alias,
         packageName: p.basename(target),
+        platformDir: platformDir,
       );
       await _createDirectoryAlias(
-        p.join(alias, 'ios', _flutterFrameworkPackageName),
+        p.join(alias, platformDir, _flutterFrameworkPackageName),
         p.join(p.dirname(alias), _flutterFrameworkPackageName),
       );
-      stagedPackage = p.join(alias, 'ios', p.basename(target));
+      stagedPackage = p.join(alias, platformDir, p.basename(target));
     }
 
     final manifest = await File(p.join(target, 'Package.swift')).readAsString();
@@ -858,12 +866,15 @@ abstract final class GeneratedPluginsPackage {
     required String sourceRoot,
     required String destinationRoot,
     required String packageName,
+    String platformDir = 'ios',
   }) async {
-    await Directory(p.join(destinationRoot, 'ios')).create(recursive: true);
-    final staged = <String>{'ios'};
+    await Directory(
+      p.join(destinationRoot, platformDir),
+    ).create(recursive: true);
+    final staged = <String>{platformDir};
     await for (final entity in Directory(sourceRoot).list(followLinks: false)) {
       final name = p.basename(entity.path);
-      if (name == 'ios' ||
+      if (name == platformDir ||
           _iosUnreachableEntries.contains(name.toLowerCase())) {
         continue;
       }
@@ -879,19 +890,19 @@ abstract final class GeneratedPluginsPackage {
 
     final stagedIos = <String>{packageName, _flutterFrameworkPackageName};
     await for (final entity in Directory(
-      p.join(sourceRoot, 'ios'),
+      p.join(sourceRoot, platformDir),
     ).list(followLinks: false)) {
       final name = p.basename(entity.path);
       if (name == packageName || name == _flutterFrameworkPackageName) continue;
       stagedIos.add(name);
       await _stageEntity(
         entity,
-        p.join(destinationRoot, 'ios', name),
+        p.join(destinationRoot, platformDir, name),
         copyDirectories: true,
         excludedSourcePath: destinationRoot,
       );
     }
-    await _pruneUnexpected(p.join(destinationRoot, 'ios'), stagedIos);
+    await _pruneUnexpected(p.join(destinationRoot, platformDir), stagedIos);
   }
 
   /// Deletes entries of [directory] not named in [expected], so previously

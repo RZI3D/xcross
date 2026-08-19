@@ -182,4 +182,170 @@ void main() {
       throwsA(isA<FlutterBuildError>()),
     );
   });
+
+  group('shared_darwin_source', () {
+    /// Lays out a plugin whose native Apple sources live in a shared
+    /// `darwin/` directory, the way `shared_preferences_foundation` and the
+    /// other federated Apple implementation packages ship.
+    String writeSharedDarwinPlugin(String name) {
+      final pluginRoot = p.join(tmp.path, name);
+      Directory(p.join(pluginRoot, 'darwin', name)).createSync(recursive: true);
+      File(
+        p.join(pluginRoot, 'darwin', name, 'Package.swift'),
+      ).writeAsStringSync('');
+      File(
+        p.join(pluginRoot, 'darwin', '$name.podspec'),
+      ).writeAsStringSync('');
+      File(p.join(pluginRoot, 'pubspec.yaml')).writeAsStringSync('''
+name: $name
+flutter:
+  plugin:
+    platforms:
+      ios:
+        pluginClass: ${name}Plugin
+        sharedDarwinSource: true
+''');
+      return pluginRoot;
+    }
+
+    test('resolves native sources under darwin/ instead of ios/', () async {
+      final pluginRoot = writeSharedDarwinPlugin('shared_prefs_foundation');
+
+      writeDependenciesFile({
+        'plugins': {
+          'ios': [
+            {
+              'name': 'shared_prefs_foundation',
+              'path': pluginRoot,
+              'shared_darwin_source': true,
+            },
+          ],
+        },
+      });
+
+      final plugin = (await PluginDiscovery.discover(tmp.path)).single;
+
+      expect(plugin.sharedDarwinSource, isTrue);
+      expect(plugin.platformDirectoryName, 'darwin');
+      expect(
+        plugin.swiftPackageDir,
+        p.join(pluginRoot, 'darwin', 'shared_prefs_foundation'),
+      );
+      expect(
+        plugin.podspecPath,
+        p.join(pluginRoot, 'darwin', 'shared_prefs_foundation.podspec'),
+      );
+      // The regression: these were both false, so the plugin was dropped from
+      // the build with no warning and its channels hung at runtime.
+      expect(plugin.usesSwiftPackageManager, isTrue);
+      expect(plugin.usesCocoaPods, isTrue);
+    });
+
+    test('a darwin/ layout is not found without the flag', () async {
+      final pluginRoot = writeSharedDarwinPlugin('unflagged_plugin');
+
+      writeDependenciesFile({
+        'plugins': {
+          'ios': [
+            {'name': 'unflagged_plugin', 'path': pluginRoot},
+          ],
+        },
+      });
+
+      final plugin = (await PluginDiscovery.discover(tmp.path)).single;
+
+      expect(plugin.sharedDarwinSource, isFalse);
+      expect(plugin.platformDirectoryName, 'ios');
+      expect(plugin.usesSwiftPackageManager, isFalse);
+      // Still flagged as expecting native code, so the build warns rather
+      // than dropping it silently.
+      expect(plugin.declaresNativeIosCode, isTrue);
+    });
+
+    test('defaults to ios/ when the flag is absent or false', () async {
+      final pluginRoot = p.join(tmp.path, 'regular_plugin');
+      await Directory(
+        p.join(pluginRoot, 'ios', 'regular_plugin'),
+      ).create(recursive: true);
+      File(
+        p.join(pluginRoot, 'ios', 'regular_plugin', 'Package.swift'),
+      ).writeAsStringSync('');
+
+      writeDependenciesFile({
+        'plugins': {
+          'ios': [
+            {
+              'name': 'regular_plugin',
+              'path': pluginRoot,
+              'shared_darwin_source': false,
+            },
+          ],
+        },
+      });
+
+      final plugin = (await PluginDiscovery.discover(tmp.path)).single;
+
+      expect(plugin.sharedDarwinSource, isFalse);
+      expect(plugin.platformDirectoryName, 'ios');
+      expect(plugin.usesSwiftPackageManager, isTrue);
+    });
+
+    test('equality and hashCode account for the flag', () {
+      const shared = IosPlugin(
+        name: 'plugin',
+        packageRoot: '/pkg',
+        sharedDarwinSource: true,
+      );
+      const notShared = IosPlugin(name: 'plugin', packageRoot: '/pkg');
+
+      expect(shared, isNot(notShared));
+      expect(shared.hashCode, isNot(notShared.hashCode));
+    });
+  });
+
+  group('declaresNativeIosCode', () {
+    test('false for a plugin with no ios pluginClass', () async {
+      final pluginRoot = p.join(tmp.path, 'dart_only');
+      await Directory(pluginRoot).create(recursive: true);
+      File(p.join(pluginRoot, 'pubspec.yaml')).writeAsStringSync('''
+name: dart_only
+flutter:
+  plugin:
+    platforms:
+      ios:
+        dartPluginClass: DartOnly
+''');
+
+      writeDependenciesFile({
+        'plugins': {
+          'ios': [
+            {'name': 'dart_only', 'path': pluginRoot},
+          ],
+        },
+      });
+
+      expect(
+        (await PluginDiscovery.discover(tmp.path)).single.declaresNativeIosCode,
+        isFalse,
+      );
+    });
+
+    test('false when the pubspec is missing entirely', () async {
+      final pluginRoot = p.join(tmp.path, 'no_pubspec');
+      await Directory(pluginRoot).create(recursive: true);
+
+      writeDependenciesFile({
+        'plugins': {
+          'ios': [
+            {'name': 'no_pubspec', 'path': pluginRoot},
+          ],
+        },
+      });
+
+      expect(
+        (await PluginDiscovery.discover(tmp.path)).single.declaresNativeIosCode,
+        isFalse,
+      );
+    });
+  });
 }

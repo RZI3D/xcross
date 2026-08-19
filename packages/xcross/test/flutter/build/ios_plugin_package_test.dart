@@ -39,11 +39,15 @@ void main() {
     String name, {
     String? pluginClass,
     String packageManifest = '',
+    bool sharedDarwinSource = false,
   }) {
     final packageRoot = p.join(tmp.path, name);
-    Directory(p.join(packageRoot, 'ios', name)).createSync(recursive: true);
+    final platformDir = sharedDarwinSource ? 'darwin' : 'ios';
+    Directory(
+      p.join(packageRoot, platformDir, name),
+    ).createSync(recursive: true);
     File(
-      p.join(packageRoot, 'ios', name, 'Package.swift'),
+      p.join(packageRoot, platformDir, name, 'Package.swift'),
     ).writeAsStringSync(packageManifest);
 
     final pluginSection = pluginClass == null
@@ -59,7 +63,11 @@ flutter:
       p.join(packageRoot, 'pubspec.yaml'),
     ).writeAsStringSync('name: $name\n$pluginSection');
 
-    return IosPlugin(name: name, packageRoot: packageRoot);
+    return IosPlugin(
+      name: name,
+      packageRoot: packageRoot,
+      sharedDarwinSource: sharedDarwinSource,
+    );
   }
 
   group('flutterFrameworkManifest', () {
@@ -1223,6 +1231,109 @@ let package = Package(
         isFalse,
       );
     });
+
+    test('stages a sharedDarwinSource plugin from its darwin/ dir', () async {
+      final plugin = makePlugin(
+        'shared_prefs_foundation',
+        sharedDarwinSource: true,
+        packageManifest: '''
+// swift-tools-version: 5.9
+import PackageDescription
+let package = Package(name: "shared_prefs_foundation")
+''',
+      );
+      final flutterXcframework = p.join(tmp.path, 'Flutter.xcframework');
+      Directory(flutterXcframework).createSync(recursive: true);
+      final outputDir = p.join(tmp.path, 'out');
+
+      await GeneratedPluginsPackage.writeGeneratedPackages(
+        outputDir: outputDir,
+        plugins: [plugin],
+        flutterXcframework: flutterXcframework,
+        deploymentTarget: const IosDeploymentTarget('15.6'),
+      );
+
+      // The aggregate manifest has to point at the staged darwin package,
+      // otherwise SwiftPM never compiles it and the plugin is missing from
+      // the app at runtime.
+      final manifest = File(
+        p.join(outputDir, 'Plugins', 'Package.swift'),
+      ).readAsStringSync();
+      expect(manifest, contains('shared_prefs_foundation'));
+      expect(
+        Directory(
+          p.join(outputDir, 'Packages', 'shared_prefs_foundation'),
+        ).existsSync(),
+        isTrue,
+      );
+    });
+
+    test(
+      'preserves packageRoot/darwin/package ancestry when vendoring',
+      () async {
+        final plugin = makePlugin(
+          'shared_darwin_plugin',
+          sharedDarwinSource: true,
+          packageManifest: '''
+// swift-tools-version: 5.9
+import PackageDescription
+let package = Package(
+    name: "shared_darwin_plugin",
+    dependencies: [.package(path: "../FlutterFramework")]
+)
+''',
+        );
+        // A sibling the darwin package reaches via ../../src.
+        File(p.join(plugin.packageRoot, 'src', 'shared.cpp'))
+          ..createSync(recursive: true)
+          ..writeAsStringSync('source');
+        final flutterXcframework = p.join(tmp.path, 'Flutter.xcframework');
+        Directory(flutterXcframework).createSync(recursive: true);
+        final outputDir = p.join(tmp.path, 'out');
+
+        await GeneratedPluginsPackage.writeGeneratedPackages(
+          outputDir: outputDir,
+          plugins: [plugin],
+          flutterXcframework: flutterXcframework,
+          copyFlutterXcframework: true,
+          vendorRemotePackages: true,
+          deploymentTarget: const IosDeploymentTarget('15.6'),
+        );
+
+        // The staged tree keeps the darwin/ shape, so the manifest's relative
+        // paths resolve exactly as they do in the pub cache.
+        final stagedPackage = p.join(
+          outputDir,
+          'Packages',
+          'shared_darwin_plugin',
+          'darwin',
+          'shared_darwin_plugin',
+        );
+        expect(
+          File(p.join(stagedPackage, 'Package.swift')).existsSync(),
+          isTrue,
+        );
+        expect(
+          File(
+            p.normalize(p.join(stagedPackage, '..', '..', 'src', 'shared.cpp')),
+          ).readAsStringSync(),
+          'source',
+        );
+        expect(
+          File(
+            p.join(outputDir, 'Plugins', 'Package.swift'),
+          ).readAsStringSync(),
+          contains(swiftPath(stagedPackage)),
+        );
+        // FlutterFramework is aliased next to the package inside darwin/.
+        expect(
+          Directory(
+            p.normalize(p.join(stagedPackage, '..', 'FlutterFramework')),
+          ).existsSync(),
+          isTrue,
+        );
+      },
+    );
 
     test(
       'stages plugin packages beside one FlutterFramework package',
