@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:apple_developer_kit/src/appstoreconnect/appstoreconnect.dart';
 import 'package:apple_developer_kit/src/appstoreconnect/asc_client.dart';
 import 'package:apple_developer_kit/src/appstoreconnect/asc_models.dart';
+import 'package:apple_developer_kit/src/errors.dart';
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 
@@ -159,19 +160,21 @@ void main() {
     expect(warnings, anyElement(contains('App Groups')));
   });
 
-  test('explains how to add App Groups by hand when refused', () async {
+  test('keeps installing when Apple rejects the credentials', () async {
     final temp = Directory.systemTemp.createTempSync('xcross_app_groups_403');
     addTearDown(() => temp.deleteSync(recursive: true));
+    // A 401/403 means the session was refused rather than the API not
+    // supporting the operation. It must still never cost the user the build:
+    // only the shared container is lost.
     final client = _FakeProvisioningClient()
       ..assignAppGroupsFailure = const AppleApiError(
         403,
-        'The API key in use does not allow this request',
+        'Make sure a bearer token was provided, it is properly configured '
+        'and signed, and it has not expired.',
       );
     final warnings = <String>[];
 
-    // Apple answers 403 "The API key in use does not allow this request";
-    // the raw message is useless, so it becomes an actionable instruction.
-    await AscProvisioning.provisionDevelopmentIdentity(
+    final result = await AscProvisioning.provisionDevelopmentIdentity(
       client: client,
       bundleId: 'com.example.app',
       deviceUdids: const ['UDID'],
@@ -180,7 +183,78 @@ void main() {
       onProgress: warnings.add,
     );
 
-    expect(warnings, anyElement(contains('developer.apple.com')));
+    expect(File(result.profilePath).existsSync(), isTrue);
+    expect(warnings, anyElement(contains('Apple rejected these credentials')));
+  });
+
+  test('stays silent when the credentials simply cannot do it', () async {
+    final temp = Directory.systemTemp.createTempSync('xcross_app_groups_unsup');
+    addTearDown(() => temp.deleteSync(recursive: true));
+    // An App Store Connect API key cannot attach an App Group. That is not
+    // worth a warning here: the caller inspects the issued profile and reports
+    // what was actually granted, which also covers a group attached by other
+    // means. Warning here too would say the same thing twice, and would be
+    // wrong whenever the profile does carry a group.
+    final client = _FakeProvisioningClient()
+      ..findAppGroupFailure = const AppGroupsUnsupported();
+    final warnings = <String>[];
+
+    final result = await AscProvisioning.provisionDevelopmentIdentity(
+      client: client,
+      bundleId: 'com.example.app',
+      deviceUdids: const ['UDID'],
+      outputDir: temp.path,
+      appGroups: const ['group.com.example.Shared'],
+      onProgress: warnings.add,
+    );
+
+    expect(File(result.profilePath).existsSync(), isTrue);
+    expect(warnings, isEmpty);
+  });
+
+  test('installs anyway when an App Group lookup fails', () async {
+    final temp = Directory.systemTemp.createTempSync('xcross_app_groups_404');
+    addTearDown(() => temp.deleteSync(recursive: true));
+    // A lookup failure used to escape and abort the whole install, because
+    // only the capability assignment was guarded, not the lookup.
+    final client = _FakeProvisioningClient()
+      ..findAppGroupFailure = const AppleApiError(
+        404,
+        'The path provided does not match a defined resource type.',
+      );
+    final warnings = <String>[];
+
+    final result = await AscProvisioning.provisionDevelopmentIdentity(
+      client: client,
+      bundleId: 'com.example.app',
+      deviceUdids: const ['UDID'],
+      outputDir: temp.path,
+      appGroups: const ['group.com.example.Shared'],
+      onProgress: warnings.add,
+    );
+
+    expect(File(result.profilePath).existsSync(), isTrue);
+    expect(warnings, anyElement(contains('App Groups')));
+  });
+
+  test('survives a failure while registering a new App Group', () async {
+    final temp = Directory.systemTemp.createTempSync('xcross_app_groups_reg');
+    addTearDown(() => temp.deleteSync(recursive: true));
+    final client = _FakeProvisioningClient()
+      ..registerAppGroupFailure = Exception('boom');
+    final warnings = <String>[];
+
+    final result = await AscProvisioning.provisionDevelopmentIdentity(
+      client: client,
+      bundleId: 'com.example.app',
+      deviceUdids: const ['UDID'],
+      outputDir: temp.path,
+      appGroups: const ['group.com.example.Shared'],
+      onProgress: warnings.add,
+    );
+
+    expect(File(result.profilePath).existsSync(), isTrue);
+    expect(warnings, anyElement(contains('App Groups')));
   });
 
   test('revokes team certificates and reissues on create 409', () async {
@@ -311,6 +385,8 @@ class _FakeProvisioningClient implements DevelopmentProvisioningClient {
   List<String>? assignedAppGroupIds;
   String? appGroupsBundleResourceId;
   Object? assignAppGroupsFailure;
+  Object? findAppGroupFailure;
+  Object? registerAppGroupFailure;
   final teamSerials = <String, String>{};
   int certificateCreations = 0;
   String? registeredBundleName;
@@ -319,14 +395,21 @@ class _FakeProvisioningClient implements DevelopmentProvisioningClient {
   List<String>? lastProfileDeviceIds;
 
   @override
-  Future<AscAppGroup?> findAppGroup(String identifier) async =>
-      existingAppGroups[identifier];
+  Future<AscAppGroup?> findAppGroup(String identifier) async {
+    final failure = findAppGroupFailure;
+    // ignore: only_throw_errors
+    if (failure != null) throw failure;
+    return existingAppGroups[identifier];
+  }
 
   @override
   Future<AscAppGroup> registerAppGroup({
     required String identifier,
     required String name,
   }) async {
+    final failure = registerAppGroupFailure;
+    // ignore: only_throw_errors
+    if (failure != null) throw failure;
     registeredAppGroups.add(identifier);
     final group = AscAppGroup(
       id: 'group-resource-$identifier',

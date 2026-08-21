@@ -34,6 +34,18 @@ final class NativeBackend implements DeviceBackend {
 
   final PymdDeviceResolver _resolver;
 
+  /// Warnings already shown this install.
+  ///
+  /// Provisioning runs once per App ID (the app plus one per extension), so a
+  /// condition that is really a property of the account — App Groups being
+  /// unavailable to API keys, say — would otherwise be printed three times in
+  /// a row.
+  final Set<String> _warned = {};
+
+  void _warnOnce(String message) {
+    if (_warned.add(message)) Log.logWarn(message);
+  }
+
   @override
   Future<Device> resolveDevice({
     required DeviceSearchMode mode,
@@ -72,6 +84,17 @@ final class NativeBackend implements DeviceBackend {
           'App ID',
           '$bundleId ${Log.ansi.subtle('→')} $signedBundleId',
         );
+        // Custom URL schemes are conventionally derived from the bundle id
+        // (`ShareMedia-<bundle id>`), and an extension builds the URL it
+        // opens from its *own* qualified host id at runtime. Leaving the
+        // app's declared scheme on the unqualified id means nothing is
+        // registered to handle that URL, so the hand-off back into the app
+        // silently does nothing.
+        await _rewriteUrlSchemes(
+          appOrIpaPath,
+          from: bundleId,
+          to: signedBundleId,
+        );
       }
       // Embedded extensions must be renamed under the qualified app id and
       // provisioned in their own right before the app can be signed.
@@ -82,27 +105,30 @@ final class NativeBackend implements DeviceBackend {
       );
       // The app and its extensions must share the same App Groups, or the
       // extension has no way to hand data back to the app.
-      // App Group ids are globally unique across all developers, so the
-      // project's literal group is usually taken. Qualify it per account the
-      // same way the App ID is.
-      final appGroups =
+      final declaredGroups =
           {
-                ...AppExtensionEntitlements.appGroupsOf(appOrIpaPath),
-                for (final extension in extensions) ...extension.appGroups,
-              }
-              .map(
-                (group) => ProvisioningIdentifiers.qualifyAppGroup(
-                  group,
-                  signing.identityId,
-                ),
-              )
-              .toList()
+            ...AppExtensionEntitlements.appGroupsOf(appOrIpaPath),
+            for (final extension in extensions) ...extension.appGroups,
+          }.toList()
             ..sort();
-      // The app and extension read the group name back at runtime from the
-      // AppGroupId Info.plist key, so it has to be rewritten to match.
-      if (appGroups.isNotEmpty) {
-        await _rewriteAppGroupId(appOrIpaPath, appGroups.first);
-      }
+      // App Group ids are globally unique across all developers, so a
+      // project's literal `group.com.example.Shared` is usually already
+      // registered to somebody else and xcross qualifies it per account.
+      //
+      // XCROSS_APP_GROUP opts out of that. It names a group the account
+      // already owns, which is the only way an App Store Connect API key can
+      // get one: keys cannot create or attach App Groups, but they do issue
+      // profiles that carry a group attached by other means. Set it to a
+      // group you added to these App IDs in Xcode or at developer.apple.com
+      // and the whole share flow works on an API key.
+      final override = Platform.environment['XCROSS_APP_GROUP']?.trim();
+      final appGroups = switch (override) {
+        final String group when group.isNotEmpty => [group],
+        _ => [
+          for (final group in declaredGroups)
+            ProvisioningIdentifiers.qualifyAppGroup(group, signing.identityId),
+        ],
+      };
       final identity = await AscProvisioning.provisionDevelopmentIdentity(
         client: signing.client,
         bundleId: signedBundleId,
@@ -110,7 +136,7 @@ final class NativeBackend implements DeviceBackend {
         outputDir: outputDir,
         identityDir: signing.identityDir,
         appGroups: appGroups,
-        onProgress: Log.logWarn,
+        onProgress: _warnOnce,
       );
       final asset = await SigningAsset.load(
         privateKeyPemPath: identity.privateKeyPemPath,
@@ -124,6 +150,36 @@ final class NativeBackend implements DeviceBackend {
         profilesDir: profilesDir,
         appGroups: appGroups,
       );
+      // Trust the profile over our own request. Provisioning may have failed
+      // to attach a group (an API key cannot attach one at all), and it may
+      // equally have granted a group that was attached by other means under a
+      // name we never asked for. Only the profile decides what iOS will
+      // accept, so the runtime `AppGroupId` is taken from it.
+      final granted = asset.grantedAppGroups;
+      if (granted.isNotEmpty) {
+        await _rewriteAppGroupId(appOrIpaPath, granted.first);
+        // Each extension is signed with its own profile, so a group the app
+        // has but an extension lacks would silently break the hand-off at
+        // runtime rather than at install time.
+        for (final entry in extensionAssets.entries) {
+          if (entry.value.grantedAppGroups.contains(granted.first)) continue;
+          _warnOnce(
+            '"${entry.key}" is not provisioned for ${granted.first}, so it '
+            'cannot share data with the app. Re-run to re-issue its profile, '
+            'or add the group to that App ID at developer.apple.com.',
+          );
+        }
+      } else if (appGroups.isNotEmpty) {
+        _warnOnce(
+          'No App Group is provisioned, so the app and its extensions cannot '
+          'share data. Everything else still installs and runs.\n'
+          '  Apple exposes no App Groups API to App Store Connect keys. Add a '
+          'group to these App IDs in Xcode or at developer.apple.com, then '
+          'set XCROSS_APP_GROUP=<group.your.id> to use it, or sign in with '
+          '`xcross auth --apple-id <email>` and xcross will do it all for '
+          'you.',
+        );
+      }
       await Log.logStep(
         'Signing app',
         () => BundleSigner(
@@ -328,7 +384,7 @@ final class NativeBackend implements DeviceBackend {
   /// Each extension is a separate App ID on the portal, so it gets its own
   /// profile. Free Apple developer accounts cap App IDs, hence the explicit
   /// hint when the portal refuses one.
-  static Future<Map<String, SigningAsset>> _provisionExtensions(
+  Future<Map<String, SigningAsset>> _provisionExtensions(
     List<EmbeddedExtension> extensions, {
     required SigningSession signing,
     required String udid,
@@ -349,7 +405,7 @@ final class NativeBackend implements DeviceBackend {
           outputDir: p.join(profilesDir, extensionBundleId),
           identityDir: signing.identityDir,
           appGroups: appGroups,
-          onProgress: Log.logWarn,
+          onProgress: _warnOnce,
         );
         assets[extensionBundleId] = await SigningAsset.load(
           privateKeyPemPath: identity.privateKeyPemPath,
@@ -381,6 +437,23 @@ final class NativeBackend implements DeviceBackend {
       bundleId,
     );
     await plist.writeAsString(updated);
+  }
+
+  /// Re-point `CFBundleURLSchemes` entries that embed the unqualified bundle
+  /// id at the qualified one.
+  ///
+  /// Only schemes containing [from] are touched, so unrelated schemes (OAuth
+  /// callbacks, `fb<app-id>`, deep links) are left exactly as declared.
+  static Future<void> _rewriteUrlSchemes(
+    String appPath, {
+    required String from,
+    required String to,
+  }) async {
+    final plist = File(p.join(appPath, 'Info.plist'));
+    if (!plist.existsSync()) return;
+    final xml = await plist.readAsString();
+    final rewritten = InfoPlist.rewriteUrlSchemes(xml, from: from, to: to);
+    if (rewritten != xml) await plist.writeAsString(rewritten);
   }
 
   static AnisetteProvider _anisetteForSession(GrandSlamSession session) {

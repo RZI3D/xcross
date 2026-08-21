@@ -132,6 +132,7 @@ abstract final class AppExtensionBuilder {
       pluginsLibrary: pluginsLibrary,
       pluginModulesDir: pluginModulesDir,
       moduleCache: p.join(outputDir, '.module-cache'),
+      moduleName: extension.moduleName,
     );
 
     await _writeInfoPlist(
@@ -140,7 +141,7 @@ abstract final class AppExtensionBuilder {
       deploymentTarget: target,
       versions: versions,
     );
-    await _copyResources(extension: extension, bundleDir: bundleDir);
+    await copyResources(extension: extension, bundleDir: bundleDir);
 
     return BuiltAppExtension(extension: extension, bundlePath: bundleDir);
   }
@@ -153,6 +154,7 @@ abstract final class AppExtensionBuilder {
     required IosDeploymentTarget deploymentTarget,
     required String flutterXcframework,
     required String moduleCache,
+    required String moduleName,
     String? pluginsLibrary,
     String? pluginModulesDir,
   }) async {
@@ -171,6 +173,7 @@ abstract final class AppExtensionBuilder {
       deploymentTarget: deploymentTarget,
       flutterSlice: flutterSlice,
       moduleCache: moduleCache,
+      moduleName: moduleName,
       ld64lld: await DarwinSdk.resolveLd64Lld(sdk),
       sdkVersion: _sdkVersion(iosSdk) ?? '26.5',
       pluginsLibrary: pluginsLibrary,
@@ -209,6 +212,7 @@ abstract final class AppExtensionBuilder {
     required String moduleCache,
     required String ld64lld,
     required String sdkVersion,
+    required String moduleName,
     String? clangBuiltins,
     String? compilerRtIos,
     String? pluginsLibrary,
@@ -218,6 +222,14 @@ abstract final class AppExtensionBuilder {
     iosSdk,
     '-target',
     deploymentTarget.buildTriple,
+    // Without this swiftc infers the module name from the output file, and
+    // falls back to `main` whenever that is not a valid Swift identifier —
+    // which is exactly the case for a target named `Share Extension`. The
+    // principal class would then really be `main.ShareViewController` while
+    // the Info.plist names `Share_Extension.ShareViewController`, so iOS
+    // fails to instantiate it and the extension shows a black screen.
+    '-module-name',
+    moduleName,
     // Without the Darwin SDK's own Swift resources the host toolchain tries
     // to rebuild the SDK's `Swift.swiftmodule` from its .swiftinterface and
     // fails ("no such module 'SwiftShims'" / SDK-compiler version mismatch).
@@ -427,19 +439,24 @@ abstract final class AppExtensionBuilder {
   /// only, so uncompiled `.storyboard`/`.xcassets` inputs are skipped with a
   /// warning rather than shipped in a form iOS cannot read. A precompiled
   /// `.storyboardc`/`.car` sitting next to the source is used when present.
-  static Future<void> _copyResources({
+  @visibleForTesting
+  static Future<void> copyResources({
     required IosAppExtension extension,
     required String bundleDir,
   }) async {
     for (final resource in extension.resources) {
       final name = p.basename(resource);
+      // Localized resources keep their `<lang>.lproj` directory: it is how
+      // iOS selects a language, and flattening it would also make every
+      // language's copy of a file collide on one bundle-root name.
+      final destination = p.joinAll([bundleDir, ?_lprojOf(resource), name]);
       if (name.endsWith('.storyboard')) {
         // Handled by replaceStoryboardWithPrincipalClass above.
         final compiled = '${p.withoutExtension(resource)}.storyboardc';
         if (Directory(compiled).existsSync()) {
           await _copyDirectory(
             compiled,
-            p.join(bundleDir, p.basename(compiled)),
+            p.join(p.dirname(destination), p.basename(compiled)),
           );
         } else {
           Log.logWarn(
@@ -459,11 +476,19 @@ abstract final class AppExtensionBuilder {
       }
 
       if (Directory(resource).existsSync()) {
-        await _copyDirectory(resource, p.join(bundleDir, name));
+        await _copyDirectory(resource, destination);
       } else if (File(resource).existsSync()) {
-        await File(resource).copy(p.join(bundleDir, name));
+        await Directory(p.dirname(destination)).create(recursive: true);
+        await File(resource).copy(destination);
       }
     }
+  }
+
+  /// The `<lang>.lproj` directory [resource] sits in, or null when it is not
+  /// a localized resource.
+  static String? _lprojOf(String resource) {
+    final parent = p.basename(p.dirname(resource));
+    return parent.endsWith('.lproj') ? parent : null;
   }
 
   /// Locate `swiftc`, which the Swift toolchain puts on PATH.

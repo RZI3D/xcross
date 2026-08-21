@@ -151,43 +151,45 @@ abstract final class AscProvisioning {
   }) async {
     if (appGroups.isEmpty) return;
 
-    final resourceIds = <String>[];
-    for (final identifier in appGroups) {
-      final existing = await client.findAppGroup(identifier);
-      if (existing != null) {
-        resourceIds.add(existing.id);
-        continue;
-      }
-      final created = await client.registerAppGroup(
-        identifier: identifier,
-        name: ProvisioningIdentifiers.appName(identifier),
-      );
-      resourceIds.add(created.id);
-    }
-
     try {
+      final resourceIds = <String>[];
+      for (final identifier in appGroups) {
+        final existing = await client.findAppGroup(identifier);
+        if (existing != null) {
+          resourceIds.add(existing.id);
+          continue;
+        }
+        final created = await client.registerAppGroup(
+          identifier: identifier,
+          name: ProvisioningIdentifiers.appName(identifier),
+        );
+        resourceIds.add(created.id);
+      }
+
       await client.assignAppGroups(
         bundleIdResourceId: bundleIdResource.id,
         appGroupResourceIds: resourceIds,
       );
+    } on AppGroupsUnsupported {
+      // Not a failure to retry: this credential type simply cannot attach a
+      // group. Stay quiet here — the caller inspects the issued profile and
+      // reports what was actually granted, which is the fact that matters and
+      // covers the case where a group was attached by other means.
     } on Object catch (error) {
-      // developerservices2 (the Apple ID path) answers 403 "The API key in
-      // use does not allow this request" here on every team tried, free and
-      // company alike: this legacy endpoint appears not to expose capability
-      // management to Xcode-style sessions at all. Enabling App Groups by
-      // hand on developer.apple.com works and is picked up on the next run,
-      // since the group is looked up before being registered.
-      //
-      // Never fatal: the app, its extensions and their profiles are all
-      // valid without it. Only the shared container is missing.
-      final forbidden = error is AppleApiError && error.statusCode == 403;
+      // Never fatal: the app, its extensions and their profiles are all valid
+      // without a shared container. Only the data hand-off between an
+      // extension and its host app is missing, so an App Groups problem must
+      // not cost the user their build.
+      final unauthorized =
+          error is AppleApiError &&
+          (error.statusCode == 401 || error.statusCode == 403);
       onProgress?.call(
-        forbidden
-            ? 'App Groups (${appGroups.join(', ')}) could not be enabled '
-                  "automatically: Apple's developer session API refuses "
-                  'capability changes. Add the group to the App IDs at '
-                  'developer.apple.com and re-run to share data between the '
-                  'app and its extensions.'
+        unauthorized
+            ? 'App Groups (${appGroups.join(', ')}) could not be enabled: '
+                  'Apple rejected these credentials for the legacy '
+                  'provisioning endpoint ($error). The app and its extensions '
+                  'still install, but they cannot share data until this is '
+                  'fixed.'
             : 'Could not enable App Groups (${appGroups.join(', ')}) on '
                   '${bundleIdResource.identifier}: $error',
       );

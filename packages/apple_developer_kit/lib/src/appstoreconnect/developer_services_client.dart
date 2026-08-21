@@ -5,6 +5,7 @@ import 'package:apple_developer_kit/src/apple_http_client.dart';
 import 'package:apple_developer_kit/src/appstoreconnect/asc_client.dart';
 import 'package:apple_developer_kit/src/appstoreconnect/asc_models.dart';
 import 'package:apple_developer_kit/src/appstoreconnect/asc_payloads.dart';
+import 'package:apple_developer_kit/src/appstoreconnect/legacy_app_groups.dart';
 import 'package:apple_developer_kit/src/errors.dart';
 import 'package:apple_developer_kit/src/grandslam/anisette/anisette_state.dart';
 import 'package:apple_developer_kit/src/grandslam/app_token_exchange.dart';
@@ -56,6 +57,7 @@ final class DeveloperServicesClient implements DevelopmentProvisioningClient {
   );
 
   static const _baseUrl = 'https://developerservices2.apple.com/services';
+  static const _legacyClientId = 'XABBG36SBA';
   static const _appIdentifier = 'com.apple.gs.xcode.auth';
   static const _xcodeVersion = '16.2 (16C5031c)';
   static const _clientInfo =
@@ -83,11 +85,13 @@ final class DeveloperServicesClient implements DevelopmentProvisioningClient {
     final client = httpClient ?? AppleHttp.createAppleHttpClient();
     try {
       final response = await client.post(
-        Uri.parse('$_baseUrl/QH65B2/listTeams.action?clientId=XABBG36SBA'),
+        Uri.parse(
+          '$_baseUrl/QH65B2/listTeams.action?clientId=$_legacyClientId',
+        ),
         headers: {...anisette, ..._legacyHeaders(token)},
         body: PropertyListSerialization.stringWithPropertyList({
           'requestId': AnisetteState.generateUuidV4(),
-          'clientId': 'XABBG36SBA',
+          'clientId': _legacyClientId,
           'protocolVersion': 'QH65B2',
           'userLocale': [Platform.localeName],
         }),
@@ -199,52 +203,36 @@ final class DeveloperServicesClient implements DevelopmentProvisioningClient {
     ),
   );
 
-  /// developerservices2 filters App Groups by prefix like it does bundle ids,
-  /// so the exact identifier is picked out of the returned page.
+  /// App Groups live only on the pre-JSON `QH65B2` plist protocol, which
+  /// this session authenticates with its GrandSlam token plus Anisette
+  /// headers. See [LegacyAppGroups] for why no modern surface can do it.
   @override
-  Future<AscAppGroup?> findAppGroup(String identifier) async {
-    final page = await _getCollection(
-      '/v1/appGroups?filter[identifier]='
-      '${Uri.encodeQueryComponent(identifier)}',
-    );
-    for (final entry in page) {
-      final group = AscAppGroup.fromJson(
-        (entry! as Map).cast<String, dynamic>(),
-      );
-      if (group.identifier == identifier) return group;
-    }
-    return null;
-  }
+  Future<AscAppGroup?> findAppGroup(String identifier) =>
+      _appGroups.find(identifier);
 
   @override
   Future<AscAppGroup> registerAppGroup({
     required String identifier,
     required String name,
-  }) async => AscAppGroup.fromJson(
-    _data(
-      await _post(
-        '/v1/appGroups',
-        AscPayloads.appGroup(identifier: identifier, name: name),
-      ),
-    ),
-  );
+  }) => _appGroups.register(identifier: identifier, name: name);
 
   @override
   Future<void> assignAppGroups({
     required String bundleIdResourceId,
     required List<String> appGroupResourceIds,
-  }) async {
-    // The capability is its own sub-resource of the bundle id. Patching the
-    // bundle id with an inline relationship is rejected ("relationship with
-    // an invalid value"), and the parent resource refuses POST outright.
-    await _post(
-      '/v1/bundleIds/$bundleIdResourceId/bundleIdCapabilities',
-      AscPayloads.appGroupsCapability(
-        bundleIdResourceId: bundleIdResourceId,
-        appGroupResourceIds: appGroupResourceIds,
-      ),
-    );
-  }
+  }) => _appGroups.assign(
+    appIdResourceId: bundleIdResourceId,
+    appGroupResourceIds: appGroupResourceIds,
+  );
+
+  late final LegacyAppGroups _appGroups = LegacyAppGroups(
+    httpClient: _http,
+    authHeaders: () async => {
+      ..._legacyHeaders(token),
+      ...await _fetchAnisetteHeaders(),
+    },
+    teamId: () => Future.value(teamId),
+  );
 
   @override
   Future<List<String>> listProfileIdsForBundle(
@@ -444,7 +432,7 @@ final class DeveloperServicesClient implements DevelopmentProvisioningClient {
       response.body,
       context: 'Developer Services list teams response',
     );
-    _rejectLegacyFailure(plist);
+    LegacyAppGroups.rejectFailure(plist, action: 'list teams');
 
     final teams = plist['teams'];
     if (teams is! List) {
@@ -461,29 +449,6 @@ final class DeveloperServicesClient implements DevelopmentProvisioningClient {
             status: _requiredString(team, 'status'),
           ),
     ];
-  }
-
-  /// The legacy protocol always answers HTTP 200 and reports failure through
-  /// `resultCode` instead - and sends it as an int or a string depending on
-  /// the error.
-  static void _rejectLegacyFailure(Map<String, Object?> plist) {
-    final resultCode = switch (plist['resultCode']) {
-      final int value => value,
-      final String value => int.tryParse(value),
-      _ => null,
-    };
-    if (resultCode == null) {
-      throw const AppleError(
-        'Developer Services list teams response has an invalid resultCode',
-      );
-    }
-    if (resultCode != 0) {
-      final message =
-          plist['userString'] ?? plist['resultString'] ?? 'unknown error';
-      throw AppleError(
-        'Developer Services list teams failed ($resultCode): $message',
-      );
-    }
   }
 
   static Map<String, dynamic> _decode(http.Response response) {

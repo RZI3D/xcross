@@ -149,12 +149,24 @@ final class AscClient implements DevelopmentProvisioningClient {
   );
 
   @override
-  Future<AscBundleId?> findBundleId(String identifier) async => _firstOrNull(
-    await _get(
-      '/bundleIds?filter[identifier]=${Uri.encodeQueryComponent(identifier)}',
-    ),
-    AscBundleId.fromJson,
-  );
+  Future<AscBundleId?> findBundleId(String identifier) async {
+    // `filter[identifier]` is a prefix match, not an exact one: querying
+    // `com.example.App` also returns `com.example.App.Share-Extension`, and
+    // the app's own id is not necessarily first. Taking the first row would
+    // sign the app with an extension's App ID, so the exact match is picked
+    // out here (mirroring the developerservices2 client).
+    final page = await _get(
+      '/bundleIds?filter[identifier]=${Uri.encodeQueryComponent(identifier)}'
+      '&limit=200',
+    );
+    for (final entry in page['data'] as List) {
+      final bundleId = AscBundleId.fromJson(
+        (entry as Map).cast<String, dynamic>(),
+      );
+      if (bundleId.identifier == identifier) return bundleId;
+    }
+    return null;
+  }
 
   @override
   Future<AscBundleId> registerBundleId({
@@ -169,40 +181,49 @@ final class AscClient implements DevelopmentProvisioningClient {
     ),
   );
 
+  /// App Groups cannot be provisioned with an App Store Connect API key.
+  ///
+  /// Every route was tried against a live key and each is a dead end:
+  ///
+  /// * `api.appstoreconnect.apple.com` has no App Groups resource. Apple's
+  ///   own OpenAPI specification declares 966 paths and not one mentions App
+  ///   Groups; `/v1/appGroups` and `/v1/applicationGroups` both 404.
+  /// * The `APP_GROUPS` capability *can* be switched on through
+  ///   `/v1/bundleIdCapabilities` (it answers 201), but it cannot be pointed
+  ///   at a group: `CapabilitySetting.key` accepts only `ICLOUD_VERSION`,
+  ///   `DATA_PROTECTION_PERMISSION_LEVEL` and `APPLE_ID_AUTH_APP_CONSENT`,
+  ///   and Apple rejects `APP_GROUP_IDENTIFIERS` with a 409 naming those
+  ///   three.
+  /// * With the capability on but no group linked, an issued profile grants
+  ///   `com.apple.security.application-groups: []`, an empty array. Signing
+  ///   an app with a real group against such a profile is refused by installd
+  ///   with `0xe8008015 (A valid provisioning profile for this executable was
+  ///   not found)`, so the empty array cannot be worked around locally.
+  /// * developerservices2, which does expose App Groups, refuses API keys.
+  ///   Its 403 quotes the same "properly configured and signed" wording
+  ///   api.appstoreconnect.apple.com uses, but a key that works there is
+  ///   rejected here under every JWT audience tried, so the shared wording is
+  ///   coincidental rather than a shared validator.
+  ///
+  /// Reporting this as a distinct error lets the provisioning layer print one
+  /// clear message instead of a confusing HTTP failure. Signing in with
+  /// `xcross auth --apple-id` is the only path that provisions App Groups.
   @override
-  Future<AscAppGroup?> findAppGroup(String identifier) async => _firstOrNull(
-    await _get(
-      '/appGroups?filter[identifier]=${Uri.encodeQueryComponent(identifier)}',
-    ),
-    AscAppGroup.fromJson,
-  );
+  Future<AscAppGroup?> findAppGroup(String identifier) =>
+      Future.error(const AppGroupsUnsupported());
 
   @override
   Future<AscAppGroup> registerAppGroup({
     required String identifier,
     required String name,
-  }) async => AscAppGroup.fromJson(
-    _data(
-      await _post(
-        '/appGroups',
-        AscPayloads.appGroup(identifier: identifier, name: name),
-      ),
-    ),
-  );
+  }) => Future.error(const AppGroupsUnsupported());
 
   @override
   Future<void> assignAppGroups({
     required String bundleIdResourceId,
     required List<String> appGroupResourceIds,
-  }) async {
-    await _post(
-      '/bundleIdCapabilities',
-      AscPayloads.appGroupsCapability(
-        bundleIdResourceId: bundleIdResourceId,
-        appGroupResourceIds: appGroupResourceIds,
-      ),
-    );
-  }
+  }) => Future.error(const AppGroupsUnsupported());
+
 
   @override
   Future<List<String>> listProfileIdsForBundle(
