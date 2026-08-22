@@ -16,10 +16,14 @@ abstract interface class DeviceBackend {
     String? selector,
   });
 
-  Future<void> install(
+  /// Installs and returns the bundle id the app actually carries on the
+  /// device — the team-qualified (`XCR-<identity>.<id>`) one when the signer
+  /// rewrote it. The launch that follows must use exactly this id: a device
+  /// can hold several team-qualified builds of the same app, and resolving
+  /// the base id by suffix can land on a stale one from another identity.
+  Future<String> install(
     String appOrIpaPath, {
-    required String udid,
-    required DeviceSearchMode mode,
+    required Device device,
     required String bundleId,
   });
 
@@ -53,12 +57,12 @@ final class NativeBackend implements DeviceBackend {
   }) => _resolver.resolveDevice(selector: selector, mode: mode);
 
   @override
-  Future<void> install(
+  Future<String> install(
     String appOrIpaPath, {
-    required String udid,
-    required DeviceSearchMode mode,
+    required Device device,
     required String bundleId,
   }) async {
+    final udid = device.udid;
     if (!appOrIpaPath.endsWith('.app') ||
         !Directory(appOrIpaPath).existsSync()) {
       throw XcrossError(
@@ -80,10 +84,7 @@ final class NativeBackend implements DeviceBackend {
     try {
       await _rewriteBundleIdentifier(appOrIpaPath, signedBundleId);
       if (signedBundleId != bundleId) {
-        Log.logInfo(
-          'App ID',
-          '$bundleId ${Log.ansi.subtle('→')} $signedBundleId',
-        );
+        Log.logInfo('App ID', '$bundleId ${Log.dim('→')} $signedBundleId');
         // Custom URL schemes are conventionally derived from the bundle id
         // (`ShareMedia-<bundle id>`), and an extension builds the URL it
         // opens from its *own* qualified host id at runtime. Leaving the
@@ -105,12 +106,10 @@ final class NativeBackend implements DeviceBackend {
       );
       // The app and its extensions must share the same App Groups, or the
       // extension has no way to hand data back to the app.
-      final declaredGroups =
-          {
-            ...AppExtensionEntitlements.appGroupsOf(appOrIpaPath),
-            for (final extension in extensions) ...extension.appGroups,
-          }.toList()
-            ..sort();
+      final declaredGroups = {
+        ...AppExtensionEntitlements.appGroupsOf(appOrIpaPath),
+        for (final extension in extensions) ...extension.appGroups,
+      }.toList()..sort();
       // App Group ids are globally unique across all developers, so a
       // project's literal `group.com.example.Shared` is usually already
       // registered to somebody else and xcross qualifies it per account.
@@ -187,7 +186,12 @@ final class NativeBackend implements DeviceBackend {
           extensionAssets: extensionAssets,
         ).signApp(appOrIpaPath),
       );
-      await PymdDevices.install(appOrIpaPath, udid: udid);
+      await PymdDevices.install(
+        appOrIpaPath,
+        udid: udid,
+        overTunnel: device.source == DeviceSource.tunneld,
+      );
+      return signedBundleId;
     } finally {
       signing.client.close();
       signing.anisette?.close();

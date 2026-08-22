@@ -6,7 +6,7 @@ import 'package:xcross/src/device/device_backend.dart';
 import 'package:xcross/src/errors.dart';
 import 'package:xcross/src/models/pack_result.dart';
 
-typedef OsMajorVersion = Future<int?> Function(String udid);
+typedef OsMajorVersion = Future<int?> Function(Device device);
 typedef TerminateInstalledApp =
     Future<void> Function({required String udid, required String bundleId});
 typedef LaunchInstalledApp =
@@ -23,12 +23,18 @@ final class DeviceRunOperation {
     OsMajorVersion? osMajorVersion,
     TerminateInstalledApp? terminate,
     LaunchInstalledApp? launch,
-  }) : _osMajorVersion = osMajorVersion ?? OsVersion.deviceOSMajorVersion,
+  }) : _osMajorVersion = osMajorVersion ?? _defaultOsMajorVersion,
        _terminate = terminate ?? CoreDeviceLauncher.terminateIfRunning,
        _launch = launch ?? CoreDeviceLauncher.launch;
 
   static Future<DeviceRunOperation> resolve() async =>
       DeviceRunOperation(backend: await DeviceBackend.resolve());
+
+  static Future<int?> _defaultOsMajorVersion(Device device) =>
+      OsVersion.deviceOSMajorVersion(
+        device.udid,
+        overTunnel: device.source == DeviceSource.tunneld,
+      );
 
   final DeviceBackend backend;
   final OsMajorVersion _osMajorVersion;
@@ -48,8 +54,8 @@ final class DeviceRunOperation {
       );
     }
     final device = await backend.resolveDevice(selector: selector, mode: mode);
-    Log.logInfo('Device', '${device.name} ${Log.ansi.subtle(device.udid)}');
-    final major = await _osMajorVersion(device.udid);
+    Log.logInfo('Device', '${device.name} ${Log.dim(device.udid)}');
+    final major = await _osMajorVersion(device);
     if (major == null) {
       Log.logWarn(
         'Could not read the device OS version; attempting the native '
@@ -60,15 +66,17 @@ final class DeviceRunOperation {
       throw XcrossError('Native device launching requires iOS 17 or later.');
     }
     await _terminate(udid: device.udid, bundleId: pack.bundleId);
-    await backend.install(
+    // Launch the exact id install() produced: the device may carry stale
+    // team-qualified builds of this app under other identities, and the
+    // suffix-matching fallback inside the launcher can land on one of those.
+    final installedBundleId = await backend.install(
       pack.appPath,
-      udid: device.udid,
-      mode: mode,
+      device: device,
       bundleId: pack.bundleId,
     );
     await _launch(
       udid: device.udid,
-      bundleId: pack.bundleId,
+      bundleId: installedBundleId,
       profile: launchProfile,
       onRestartRequested: onRestartRequested,
     );

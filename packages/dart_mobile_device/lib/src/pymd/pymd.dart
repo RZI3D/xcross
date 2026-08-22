@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -10,6 +11,20 @@ class PymdInvocation {
   const PymdInvocation(this.executable, this.prefixArgs);
   final String executable;
   final List<String> prefixArgs;
+}
+
+/// The invocation to run `remote tunneld` with, and whether it satisfies
+/// tunneld's real requirement of python >= 3.13.
+///
+/// The TCP tunnel protocol — the only one modern iOS still accepts (18.2+
+/// removed QUIC) — needs python 3.13's native TLS-PSK API. On older pythons
+/// pymobiledevice3 falls back to `sslpsk_pmd3`, which fails against current
+/// OpenSSL with `SSL: NO_CIPHERS_AVAILABLE`, and tunneld logs that failure
+/// at DEBUG level only: every wireless tunnel dies silently, forever.
+class TunneldInvocation {
+  const TunneldInvocation(this.invocation, {required this.modernPython});
+  final PymdInvocation invocation;
+  final bool modernPython;
 }
 
 /// One-shot invocations of `pymobiledevice3` for DVT ProcessControl,
@@ -28,6 +43,7 @@ abstract final class Pymd {
   static final _digitsPattern = RegExp(r'\d+');
 
   static PymdInvocation? _cached;
+  static TunneldInvocation? _tunneldCached;
 
   static String get _installCommand => Platform.isWindows
       ? 'py -m pip install -U pymobiledevice3'
@@ -77,6 +93,56 @@ abstract final class Pymd {
 
     _cached = PymdInvocation(py, ['-m', 'pymobiledevice3']);
     return _cached!;
+  }
+
+  /// One-line probe: succeeds (printing the real interpreter path) only on
+  /// a python that is both >= 3.13 and has pymobiledevice3 installed.
+  /// `sys.executable` unwraps version-manager shims (mise, pyenv), whose
+  /// shim scripts need the user's environment and would break under sudo.
+  static const _modernPythonProbe =
+      'import sys; '
+      'assert sys.version_info >= (3, 13); '
+      'import pymobiledevice3; '
+      'print(sys.executable)';
+
+  /// Resolve the invocation to run `remote tunneld` with.
+  ///
+  /// Prefers a python >= 3.13 that can import pymobiledevice3 — searched
+  /// separately from [resolve], because the bare `pymobiledevice3` CLI (or
+  /// launcher shims around it) may pin an older python that breaks only for
+  /// tunneld's TCP tunnels. Falls back to the regular invocation with
+  /// `modernPython: false` when no such python exists.
+  static Future<TunneldInvocation> tunneldInvocation() async {
+    if (_tunneldCached != null) return _tunneldCached!;
+    for (final name in const [
+      'python3.14',
+      'python3.13',
+      'python3',
+      'python',
+      'py',
+    ]) {
+      final candidate = await ProcessRunner.which(name);
+      if (candidate == null) continue;
+      try {
+        final probe = await ProcessRunner.run(candidate, [
+          '-c',
+          _modernPythonProbe,
+        ]);
+        if (probe.exitCode != 0) continue;
+        final real = probe.stdout.trim().split('\n').last.trim();
+        if (real.isEmpty || !File(real).existsSync()) continue;
+        return _tunneldCached = TunneldInvocation(
+          PymdInvocation(real, const ['-m', 'pymobiledevice3']),
+          modernPython: true,
+        );
+      } on Object {
+        continue;
+      }
+    }
+    return _tunneldCached = TunneldInvocation(
+      await resolve(),
+      modernPython: false,
+    );
   }
 
   /// True if pymobiledevice3 is invocable (CLI on PATH, or importable by a
@@ -193,10 +259,17 @@ abstract final class Pymd {
 
   /// Return set of installed bundle identifiers.
   ///
+  /// [deviceArgs] selects the device (`--rsd <host> <port>`, `--tunnel
+  /// <udid>`, or `--userspace --udid <udid>`); without it pymobiledevice3
+  /// falls back to the first usbmux device, which does not exist for a
+  /// wireless connection on Linux/Windows.
+  ///
   /// pymobiledevice3 renamed the `--user`/`--system` filters to `--userspace`
   /// in newer releases (9.x); try the current flag first and fall back to the
   /// legacy flags so both versions work.
-  static Future<List<String>> listInstalledApps() async {
+  static Future<List<String>> listInstalledApps({
+    List<String> deviceArgs = const [],
+  }) async {
     const attempts = <List<String>>[
       ['apps', 'list', '--type', 'User'],
       ['apps', 'list', '--userspace'],
@@ -204,7 +277,13 @@ abstract final class Pymd {
     ];
     for (final args in attempts) {
       try {
-        final result = await run(args);
+        // Bounded per attempt: over a wireless tunnel a phone napping in
+        // Wi-Fi power save can hang one RemoteXPC exchange for minutes, and
+        // three unbounded attempts in a row would freeze the run silently.
+        final result = await run([
+          ...args,
+          ...deviceArgs,
+        ], timeout: const Duration(seconds: 45));
         if (jsonDecode(result.stdout) case final Map<Object?, Object?> json) {
           return json.keys.cast<String>().toList();
         }
@@ -252,13 +331,15 @@ abstract final class Pymd {
   }) async {
     final CapturedProcess result;
     try {
+      // Bounded: this best-effort pre-install check rides the tunnel and
+      // must not stall the run when the phone naps in Wi-Fi power save.
       result = await run([
         'developer',
         'dvt',
         'process-id-for-bundle-id',
         ...deviceArgs,
         bundleId,
-      ]);
+      ], timeout: const Duration(seconds: 30));
     } on TunnelError {
       return null;
     }
@@ -282,7 +363,14 @@ abstract final class Pymd {
 
   /// Run arbitrary pymobiledevice3 [args], returning captured output.
   /// Throws [TunnelError] on non-zero exit.
-  static Future<CapturedProcess> run(List<String> args) async {
+  ///
+  /// [timeout] bounds the whole subprocess and kills it when exceeded —
+  /// required for anything routed over a wireless tunnel, where a phone in
+  /// Wi-Fi power save can stretch one RemoteXPC handshake past a minute.
+  static Future<CapturedProcess> run(
+    List<String> args, {
+    Duration? timeout,
+  }) async {
     final inv = await resolve();
     final executable = inv.executable;
     final arguments = [...inv.prefixArgs, ...args];
@@ -290,11 +378,13 @@ abstract final class Pymd {
       '[pymobiledevice3] running: '
       '${ProcessRunner.commandLine(executable, arguments)}',
     );
-    final result = await ProcessRunner.run(
-      executable,
-      arguments,
-      environment: usbmuxEnvironment(),
-    );
+    final result = timeout == null
+        ? await ProcessRunner.run(
+            executable,
+            arguments,
+            environment: usbmuxEnvironment(),
+          )
+        : await _runWithTimeout(executable, arguments, timeout);
     if (result.exitCode != 0) {
       final msg = result.stderr.isNotEmpty ? result.stderr : result.stdout;
       throw TunnelError(
@@ -302,6 +392,43 @@ abstract final class Pymd {
       );
     }
     return result;
+  }
+
+  /// [ProcessRunner.run], except the subprocess is killed when [timeout]
+  /// passes (a plain `Future.timeout` would leak it, and a leaked
+  /// pymobiledevice3 holding a tunnel connection keeps hanging around).
+  static Future<CapturedProcess> _runWithTimeout(
+    String executable,
+    List<String> arguments,
+    Duration timeout,
+  ) async {
+    final process = await Process.start(
+      executable,
+      arguments,
+      environment: usbmuxEnvironment(),
+    );
+    final stdout = process.stdout.transform(utf8.decoder).join();
+    final stderr = process.stderr.transform(utf8.decoder).join();
+    try {
+      await process.stdin.close();
+    } catch (_) {}
+    final int exitCode;
+    try {
+      exitCode = await process.exitCode.timeout(timeout);
+    } on TimeoutException {
+      process.kill();
+      // SIGTERM may be ignored mid-handshake; escalate shortly after.
+      unawaited(
+        Future<void>.delayed(const Duration(seconds: 2)).then((_) {
+          process.kill(ProcessSignal.sigkill);
+        }),
+      );
+      throw TunnelError(
+        'pymobiledevice3 ${arguments.join(' ')} timed out after '
+        '${timeout.inSeconds}s',
+      );
+    }
+    return CapturedProcess(exitCode, await stdout, await stderr);
   }
 
   /// Env for child pymobiledevice3 processes.
@@ -322,8 +449,14 @@ abstract final class Pymd {
       '${Platform.isWindows ? '' : 'sudo '}pymobiledevice3 $arguments';
 
   /// `[sudo -n] [env USBMUXD_SOCKET_ADDRESS=…] <pymd> …args`.
-  static Future<List<String>> elevatedArgs(List<String> pymdArgs) async {
-    final inv = await resolve();
+  ///
+  /// [invocation] overrides which pymobiledevice3 runs (tunneld needs a
+  /// python the regular resolution may not pick).
+  static Future<List<String>> elevatedArgs(
+    List<String> pymdArgs, {
+    PymdInvocation? invocation,
+  }) async {
+    final inv = invocation ?? await resolve();
     final sudo = await Sudo.resolve();
     final usbmux = resolvedUsbmuxAddress();
     return <String>[

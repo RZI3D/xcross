@@ -81,7 +81,7 @@ abstract final class CoreDeviceLauncher {
       try {
         final pid = await Pymd.processIdForBundleId(
           deviceArgs: transport.pymdDeviceArgs,
-          bundleId: await _resolveBundleId(bundleId),
+          bundleId: await _resolveBundleId(bundleId, transport: transport),
         );
         if (pid == null) return;
         Log.logTrace(
@@ -92,6 +92,14 @@ abstract final class CoreDeviceLauncher {
         await transport.close();
       }
     } on Object catch (e) {
+      // A not-yet-mounted Developer Disk Image is the normal state here on a
+      // fresh (especially wireless) boot: the launch that follows mounts it
+      // with a proper budget. Its long "run xcross tunnel" message would be
+      // pure noise for a condition this method expects.
+      if ('$e'.contains('Developer Disk Image not mounted')) {
+        Log.logTrace('skipping pre-install terminate: DDI not mounted yet');
+        return;
+      }
       Log.logWarn('could not check/terminate running app: $e');
     }
   }
@@ -104,7 +112,10 @@ abstract final class CoreDeviceLauncher {
     required HotReloadConfig? hotReload,
     Future<bool> Function()? onRestartRequested,
   }) async {
-    final resolvedBundleId = await _resolveBundleId(bundleId);
+    final resolvedBundleId = await _resolveBundleId(
+      bundleId,
+      transport: transport,
+    );
     final debugproxy = await transport.debugproxyEndpoint();
 
     final pid = await _launchSuspended(
@@ -213,10 +224,16 @@ abstract final class CoreDeviceLauncher {
 
   /// Resolve team-prefixed bundle id from the installed-app list.
   /// Returns [bundleId] unchanged on failure.
-  static Future<String> _resolveBundleId(String bundleId) async {
+  static Future<String> _resolveBundleId(
+    String bundleId, {
+    required DeviceTransport transport,
+  }) async {
     String resolved;
     try {
-      resolved = await _resolveInstalledBundleId(requested: bundleId);
+      resolved = await _resolveInstalledBundleId(
+        requested: bundleId,
+        transport: transport,
+      );
     } catch (_) {
       resolved = bundleId;
     }
@@ -228,8 +245,11 @@ abstract final class CoreDeviceLauncher {
 
   static Future<String> _resolveInstalledBundleId({
     required String requested,
+    required DeviceTransport transport,
   }) async {
-    final ids = await Pymd.listInstalledApps();
+    final ids = await Pymd.listInstalledApps(
+      deviceArgs: transport.sideChannelDeviceArgs ?? const [],
+    );
     if (ids.contains(requested)) return requested;
     final base = ProvisioningIdentifiers.sanitize(requested);
     final suffix = '.$base';
@@ -238,6 +258,19 @@ abstract final class CoreDeviceLauncher {
     final matches =
         ids.where((id) => id == base || id.endsWith(suffix)).toList()
           ..sort(compare((id) => id.length));
+    // Several identities' builds of one app are indistinguishable by suffix,
+    // and picking the wrong one launches a stale binary whose engine can be
+    // a whole SDK behind — hot restart then fails with kernel-version
+    // mismatches ("Could not run configuration in engine"). Run/install
+    // callers avoid this by passing the exact installed id; anything else
+    // (attach-style flows) at least gets told the guess was ambiguous.
+    if (matches.length > 1) {
+      Log.logWarn(
+        'several installed builds match "$requested": '
+        '${matches.join(', ')} — using ${matches.first}. Delete the stale '
+        'ones on the device if this picks wrong.',
+      );
+    }
     return matches.isNotEmpty ? matches.first : requested;
   }
 
@@ -272,9 +305,7 @@ abstract final class CoreDeviceLauncher {
     required DeviceTransport transport,
   }) async {
     if (hotReload == null) {
-      Log.logInfo(
-        'Streaming app output ${Log.ansi.subtle('— Ctrl-C to stop')}',
-      );
+      Log.logInfo('Streaming app output ${Log.dim('— Ctrl-C to stop')}');
       return (
         controller: null,
         // Compose (Kotlin/Native, AOT) has no in-place reload at all, so the
@@ -297,6 +328,14 @@ abstract final class CoreDeviceLauncher {
         '${vmService.port}/ws',
       );
       vm = await _waitForVmService(wsUri);
+      // A wireless session dies quietly when the phone locks, sleeps off the
+      // network, or the tunnel drops. Without this, `r`/`R` just start
+      // failing with opaque RPC errors while the console looks healthy.
+      vm.onConnectionLost = () => Log.logWarn(
+        'lost the connection to the app on the device — the phone locked, '
+        'left the network, or the tunnel dropped. Hot reload is gone for '
+        'this session: unlock the phone and run again.',
+      );
       // `print` and `log()` reach us only over these streams — the debugger
       // attached to an already-launched process, so it owns no stdio for the
       // app.
@@ -309,7 +348,7 @@ abstract final class CoreDeviceLauncher {
       await controller.initialSync();
       Log.logInfo(
         'Hot reload ready '
-        '${Log.ansi.subtle('— r reload  ·  R restart  ·  q quit')}',
+        '${Log.dim('— r reload  ·  R restart  ·  q quit')}',
       );
       return (controller: controller, unavailable: null);
     } catch (e) {

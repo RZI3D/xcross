@@ -110,6 +110,29 @@ abstract final class TunnelDiscovery {
     }
   }
 
+  /// All active tunnels tunneld currently has, keyed by UDID.
+  ///
+  /// Empty (never throws) when tunneld is down: callers use this to merge
+  /// tunneled devices into discovery, where an unreachable tunneld simply
+  /// means "no wireless devices yet".
+  static Future<Map<String, Tunnel>> activeTunnels() async {
+    final Map<String, dynamic> data;
+    try {
+      data = await _fetch(TunnelConstants.tunneldUrl);
+    } on Object catch (e) {
+      Log.logTrace('tunneld list request failed: $e');
+      return const {};
+    }
+    final result = <String, Tunnel>{};
+    for (final MapEntry(:key, :value) in data.entries) {
+      if (value case [final Map<Object?, Object?> first, ...]) {
+        final tunnel = _tunnelFromJson(first);
+        if (tunnel != null) result[key] = tunnel;
+      }
+    }
+    return result;
+  }
+
   /// `GET /start-tunnel?udid=` — a `{address,port}` tunnel, or the reason
   /// tunneld refused to create one (typically 404/501).
   ///

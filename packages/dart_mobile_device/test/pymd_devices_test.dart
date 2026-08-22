@@ -83,5 +83,24 @@ void main() {
     test('throws TunnelError when the top-level JSON is not an array', () {
       expect(() => PymdDevices.parseDevices('{}'), throwsA(isA<TunnelError>()));
     });
+
+    test(
+      'allowEmptyOutput returns an empty list instead of the usbmuxd error',
+      () {
+        expect(
+          PymdDevices.parseDevices('   \n', allowEmptyOutput: true),
+          isEmpty,
+        );
+      },
+    );
+  });
+
+  group('PymdDevices.normalizeUdid', () {
+    test('strips dashes so usbmuxd and tunneld spellings compare equal', () {
+      expect(
+        PymdDevices.normalizeUdid('00008030-000664292232802E'),
+        PymdDevices.normalizeUdid('00008030000664292232802E'),
+      );
+    });
   });
 }
