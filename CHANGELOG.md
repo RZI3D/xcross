@@ -1,3 +1,29 @@
+## 1.2.0
+
+- Add first-class wireless device support with `xcross tunnel --wifi` and
+  `xcross flutter run --wifi`. xcross can bootstrap RemotePairing over a trusted
+  USB connection, reconnect saved wireless pairings, or advertise the host for
+  cable-free pairing on iOS 27+, then start a TCP RSD tunnel and mount the
+  Developer Disk Image automatically. (#29)
+- Discover wireless devices through `pymobiledevice3 tunneld`, route installs,
+  app lookup, DDI mounting, and launches through the correct RSD transport, and
+  surface actionable pairing, mDNS, Python, privilege, and tunnel diagnostics.
+  (#29)
+- Launch the exact account-qualified bundle id produced during signing and
+  installation instead of guessing from installed apps. This avoids attaching
+  to stale xcross builds or production/TestFlight builds with the same base
+  bundle id, which could cause kernel-version errors or denied debugging. (#28)
+- Complete App Groups support for share and action extensions. Xcode 16 synced
+  folders and localized resources are handled correctly, Swift module names
+  match extension principal classes, host and extensions use the same group and
+  callback URL scheme, and Apple ID signing creates and attaches groups
+  automatically. (#27)
+- Treat the issued provisioning profile as the source of truth for App Group
+  entitlements. App Store Connect API keys can use a group attached manually by
+  passing `XCROSS_APP_GROUP`, while unsupported group creation no longer blocks
+  an otherwise valid install. (#27)
+- Retry Linux package installation after refreshing a stale APT index. (#29)
+
 ## 1.1.2
 
 - Build, embed, sign and install iOS **app extensions** (share and action
@@ -16,33 +42,10 @@
   their version string. Embedded extensions inherit the app's versions, which
   iOS requires them to match.
 - Register App Groups declared by an app or its extensions, qualified per
-  account (`group.XCR-<TEAM>.…`) because App Group ids are globally unique,
-  and enable the App Groups capability on every App ID automatically, so the
-  app and its extensions share a container with no manual step on
-  developer.apple.com. Without the shared container a share extension can
-  hand nothing back to the app, which is the whole point of
-  `receive_sharing_intent`. (#23)
-  App Groups are reached over the pre-JSON `QH65B2` protocol Xcode itself
-  uses, because they have no modern API at all: Apple's App Store Connect
-  OpenAPI specification declares 966 paths and none mentions App Groups.
-- Take the App Group from the **issued provisioning profile** rather than
-  assuming the request succeeded. Only the profile decides what iOS accepts,
-  so this both avoids promising a container that does not exist and picks up a
-  group attached by any other means. Signing with an ungranted group is what
-  makes iOS refuse an install with `0xe8008015`.
-- **App Groups with an App Store Connect API key.** Apple exposes no App
-  Groups API to keys, so xcross cannot create the group, but it can now use
-  one you attached yourself: add the group to your App IDs in Xcode or at
-  developer.apple.com and pass `XCROSS_APP_GROUP=group.your.id`, which skips
-  the per-account rewrite. Verified against a live key that no route exists to
-  create one: `/v1/appGroups` 404s, the `APP_GROUPS` capability enables but
-  cannot name a group (`settings[].key` accepts only `ICLOUD_VERSION`,
-  `DATA_PROTECTION_PERMISSION_LEVEL`, `APPLE_ID_AUTH_APP_CONSENT`, on POST and
-  PATCH alike), a `group.` identifier registers as an App ID but cannot be
-  linked, and the developerservices2/portal hosts that do expose App Groups
-  reject API keys under every audience tried.
-- Warnings that describe an account-wide condition are printed once per run
-  rather than once per App ID (an app with two extensions provisions three).
+  account (`group.XCR-<TEAM>.…`) because App Group ids are globally unique.
+  Enabling the capability on the App IDs is still a manual step on
+  developer.apple.com; xcross reuses an existing group, so the next run picks
+  it up.
 
 ## 1.1.1
 

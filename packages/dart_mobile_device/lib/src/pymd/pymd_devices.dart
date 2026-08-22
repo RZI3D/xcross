@@ -5,7 +5,6 @@ import 'package:dart_mobile_device/src/errors.dart';
 import 'package:dart_mobile_device/src/models/device.dart';
 import 'package:dart_mobile_device/src/pymd/pymd.dart';
 import 'package:dart_mobile_device/src/tunnel/tunnel_discovery.dart';
-import 'package:meta/meta.dart';
 
 /// pymobiledevice3-backed device enumeration and app install.
 ///
@@ -117,7 +116,6 @@ abstract final class PymdDevices {
 
   /// Linux usbmuxd sometimes reports UDIDs without the `-` separator, while
   /// tunneld and lockdown keep it. Compare without it.
-  @visibleForTesting
   static String normalizeUdid(String udid) => udid.replaceAll('-', '');
 
   /// Parse the JSON array printed by `pymobiledevice3 usbmux list` (without

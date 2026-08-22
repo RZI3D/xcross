@@ -19,14 +19,20 @@ void main() {
       expect(retry.last, contains("'curl'"));
     });
 
-    test('keeps every name when the package index cannot be queried', () async {
-      // apt-cache is absent on non-Debian hosts (and in minimal containers);
-      // setup must still produce a usable command instead of throwing.
+    test('keeps every name when the package index recognizes none', () async {
+      // An empty result means the index itself is unavailable or unusable.
+      // Use names that cannot vary with the runner architecture or apt mirror.
       final attempts = await LinuxPackageManager.apt.installAttempts(const [
-        'curl',
-        'llvm',
+        'xcross-test-package-one',
+        'xcross-test-package-two',
       ]);
-      expect(attempts.first, containsAllInOrder(['curl', 'llvm']));
+      expect(
+        attempts.first,
+        containsAllInOrder([
+          'xcross-test-package-one',
+          'xcross-test-package-two',
+        ]),
+      );
     });
 
     test('pacman and dnf keep their own retry shapes', () async {

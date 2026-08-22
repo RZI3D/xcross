@@ -10,7 +10,30 @@ on:
       - "v[0-9]+.[0-9]+.[0-9]+"
 
 jobs:
+  check:
+    runs-on: ubuntu-24.04
+    outputs:
+      published: ${{ steps.lookup.outputs.published }}
+    steps:
+      - name: Check whether this version is already published
+        id: lookup
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          version="${RELEASE_TAG#v}"
+          if curl --fail --silent --show-error \
+            "https://pub.dev/api/packages/xcross/versions/$version" \
+            >/dev/null; then
+            echo "published=true" >>"$GITHUB_OUTPUT"
+            echo "xcross $version is already on pub.dev; nothing to publish."
+          else
+            echo "published=false" >>"$GITHUB_OUTPUT"
+          fi
+
   publish:
+    needs: check
+    if: needs.check.outputs.published != 'true'
     permissions:
       # Required to mint the OIDC token pub.dev exchanges for a publish
       # credential. No long-lived PUB_TOKEN secret is involved.

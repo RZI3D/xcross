@@ -619,7 +619,7 @@ Uint8List _replaceCertificateIssuer(Uint8List der, Uint8List issuer) {
   return _sequence([
     _sequence([
       for (var index = 0; index < tbs.length; index++)
-        index == firstField + 2 ? issuer : tbs[index].encoded,
+        if (index == firstField + 2) issuer else tbs[index].encoded,
     ]),
     ...certificate.skip(1).map((value) => value.encoded),
   ]);
