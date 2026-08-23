@@ -124,7 +124,7 @@ jobs:
           dart analyze
           dart test packages/xcross
           dart test packages/cli_kit
-          dart test packages/apple_developer_kit
+          (cd packages/apple_developer_kit && dart test)
           dart test packages/darwin_sdk_kit
           dart test packages/dart_mobile_device
           dart test packages/frontend_server_kit
