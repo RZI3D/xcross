@@ -1,4 +1,4 @@
-## Unreleased
+## 1.2.1
 
 - Replace the old tag-only update selector with `--ref`, so release tags still install verified release assets while branch and commit refs build from source before the same atomic install step.
 
