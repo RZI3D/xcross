@@ -66,15 +66,21 @@ final class UpdateCommand extends _$UpdateArgsCommand<void> {
     })?
     reportResolvedRef,
     String Function()? currentVersion,
-  }) : _latestTagLookup = latestTagLookup ?? _defaultLatestTag,
-       _resolveRef = resolveRef ?? _defaultResolveRef,
+    bool Function()? currentIsReleased,
+  }) : _latestTagLookup = _withLatestTagStep(
+         latestTagLookup ?? ReleaseLookup.latestTag,
+       ),
+       _resolveRef = _withResolveRefStep(
+         resolveRef ?? (ref) => GitUpdateRefResolver().resolve(ref),
+       ),
        _resolveInstallLayout =
            resolveInstallLayout ?? _defaultResolveInstallLayout,
        _assetName = assetName ?? _defaultAssetName,
        _releaseInstaller = installRelease ?? _defaultInstallRelease,
        _sourceInstaller = installSourceRef ?? _defaultInstallSourceRef,
        _resolvedRefReporter = reportResolvedRef ?? _defaultReportResolvedRef,
-       _currentVersion = currentVersion ?? _defaultCurrentVersion;
+       _currentVersion = currentVersion ?? _defaultCurrentVersion,
+       _currentIsReleased = currentIsReleased ?? _defaultCurrentIsReleased;
 
   final Future<String> Function() _latestTagLookup;
   final Future<GitUpdateRef> Function(String ref) _resolveRef;
@@ -96,6 +102,7 @@ final class UpdateCommand extends _$UpdateArgsCommand<void> {
   })
   _resolvedRefReporter;
   final String Function() _currentVersion;
+  final bool Function() _currentIsReleased;
 
   @override
   String get name => 'update';
@@ -206,6 +213,7 @@ final class UpdateCommand extends _$UpdateArgsCommand<void> {
   }
 
   bool _isUpgrade(XcrossSemver target) {
+    if (!_currentIsReleased()) return true;
     final current = XcrossSemver.tryParse(_currentVersion());
     return current == null || target.isNewerThan(current);
   }
@@ -219,11 +227,15 @@ final class UpdateCommand extends _$UpdateArgsCommand<void> {
     return answer == 'y' || answer == 'yes';
   }
 
-  static Future<String> _defaultLatestTag() =>
-      Log.logStep('Checking for updates', ReleaseLookup.latestTag);
+  static Future<String> Function() _withLatestTagStep(
+    Future<String> Function() lookup,
+  ) =>
+      () => Log.logStep('Checking latest release', lookup);
 
-  static Future<GitUpdateRef> _defaultResolveRef(String ref) =>
-      GitUpdateRefResolver().resolve(ref);
+  static Future<GitUpdateRef> Function(String ref) _withResolveRefStep(
+    Future<GitUpdateRef> Function(String ref) resolve,
+  ) =>
+      (ref) => Log.logStep('Resolving ref $ref', () => resolve(ref));
 
   static InstallLayout _defaultResolveInstallLayout() =>
       InstallLayout.resolve();
@@ -231,6 +243,8 @@ final class UpdateCommand extends _$UpdateArgsCommand<void> {
   static String _defaultAssetName() => SelfUpdate.assetName();
 
   static String _defaultCurrentVersion() => XcrossVersion.current;
+
+  static bool _defaultCurrentIsReleased() => XcrossVersion.isReleased;
 
   static Future<void> _defaultInstallRelease({
     required InstallLayout layout,
@@ -244,10 +258,13 @@ final class UpdateCommand extends _$UpdateArgsCommand<void> {
     final builder = GitRefSourceBundleBuilder();
     return builder.build<void>(
       ref: ref,
-      onBundle: (bundleRoot) => SelfUpdate.installBundle(
+      onBundle: (bundleRoot, progress) => SelfUpdate.installBundle(
         bundleRoot: bundleRoot,
         layout: layout,
         label: 'xcross ${ref.displayName} (${ref.commitSha})',
+        expectedIdentity: ref.displayName,
+        expectedReleased: false,
+        progress: progress,
       ),
     );
   }
