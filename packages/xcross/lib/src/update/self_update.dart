@@ -94,7 +94,12 @@ abstract final class SelfUpdate {
         destination: payload,
         executableName: _executableName,
       );
-      await _swapIn(payload: payload, layout: layout, tag: tag);
+      await installBundle(
+        bundleRoot: payload,
+        layout: layout,
+        label: 'xcross $tag',
+        expectedVersion: XcrossSemver.tryParse(tag),
+      );
     } finally {
       await _bestEffortDelete(staging);
     }
@@ -105,10 +110,18 @@ abstract final class SelfUpdate {
 
   // ------------------------------------------------------------------ swap
 
-  static Future<void> _swapIn({
-    required Directory payload,
+  static Future<void> installBundle({
+    required Directory bundleRoot,
     required InstallLayout layout,
-    required String tag,
+    required String label,
+    XcrossSemver? expectedVersion,
+    Future<CapturedProcess> Function({
+      required String executable,
+      required List<String> arguments,
+      required Map<String, String> environment,
+      required Duration timeout,
+    })?
+    runProcess,
   }) async {
     // Windows has no sudo to fall back on: elevation there means the user
     // relaunching in an Administrator terminal, which _requestElevation asks
@@ -118,13 +131,13 @@ abstract final class SelfUpdate {
 
     final swap = FileSwap(useSudo: useSudo);
     try {
-      await Log.logStep('Installing xcross $tag', () async {
+      await Log.logStep('Installing $label', () async {
         await swap.replace(
-          source: p.join(payload.path, 'bin', _executableName),
+          source: p.join(bundleRoot.path, 'bin', _executableName),
           target: p.join(layout.binDir, p.basename(layout.binaryPath)),
         );
         final libs = Directory(
-          p.join(payload.path, 'lib'),
+          p.join(bundleRoot.path, 'lib'),
         ).listSync().whereType<File>();
         for (final lib in libs) {
           await swap.replace(
@@ -133,7 +146,12 @@ abstract final class SelfUpdate {
           );
         }
       });
-      await _verify(layout, tag);
+      await verifyInstalledBinary(
+        layout: layout,
+        label: label,
+        expectedVersion: expectedVersion,
+        runProcess: runProcess,
+      );
     } on Object {
       await swap.rollback();
       rethrow;
@@ -175,25 +193,74 @@ abstract final class SelfUpdate {
   ///
   /// The child must not run the update check: it would sweep the very backups
   /// this run still needs for a rollback, and reach the network for nothing.
-  static Future<void> _verify(InstallLayout layout, String tag) async {
-    final result = await ProcessRunner.run(
-      layout.binaryPath,
-      const ['--version'],
-      environment: {UpdateCheck.disableEnvVar: '1'},
-    ).timeout(const Duration(seconds: 30));
+  static Future<CapturedProcess> verifyInstalledBinary({
+    required InstallLayout layout,
+    required String label,
+    XcrossSemver? expectedVersion,
+    Future<CapturedProcess> Function({
+      required String executable,
+      required List<String> arguments,
+      required Map<String, String> environment,
+      required Duration timeout,
+    })?
+    runProcess,
+  }) async {
+    final result = await _runVersionCheck(layout, runProcess: runProcess);
     // Scanned rather than parsed positionally: the credits banner also starts
     // with the word "xcross", and a false negative here would roll back a
     // perfectly good update.
-    final expected = XcrossSemver.tryParse(tag);
     final reported = result.stdout
         .split(RegExp(r'\s+'))
         .map(XcrossSemver.tryParse)
         .nonNulls;
-    if (result.exitCode != 0 || !reported.contains(expected)) {
+    if (result.exitCode != 0) {
       throw XcrossError(
-        'the installed binary did not report version $tag '
-        '(exit ${result.exitCode}); restoring the previous version',
+        'the installed binary did not report a parseable xcross version for '
+        '$label (exit ${result.exitCode}); restoring the previous version',
       );
     }
+    if (expectedVersion != null) {
+      if (!reported.contains(expectedVersion)) {
+        throw XcrossError(
+          'the installed binary did not report version $expectedVersion '
+          '(exit ${result.exitCode}); restoring the previous version',
+        );
+      }
+      return result;
+    }
+    if (reported.isEmpty) {
+      throw XcrossError(
+        'the installed binary did not report a parseable xcross version for '
+        '$label (exit ${result.exitCode}); restoring the previous version',
+      );
+    }
+    return result;
   }
+
+  static Future<CapturedProcess> _runVersionCheck(
+    InstallLayout layout, {
+    Future<CapturedProcess> Function({
+      required String executable,
+      required List<String> arguments,
+      required Map<String, String> environment,
+      required Duration timeout,
+    })?
+    runProcess,
+  }) => (runProcess ?? _defaultRunProcess)(
+    executable: layout.binaryPath,
+    arguments: const ['--version'],
+    environment: {UpdateCheck.disableEnvVar: '1'},
+    timeout: const Duration(seconds: 30),
+  );
+
+  static Future<CapturedProcess> _defaultRunProcess({
+    required String executable,
+    required List<String> arguments,
+    required Map<String, String> environment,
+    required Duration timeout,
+  }) => ProcessRunner.run(
+    executable,
+    arguments,
+    environment: environment,
+  ).timeout(timeout);
 }

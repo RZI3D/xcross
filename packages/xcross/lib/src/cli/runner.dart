@@ -23,7 +23,6 @@ import 'package:xcross/src/flutter/flutter.dart';
 import 'package:xcross/src/update/install_layout.dart';
 import 'package:xcross/src/update/self_update.dart';
 import 'package:xcross/src/update/update_check.dart';
-import 'package:xcross/src/version.dart';
 
 typedef ToolAliasRun =
     Future<int> Function(String executable, List<String> arguments);
@@ -121,19 +120,12 @@ abstract final class XcrossCli {
       // After the command, never before: neither of these is worth a millisecond
       // of startup latency, and the sweep is deliberately not tied to the
       // update-check opt-out, which says nothing about disk hygiene.
-      _sweepUpdateLeftovers();
+      try {
+        SelfUpdate.sweepStaleBackups(InstallLayout.resolve());
+      } on Object {
+        // Best effort cleanup. Update completion should not be blocked by stale backup cleanup.
+      }
       if (checkUpdates) await UpdateCheck.refreshIfStale();
-    }
-  }
-
-  /// Windows cannot delete the executable it is running, so a previous update
-  /// may have left its predecessor behind for this run to collect.
-  static void _sweepUpdateLeftovers() {
-    if (XcrossVersion.isDev) return;
-    try {
-      SelfUpdate.sweepStaleBackups(InstallLayout.resolve());
-    } on Object {
-      // A dev checkout or an unrecognised layout has nothing to sweep.
     }
   }
 
