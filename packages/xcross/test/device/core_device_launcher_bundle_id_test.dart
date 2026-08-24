@@ -10,6 +10,24 @@ void main() {
     });
   });
 
+  test('device logs keep only the launched process', () {
+    expect(
+      DeviceLog.appLogMessage(
+        '{"pid":13457,"message":"first Flutter frame rendered"}',
+        13457,
+      ),
+      'first Flutter frame rendered',
+    );
+    expect(
+      DeviceLog.appLogMessage(
+        '{"pid":42,"message":"unrelated system log"}',
+        13457,
+      ),
+      isNull,
+    );
+    expect(DeviceLog.appLogMessage('not json', 13457), isNull);
+  });
+
   test('device logs stay disabled outside verbose mode', () async {
     expect(
       await DeviceLog.start(deviceArgs: const [], pid: 1, enabled: false),

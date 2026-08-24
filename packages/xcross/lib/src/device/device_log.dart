@@ -8,11 +8,12 @@ import 'package:meta/meta.dart';
 
 @internal
 final class DeviceLog {
-  DeviceLog._(this._process);
+  DeviceLog._(this._process, this._pid);
 
   static const _cleanupTimeout = Duration(seconds: 2);
 
   final Process _process;
+  final int _pid;
   late final StreamSubscription<String> _stdout;
   late final StreamSubscription<String> _stderr;
 
@@ -21,6 +22,17 @@ final class DeviceLog {
     ...base,
     'PYTHONUNBUFFERED': '1',
   };
+
+  @visibleForTesting
+  static String? appLogMessage(String line, int pid) {
+    try {
+      final entry = jsonDecode(line);
+      if (entry is! Map<String, dynamic> || entry['pid'] != pid) return null;
+      return entry['message'] as String?;
+    } on FormatException {
+      return null;
+    }
+  }
 
   static Future<DeviceLog?> start({
     required List<String> deviceArgs,
@@ -38,8 +50,10 @@ final class DeviceLog {
         ...deviceArgs,
         '--pid',
         '$pid',
+        '--format',
+        'json',
       ], environment: processEnvironment(Pymd.usbmuxEnvironment()));
-      final log = DeviceLog._(process).._listen();
+      final log = DeviceLog._(process, pid).._listen();
       unawaited(
         process.exitCode.then((code) {
           if (code != 0) {
@@ -59,11 +73,14 @@ final class DeviceLog {
     _stdout = _process.stdout
         .transform(utf8.decoder)
         .transform(const LineSplitter())
-        .listen((line) => stdout.writeln('[device] $line'));
+        .listen((line) {
+          final message = appLogMessage(line, _pid);
+          if (message != null) stdout.writeln('[device] $message');
+        });
     _stderr = _process.stderr
         .transform(utf8.decoder)
         .transform(const LineSplitter())
-        .listen((line) => stderr.writeln('[device] $line'));
+        .listen((line) => Log.logTrace('device log: $line'));
   }
 
   Future<void> close() async {
