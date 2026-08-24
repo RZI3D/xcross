@@ -134,7 +134,7 @@ abstract final class DeviceTransportResolver {
             '--rsd',
             tunnel.address,
             '${tunnel.port}',
-          ], timeout: const Duration(seconds: 60)),
+          ], timeout: const Duration(seconds: 30)),
         );
       } on Object catch (mountFailure) {
         Log.logTrace('tunnel-routed auto-mount failed: $mountFailure');

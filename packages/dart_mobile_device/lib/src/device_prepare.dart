@@ -40,7 +40,7 @@ abstract final class DevicePrepare {
   /// A sleeping or unreachable phone can leave pymobiledevice3 blocked in a
   /// RemoteXPC exchange indefinitely. Keep the one-shot DDI mount bounded so
   /// the caller gets an actionable failure instead of a permanent spinner.
-  static const _wirelessMountTimeout = Duration(seconds: 60);
+  static const _wirelessMountTimeout = Duration(seconds: 30);
 
   static const _pollInterval = Duration(seconds: 2);
 
