@@ -8,6 +8,7 @@ import 'package:meta/meta.dart';
 import 'package:pure/pure.dart';
 import 'package:xcross/src/constants.dart';
 import 'package:xcross/src/device/core_device_launch_profile.dart';
+import 'package:xcross/src/device/device_log.dart';
 import 'package:xcross/src/device/session_console.dart';
 import 'package:xcross/src/errors.dart';
 import 'package:xcross/src/flutter/flutter.dart';
@@ -122,40 +123,46 @@ abstract final class CoreDeviceLauncher {
       bundleId: bundleId,
       appArgs: arguments,
     );
-
-    final gdb = await _attachDebugger(endpoint: debugproxy, pid: pid);
-
-    ({HotReloadController? controller, String? unavailable}) hotReloadSetup = (
-      controller: null,
-      unavailable: null,
+    final deviceLog = await DeviceLog.start(
+      deviceArgs: transport.pymdDeviceArgs,
+      pid: pid,
     );
-    HotReloadController? hotReloadController;
-    PortForwarder? vmService;
-    // Hot-reload setup is inside the same cleanup boundary as the session. A
-    // failed VM connection must not leak the attached debugger or leave a DAP
-    // launch paused forever.
+
     try {
-      hotReloadSetup = await _trySpinUpHotReload(
-        hotReload: hotReload,
-        transport: transport,
-      );
-      hotReloadController = hotReloadSetup.controller;
-      if (hotReloadController != null) {
-        vmService = await _publishVmService(transport: transport);
+      final gdb = await _attachDebugger(endpoint: debugproxy, pid: pid);
+
+      ({HotReloadController? controller, String? unavailable}) hotReloadSetup =
+          (controller: null, unavailable: null);
+      HotReloadController? hotReloadController;
+      PortForwarder? vmService;
+      // Hot-reload setup is inside the same cleanup boundary as the session. A
+      // failed VM connection must not leak the attached debugger or leave a DAP
+      // launch paused forever.
+      try {
+        hotReloadSetup = await _trySpinUpHotReload(
+          hotReload: hotReload,
+          transport: transport,
+        );
+        hotReloadController = hotReloadSetup.controller;
+        if (hotReloadController != null) {
+          vmService = await _publishVmService(transport: transport);
+        }
+        await SessionConsole(
+          gdb: gdb,
+          hotReload: hotReloadController,
+          hotReloadUnavailable: hotReloadSetup.unavailable,
+          onRestartRequested: onRestartRequested,
+        ).run();
+      } finally {
+        // Every step is timed out: a single hung flush/close on Windows left
+        // `q` in a silent stuck state (no further input or output).
+        await _cleanupStep('vm-service', () => vmService?.close());
+        await _cleanupStep('hot-reload', () => hotReloadController?.close());
+        await _cleanupStep('gdb-kill', gdb.kill);
+        await _cleanupStep('gdb-close', gdb.close);
       }
-      await SessionConsole(
-        gdb: gdb,
-        hotReload: hotReloadController,
-        hotReloadUnavailable: hotReloadSetup.unavailable,
-        onRestartRequested: onRestartRequested,
-      ).run();
     } finally {
-      // Every step is timed out: a single hung flush/close on Windows left `q`
-      // in a silent stuck state (no further input or output).
-      await _cleanupStep('vm-service', () => vmService?.close());
-      await _cleanupStep('hot-reload', () => hotReloadController?.close());
-      await _cleanupStep('gdb-kill', gdb.kill);
-      await _cleanupStep('gdb-close', gdb.close);
+      await deviceLog?.close();
     }
   }
 

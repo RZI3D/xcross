@@ -35,6 +35,7 @@ final class RunnerShim {
     required String outputDir,
     required IosDeploymentTarget deploymentTarget,
     String? pluginsLibrary,
+    bool verbose = false,
   }) => Log.logStep('Compiling Runner', () async {
     final clang = await DarwinSdk.resolveDarwinClang(sdk);
     final iosSdk = _resolveIPhoneOsSDK(sdk);
@@ -46,9 +47,9 @@ final class RunnerShim {
     final objectPath = p.join(outputDir, 'Runner.o');
     final outputPath = p.join(outputDir, 'Runner');
 
-    await File(
-      sourcePath,
-    ).writeAsString(_runnerObjcSource(hasPlugins: pluginsLibrary != null));
+    await File(sourcePath).writeAsString(
+      runnerObjcSource(hasPlugins: pluginsLibrary != null, verbose: verbose),
+    );
 
     await _compileObject(
       clang: clang,
@@ -266,7 +267,11 @@ final class RunnerShim {
   /// `GeneratedPluginsPackage` in ios_plugin_package.dart) — no
   /// generated-header or clang-modules setup needed, just a normal C symbol
   /// resolved at link time by [_linkBinary].
-  static String _runnerObjcSource({required bool hasPlugins}) =>
+  @visibleForTesting
+  static String runnerObjcSource({
+    required bool hasPlugins,
+    required bool verbose,
+  }) =>
       '''
 #import <UIKit/UIKit.h>
 #import <Flutter/Flutter.h>
@@ -276,15 +281,24 @@ ${hasPlugins ? _pluginsExternDeclaration : _emptyPluginRegistrantStub}
 @end
 @implementation AppDelegate
 - (BOOL)application:(UIApplication*)application didFinishLaunchingWithOptions:(NSDictionary*)launchOptions {
+  ${verbose ? 'NSLog(@"[xcross] application launch started");' : ''}
   FlutterViewController* flutterViewController = [[FlutterViewController alloc] initWithProject:nil nibName:nil bundle:nil];
+  [flutterViewController setFlutterViewDidRenderCallback:^{
+    NSLog(@"[xcross] first Flutter frame rendered");
+  }];
   UIWindow* window = [[UIWindow alloc] initWithFrame:[[UIScreen mainScreen] bounds]];
   window.rootViewController = flutterViewController;
   [window makeKeyAndVisible];
   self.window = window;
-  return [super application:application didFinishLaunchingWithOptions:launchOptions];
+  BOOL launched = [super application:application didFinishLaunchingWithOptions:launchOptions];
+  ${verbose ? 'NSLog(@"[xcross] FlutterAppDelegate didFinishLaunching returned: %@", launched ? @"YES" : @"NO");' : ''}
+  return launched;
 }
 - (void)didInitializeImplicitFlutterEngine:(NSObject<FlutterImplicitEngineBridge>*)engineBridge {
+  ${verbose ? 'NSLog(@"[xcross] Flutter engine initialized; registering plugins");' : ''}
   ${hasPlugins ? '${GeneratedPluginsConstants.registrantSymbol}(engineBridge.pluginRegistry);' : '[GeneratedPluginRegistrant registerWithRegistry:engineBridge.pluginRegistry];'}
+  ${verbose && !hasPlugins ? 'NSLog(@"[xcross] plugin registration summary: 0 attempted, 0 registered, 0 failed");' : ''}
+  ${verbose ? 'NSLog(@"[xcross] plugin registration completed");' : ''}
 }
 @end
 
