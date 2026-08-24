@@ -7,6 +7,7 @@ import 'package:dart_mobile_device/src/pymd/pymd.dart';
 import 'package:dart_mobile_device/src/pymd/pymd_devices.dart';
 import 'package:dart_mobile_device/src/pymd/remote_pairing.dart';
 import 'package:dart_mobile_device/src/tunnel/tunnel_daemon.dart';
+import 'package:dart_mobile_device/src/tunnel/tunnel_discovery.dart';
 import 'package:meta/meta.dart';
 
 /// Resolves a target [Device] via pymobiledevice3-backed listing.
@@ -281,6 +282,16 @@ class PymdDeviceResolver {
       _daemonFailure = e;
       Log.logTrace('wireless bring-up: tunneld unavailable: $e');
       return PymdDevices.devices(mode: mode);
+    }
+
+    final activeTunnels = await TunnelDiscovery.activeTunnels();
+    if (activeTunnels.isEmpty) {
+      final restarted = await daemon.restartStale();
+      if (restarted) {
+        Log.logTrace(
+          'restarted the xcross-managed tunnel daemon after it lost all tunnels',
+        );
+      }
     }
 
     final tail = TunneldLogTail.start();
