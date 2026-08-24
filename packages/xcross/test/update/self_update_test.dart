@@ -298,7 +298,6 @@ void main() {
       layout: layout,
       label: 'xcross main',
       expectedIdentity: 'main',
-      expectedReleased: false,
       runProcess:
           ({
             required executable,
@@ -316,7 +315,6 @@ void main() {
         layout: layout,
         label: 'xcross main',
         expectedIdentity: 'main',
-        expectedReleased: false,
         runProcess:
             ({
               required executable,
@@ -369,7 +367,6 @@ void main() {
         layout: layout,
         label: 'xcross main',
         expectedIdentity: 'main',
-        expectedReleased: false,
         runProcess:
             ({
               required executable,

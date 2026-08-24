@@ -654,8 +654,7 @@ Future<({String key, String certificate, String profile})> _writeFixture(
     'Entitlements': <String, Object>{
       'application-identifier': 'TESTTEAM123.dev.xcross.test',
       'get-task-allow': true,
-      if (appGroups != null)
-        'com.apple.security.application-groups': appGroups,
+      if (appGroups != null) 'com.apple.security.application-groups': appGroups,
     },
     'DeveloperCertificates': [
       for (final certificate in developerCertificates)

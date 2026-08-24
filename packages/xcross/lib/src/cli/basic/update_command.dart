@@ -263,7 +263,6 @@ final class UpdateCommand extends _$UpdateArgsCommand<void> {
         layout: layout,
         label: 'xcross ${ref.displayName} (${ref.commitSha})',
         expectedIdentity: ref.displayName,
-        expectedReleased: false,
         progress: progress,
       ),
     );

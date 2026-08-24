@@ -91,7 +91,7 @@ String _pubspecVersion(Directory packageRoot) {
 String _normalizeVersion(String version) =>
     version.startsWith('v') ? version.substring(1) : version;
 
-String _core(String version) => version.split(RegExp(r'[-+]')).first;
+String _core(String version) => version.split(RegExp('[-+]')).first;
 
 String _identitySource(String version, bool released) =>
     "part of 'version.dart';\n\n"

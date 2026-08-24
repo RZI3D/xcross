@@ -399,9 +399,7 @@ void main() {
             expect(body['applicationGroups'], ['GROUPID']);
           }
           return http.Response(
-            PropertyListSerialization.stringWithPropertyList({
-              'resultCode': 0,
-            }),
+            PropertyListSerialization.stringWithPropertyList({'resultCode': 0}),
             200,
           );
         }),
@@ -429,9 +427,7 @@ void main() {
         httpClient: MockClient((request) async {
           actions.add(request.url.pathSegments.last);
           return http.Response(
-            PropertyListSerialization.stringWithPropertyList({
-              'resultCode': 0,
-            }),
+            PropertyListSerialization.stringWithPropertyList({'resultCode': 0}),
             200,
           );
         }),

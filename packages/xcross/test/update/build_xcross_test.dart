@@ -87,7 +87,7 @@ void main() {
   test(
     'rejects a released version whose core disagrees with pubspec.yaml',
     () async {
-      seed(pubspecVersion: '1.2.1');
+      seed();
       final original = File(generatedPath).readAsStringSync();
 
       await expectLater(
@@ -108,7 +108,7 @@ void main() {
   test(
     'normalizes a released v-prefixed tag to the pubspec core identity',
     () async {
-      seed(pubspecVersion: '1.2.1');
+      seed();
       final original = File(generatedPath).readAsStringSync();
       String? generatedDuringBuild;
 
