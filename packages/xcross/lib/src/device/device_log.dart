@@ -19,7 +19,9 @@ final class DeviceLog {
   static Future<DeviceLog?> start({
     required List<String> deviceArgs,
     required int pid,
+    required bool enabled,
   }) async {
+    if (!enabled) return null;
     try {
       final invocation = await Pymd.resolve();
       final process = await Process.start(invocation.executable, [

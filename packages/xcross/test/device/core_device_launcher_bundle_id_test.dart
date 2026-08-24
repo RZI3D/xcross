@@ -1,7 +1,15 @@
 import 'package:test/test.dart';
 import 'package:xcross/src/device/core_device_launcher.dart';
+import 'package:xcross/src/device/device_log.dart';
 
 void main() {
+  test('device logs stay disabled outside verbose mode', () async {
+    expect(
+      await DeviceLog.start(deviceArgs: const [], pid: 1, enabled: false),
+      isNull,
+    );
+  });
+
   String pick(List<String> installed, String requested) =>
       CoreDeviceLauncher.pickInstalledBundleId(
         installed: installed,

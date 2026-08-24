@@ -126,6 +126,7 @@ abstract final class CoreDeviceLauncher {
     final deviceLog = await DeviceLog.start(
       deviceArgs: transport.pymdDeviceArgs,
       pid: pid,
+      enabled: Log.isVerbose,
     );
 
     try {
