@@ -16,6 +16,12 @@ final class DeviceLog {
   late final StreamSubscription<String> _stdout;
   late final StreamSubscription<String> _stderr;
 
+  @visibleForTesting
+  static Map<String, String> processEnvironment(Map<String, String> base) => {
+    ...base,
+    'PYTHONUNBUFFERED': '1',
+  };
+
   static Future<DeviceLog?> start({
     required List<String> deviceArgs,
     required int pid,
@@ -32,7 +38,7 @@ final class DeviceLog {
         ...deviceArgs,
         '--pid',
         '$pid',
-      ], environment: Pymd.usbmuxEnvironment());
+      ], environment: processEnvironment(Pymd.usbmuxEnvironment()));
       final log = DeviceLog._(process).._listen();
       unawaited(
         process.exitCode.then((code) {

@@ -3,6 +3,13 @@ import 'package:xcross/src/device/core_device_launcher.dart';
 import 'package:xcross/src/device/device_log.dart';
 
 void main() {
+  test('device logs disable Python stdout buffering', () {
+    expect(DeviceLog.processEnvironment(const {'EXISTING': 'value'}), {
+      'EXISTING': 'value',
+      'PYTHONUNBUFFERED': '1',
+    });
+  });
+
   test('device logs stay disabled outside verbose mode', () async {
     expect(
       await DeviceLog.start(deviceArgs: const [], pid: 1, enabled: false),
