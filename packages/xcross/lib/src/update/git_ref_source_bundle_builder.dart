@@ -11,16 +11,23 @@ final class GitRefSourceBundleBuilder {
     RunGitProcess? run,
     CreateTempDirectory? createTempDirectory,
     DeleteDirectory? deleteDirectory,
+    Directory? systemTempDirectory,
+    DateTime Function()? now,
   }) : _run = run ?? runUpdateProcess,
        _createTempDirectory =
            createTempDirectory ?? _defaultCreateTempDirectory,
-       _deleteDirectory = deleteDirectory ?? _defaultDeleteDirectory;
+       _deleteDirectory = deleteDirectory ?? _defaultDeleteDirectory,
+       _systemTempDirectory = systemTempDirectory ?? Directory.systemTemp,
+       _now = now ?? DateTime.now;
 
   static const repoUrl = GitUpdateRefResolver.repoUrl;
+  static const _staleTempAge = Duration(days: 1);
 
   final RunGitProcess _run;
   final CreateTempDirectory _createTempDirectory;
   final DeleteDirectory _deleteDirectory;
+  final Directory _systemTempDirectory;
+  final DateTime Function() _now;
 
   Future<T> build<T>({
     required GitUpdateRef ref,
@@ -33,6 +40,7 @@ final class GitRefSourceBundleBuilder {
       );
     }
 
+    await _deleteStaleTempDirectories();
     final tempDirectory = await _createTempDirectory('xcross-update-source-');
     final progress = UpdateProgress('Source', UpdatePhases.source.length);
     try {
@@ -139,6 +147,26 @@ final class GitRefSourceBundleBuilder {
     throw XcrossError(
       stderr.isEmpty ? 'failed to $action' : 'failed to $action: $stderr',
     );
+  }
+
+  Future<void> _deleteStaleTempDirectories() async {
+    try {
+      await for (final entry in _systemTempDirectory.list(followLinks: false)) {
+        if (entry is! Directory ||
+            !p.basename(entry.path).startsWith('xcross-')) {
+          continue;
+        }
+        try {
+          final modified = entry.statSync().modified;
+          if (_now().difference(modified) < _staleTempAge) continue;
+          await entry.delete(recursive: true);
+        } on Object {
+          continue;
+        }
+      }
+    } on Object {
+      return;
+    }
   }
 
   static Future<Directory> _defaultCreateTempDirectory(String prefix) =>

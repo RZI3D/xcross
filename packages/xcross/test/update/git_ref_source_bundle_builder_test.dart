@@ -20,6 +20,62 @@ Future<List<String>> _captureAsync(Future<void> Function() body) async {
 
 void main() {
   group('GitRefSourceBundleBuilder.build', () {
+    test('deletes stale xcross temp directories before cloning', () async {
+      final scratch = _createScratchDirectory();
+      final systemTemp = Directory(p.join(scratch.path, 'tmp'))
+        ..createSync(recursive: true);
+      final stale = Directory(p.join(systemTemp.path, 'xcross-abandoned'))
+        ..createSync();
+      final unrelated = Directory(p.join(systemTemp.path, 'other-abandoned'))
+        ..createSync();
+      final staging = Directory(p.join(scratch.path, 'staging'));
+      final repo = Directory(p.join(staging.path, 'xcross'));
+      final bundle = Directory(
+        p.join(
+          repo.path,
+          'packages',
+          'xcross',
+          'build',
+          'cli',
+          'linux-x64',
+          'bundle',
+        ),
+      );
+      var staleWasDeletedBeforeClone = false;
+      final runner = _FakeProcessRunner(
+        onRun: (call) async {
+          if (call.arguments.first == 'clone') {
+            staleWasDeletedBeforeClone = !stale.existsSync();
+          }
+          if (call.arguments.contains('tool/build_xcross.dart')) {
+            _createBundle(bundle);
+          }
+          return _result();
+        },
+      );
+      final builder = GitRefSourceBundleBuilder(
+        run: runner.run,
+        createTempDirectory: (_) =>
+            Future.value(staging..createSync(recursive: true)),
+        deleteDirectory: _deleteDirectorySync,
+        systemTempDirectory: systemTemp,
+        now: () => DateTime.now().add(const Duration(days: 2)),
+      );
+
+      await builder.build<void>(
+        ref: const GitUpdateRef(
+          kind: GitUpdateRefKind.branch,
+          displayName: 'main',
+          fetchRef: 'refs/heads/main',
+          commitSha: '1234567890abcdef1234567890abcdef12345678',
+        ),
+        onBundle: (_, __) async {},
+      );
+
+      expect(staleWasDeletedBeforeClone, isTrue);
+      expect(unrelated.existsSync(), isTrue);
+    });
+
     test('reports numbered source phases in order', () async {
       final scratch = _createScratchDirectory();
       final staging = Directory(p.join(scratch.path, 'staging'));
