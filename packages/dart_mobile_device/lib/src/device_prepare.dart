@@ -37,6 +37,11 @@ abstract final class DevicePrepare {
   /// RemotePairing handshake takes a few more).
   static const _wirelessTunnelTimeout = Duration(seconds: 45);
 
+  /// A sleeping or unreachable phone can leave pymobiledevice3 blocked in a
+  /// RemoteXPC exchange indefinitely. Keep the one-shot DDI mount bounded so
+  /// the caller gets an actionable failure instead of a permanent spinner.
+  static const _wirelessMountTimeout = Duration(seconds: 60);
+
   static const _pollInterval = Duration(seconds: 2);
 
   /// Mount DDI, ensure tunneld, and start a lockdown RSD tunnel in the
@@ -426,7 +431,7 @@ abstract final class DevicePrepare {
       '--rsd',
       tunnel.address,
       '${tunnel.port}',
-    ]),
+    ], timeout: _wirelessMountTimeout),
   );
 
   /// `sudo pymobiledevice3 mounter auto-mount` (one-shot).
