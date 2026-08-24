@@ -20,7 +20,7 @@ Future<List<String>> _captureAsync(Future<void> Function() body) async {
 
 void main() {
   group('GitRefSourceBundleBuilder.build', () {
-    test('deletes stale xcross temp directories before cloning', () async {
+    test('deletes xcross temp directories before cloning', () async {
       final scratch = _createScratchDirectory();
       final systemTemp = Directory(p.join(scratch.path, 'tmp'))
         ..createSync(recursive: true);
@@ -59,7 +59,6 @@ void main() {
             Future.value(staging..createSync(recursive: true)),
         deleteDirectory: _deleteDirectorySync,
         systemTempDirectory: systemTemp,
-        now: () => DateTime.now().add(const Duration(days: 2)),
       );
 
       await builder.build<void>(
