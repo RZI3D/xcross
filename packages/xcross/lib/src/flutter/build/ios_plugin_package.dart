@@ -198,6 +198,8 @@ abstract final class GeneratedPluginsPackage {
       outputDir: outputDir,
       cCompilerPath: darwinClang ?? await ProcessRunner.locateTool('cc'),
     );
+    final objectiveCCompatibilityHeader =
+        await writeObjectiveCCompatibilityHeader(outputDir);
     final swiftSdksPath = p.dirname(sdk.swiftSdkPath);
     final environment = swiftProcessEnvironment(windows: windows);
     if (windows) {
@@ -222,6 +224,7 @@ abstract final class GeneratedPluginsPackage {
               swiftSdksPath: swiftSdksPath,
               iosSdk: sdk.iPhoneOSSdk(),
               flutterFrameworkSlice: flutterFrameworkSlice,
+              objectiveCCompatibilityHeader: objectiveCCompatibilityHeader,
               toolsetPath: toolsetPath,
               // Windows gets the same override from the toolset's `linker`.
               linkerPath: windows ? null : linker,
@@ -576,6 +579,19 @@ abstract final class GeneratedPluginsPackage {
     return exePath;
   }
 
+  @visibleForTesting
+  static Future<String> writeObjectiveCCompatibilityHeader(
+    String outputDir,
+  ) async {
+    final path = p.join(outputDir, '.xcross', 'objective-c-compatibility.h');
+    await Directory(p.dirname(path)).create(recursive: true);
+    await _writeStable(
+      path,
+      '#ifdef __OBJC__\n#import <Foundation/Foundation.h>\n#endif\n',
+    );
+    return path;
+  }
+
   /// Search-path arguments for the Objective-C interop modules SwiftPM
   /// generates under [targetBuildDir].
   ///
@@ -643,6 +659,7 @@ abstract final class GeneratedPluginsPackage {
     required String swiftSdksPath,
     required String iosSdk,
     required String flutterFrameworkSlice,
+    String? objectiveCCompatibilityHeader,
     String? toolsetPath,
     String? linkerPath,
     bool? windows,
@@ -709,6 +726,12 @@ abstract final class GeneratedPluginsPackage {
     '-isysroot',
     '-Xcc',
     iosSdk,
+    if (objectiveCCompatibilityHeader != null) ...[
+      '-Xcc',
+      '-include',
+      '-Xcc',
+      objectiveCCompatibilityHeader,
+    ],
     '-Xswiftc',
     '-F',
     '-Xswiftc',
@@ -731,6 +754,14 @@ abstract final class GeneratedPluginsPackage {
     '-Xclang-linker',
     '-Xswiftc',
     iosSdk,
+    '-Xswiftc',
+    '-Xlinker',
+    '-Xswiftc',
+    '-ObjC',
+    '-Xswiftc',
+    '-Xlinker',
+    '-Xswiftc',
+    '-no_objc_category_merging',
     // The link runs through the toolchain's own clang, which resolves
     // `-use-ld=lld` to the `ld64.lld` sitting next to itself — swiftly's, the
     // one that refuses iOS (see [resolveLd64Lld]). `--ld-path` overrides that
@@ -1004,7 +1035,10 @@ abstract final class GeneratedPluginsPackage {
     }
 
     final manifest = await File(p.join(target, 'Package.swift')).readAsString();
-    var normalizedManifest = normalizeHostManifest(manifest);
+    var normalizedManifest = removeMissingResources(
+      normalizeHostManifest(manifest),
+      target,
+    );
     final fallbackSwiftModules = <String, List<String>>{};
     if (vendorDir != null) {
       normalizedManifest = await vendorUrlPackagesAsPathDeps(
@@ -1294,6 +1328,36 @@ let package = Package(
           for (final argument in arguments) ...['"-Xlinker"', '"$argument"'],
         ].join(', ');
       });
+
+  @visibleForTesting
+  static String removeMissingResources(String manifest, String packageDir) {
+    final targets = _swiftCalls(manifest, '.target');
+    final resourcePattern = RegExp(
+      r'\.((?:process|copy))\(\s*"([^"]+)"\s*\)\s*,?',
+    );
+    var result = manifest;
+    for (final match
+        in resourcePattern.allMatches(manifest).toList().reversed) {
+      var root = packageDir;
+      for (final target in targets) {
+        if (target.start > match.start || target.end < match.end) continue;
+        final explicitPath = _namedString(target.text, 'path');
+        final name = _namedString(target.text, 'name');
+        if (explicitPath != null) {
+          root = p.joinAll([packageDir, ...explicitPath.split('/')]);
+        } else if (name != null) {
+          root = p.join(packageDir, 'Sources', name);
+        }
+        break;
+      }
+      final resource = p.joinAll([root, ...match.group(2)!.split('/')]);
+      if (FileSystemEntity.typeSync(resource) ==
+          FileSystemEntityType.notFound) {
+        result = result.replaceRange(match.start, match.end, '');
+      }
+    }
+    return result;
+  }
 
   /// Host-side Package.swift fixes for cross builds.
   ///

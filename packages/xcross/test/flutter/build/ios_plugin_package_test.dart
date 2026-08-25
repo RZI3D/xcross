@@ -843,6 +843,80 @@ let package = Package(name: "Sentry", products: [], targets: [])
     });
   });
 
+  group('removeMissingResources', () {
+    test('drops missing resources and preserves existing resources', () {
+      final package = Directory(p.join(tmp.path, 'resources'))
+        ..createSync(recursive: true);
+      File(p.join(package.path, 'PrivacyInfo.xcprivacy'))
+        ..createSync()
+        ..writeAsStringSync('{}');
+      const manifest = '''
+resources: [
+    .process("PrivacyInfo.xcprivacy"),
+    .copy("Resources/Missing.bundle"),
+]
+''';
+
+      final normalized = GeneratedPluginsPackage.removeMissingResources(
+        manifest,
+        package.path,
+      );
+      expect(normalized, contains('.process("PrivacyInfo.xcprivacy")'));
+      expect(normalized, isNot(contains('Missing.bundle')));
+    });
+
+    test('resolves resources relative to their target path', () {
+      final package = Directory(p.join(tmp.path, 'target-resources'))
+        ..createSync(recursive: true);
+      File(
+          p.join(
+            package.path,
+            'Sources',
+            'flutter_inappwebview_ios',
+            'Resources',
+            'WebView.storyboard',
+          ),
+        )
+        ..createSync(recursive: true)
+        ..writeAsStringSync('<storyboard/>');
+      const manifest = '''
+let package = Package(targets: [
+    .target(
+        name: "flutter_inappwebview_ios",
+        path: "Sources/flutter_inappwebview_ios",
+        resources: [
+            .process("Resources/WebView.storyboard"),
+            .process("Resources/Missing.xcprivacy"),
+        ]
+    )
+])
+''';
+
+      final normalized = GeneratedPluginsPackage.removeMissingResources(
+        manifest,
+        package.path,
+      );
+      expect(normalized, contains('.process("Resources/WebView.storyboard")'));
+      expect(normalized, isNot(contains('Missing.xcprivacy')));
+    });
+
+    test('uses the conventional Sources target directory', () {
+      final package = Directory(p.join(tmp.path, 'default-target-resources'))
+        ..createSync(recursive: true);
+      File(p.join(package.path, 'Sources', 'Plugin', 'Resources', 'Data.json'))
+        ..createSync(recursive: true)
+        ..writeAsStringSync('{}');
+      const manifest = '''
+.target(name: "Plugin", resources: [.copy("Resources/Data.json")])
+''';
+
+      expect(
+        GeneratedPluginsPackage.removeMissingResources(manifest, package.path),
+        manifest,
+      );
+    });
+  });
+
   group('registrantSource', () {
     test('imports and registers only the plugin with a pluginClass', () {
       final pluginA = makePlugin('plugin_a', pluginClass: 'PluginA');
@@ -1754,6 +1828,7 @@ let package = Package(
         swiftSdksPath: 'xcross-swift-sdks',
         iosSdk: 'iPhoneOS.sdk',
         flutterFrameworkSlice: 'Flutter.xcframework/ios-arm64',
+        objectiveCCompatibilityHeader: 'objective-c-compatibility.h',
         toolsetPath: 'toolset.json',
         linkerPath: '/usr/bin/ld64.lld',
         windows: true,
@@ -1780,11 +1855,25 @@ let package = Package(
         arguments,
         containsAllInOrder([
           '-Xswiftc',
+          '-Xlinker',
+          '-Xswiftc',
+          '-ObjC',
+          '-Xswiftc',
+          '-Xlinker',
+          '-Xswiftc',
+          '-no_objc_category_merging',
+        ]),
+      );
+      expect(
+        arguments,
+        containsAllInOrder([
+          '-Xswiftc',
           '-Xclang-linker',
           '-Xswiftc',
           '--ld-path=/usr/bin/ld64.lld',
         ]),
       );
+
       expect(
         arguments,
         containsAllInOrder([
@@ -1805,6 +1894,15 @@ let package = Package(
       expect(
         arguments,
         containsAllInOrder(['-Xcc', '-isysroot', '-Xcc', 'iPhoneOS.sdk']),
+      );
+      expect(
+        arguments,
+        containsAllInOrder([
+          '-Xcc',
+          '-include',
+          '-Xcc',
+          'objective-c-compatibility.h',
+        ]),
       );
       expect(
         arguments,
@@ -2160,6 +2258,19 @@ module FirebaseFirestore {
         'GIT_CONFIG_VALUE_0': 'false',
         'EXPERIMENTAL_SPM_BUILDS': '1',
       });
+    });
+  });
+
+  group('Objective-C compatibility header', () {
+    test('imports Foundation only for Objective-C compilations', () async {
+      final path =
+          await GeneratedPluginsPackage.writeObjectiveCCompatibilityHeader(
+            tmp.path,
+          );
+      expect(
+        File(path).readAsStringSync(),
+        '#ifdef __OBJC__\n#import <Foundation/Foundation.h>\n#endif\n',
+      );
     });
   });
 
