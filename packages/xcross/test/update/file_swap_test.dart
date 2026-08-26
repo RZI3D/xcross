@@ -15,12 +15,14 @@ void main() {
   String target(String name) => p.join(installed.path, name);
 
   setUp(() {
-    root = Directory.systemTemp.createTempSync('xcross-swap-');
+    root = Directory.systemTemp.createTempSync('file-swap-test-');
     staged = Directory(p.join(root.path, 'staged'))..createSync();
     installed = Directory(p.join(root.path, 'installed'))..createSync();
   });
 
-  tearDown(() => root.deleteSync(recursive: true));
+  tearDown(() {
+    if (root.existsSync()) root.deleteSync(recursive: true);
+  });
 
   test('replaces an existing file and parks the previous one', () async {
     File(target('xcross')).writeAsStringSync('old');

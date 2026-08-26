@@ -72,6 +72,7 @@ analyzer:
     [
       tools/**,
       build/**,
+      examples/**,
       "**/*.freezed.dart",
       "**/*.g.dart",
       "**/*.gr.dart",

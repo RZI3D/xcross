@@ -26,13 +26,31 @@ void main() {
     expect(
       profile.argumentsForLaunch(isDap: true),
       containsAll([
-        '--vm-service-host=::',
+        '--vm-service-host=0.0.0.0',
         '--disable-service-auth-codes',
         '--start-paused',
         '--enable-checked-mode',
         '--verify-entry-points',
         '--route=/home',
       ]),
+    );
+  });
+
+  test('kernel tunnel binds VM Service to IPv6', () {
+    const hotReload = HotReloadConfig(
+      dart: 'dart',
+      frontendServer: 'frontend_server',
+      sdkRoot: 'sdk',
+      packageConfig: 'package_config.json',
+      entrypoint: 'main.dart',
+      projectRoot: '.',
+      outputDill: 'app.dill',
+    );
+    const profile = CoreDeviceLaunchProfile.flutter(hotReload: hotReload);
+
+    expect(
+      profile.argumentsForLaunch(isDap: false, ipv6VmService: true),
+      contains('--vm-service-host=::0'),
     );
   });
 }

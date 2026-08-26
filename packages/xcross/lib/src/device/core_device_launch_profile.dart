@@ -15,9 +15,12 @@ final class CoreDeviceLaunchProfile {
   final HotReloadConfig? hotReload;
   final bool _flutterRuntime;
 
-  List<String> argumentsForLaunch({required bool isDap}) => [
+  List<String> argumentsForLaunch({
+    required bool isDap,
+    bool ipv6VmService = false,
+  }) => [
     if (_flutterRuntime && hotReload != null) ...[
-      '--vm-service-host=::',
+      '--vm-service-host=${ipv6VmService ? '::0' : '0.0.0.0'}',
       '--vm-service-port=${TunnelConstants.vmServicePort}',
       '--disable-service-auth-codes',
       if (isDap) '--start-paused',

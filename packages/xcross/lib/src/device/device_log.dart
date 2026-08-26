@@ -21,6 +21,7 @@ final class DeviceLog {
   static Map<String, String> processEnvironment(Map<String, String> base) => {
     ...base,
     'PYTHONUNBUFFERED': '1',
+    'PYTHONIOENCODING': 'utf-8',
   };
 
   @visibleForTesting
@@ -71,14 +72,14 @@ final class DeviceLog {
 
   void _listen() {
     _stdout = _process.stdout
-        .transform(utf8.decoder)
+        .transform(const Utf8Decoder(allowMalformed: true))
         .transform(const LineSplitter())
         .listen((line) {
           final message = appLogMessage(line, _pid);
           if (message != null) stdout.writeln('[device] $message');
         });
     _stderr = _process.stderr
-        .transform(utf8.decoder)
+        .transform(const Utf8Decoder(allowMalformed: true))
         .transform(const LineSplitter())
         .listen((line) => Log.logTrace('device log: $line'));
   }

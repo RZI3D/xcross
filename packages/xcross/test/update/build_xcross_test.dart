@@ -56,7 +56,7 @@ void main() {
         packageRoot: sandbox,
         encodedVersion: Uri.encodeComponent('feature/throw'),
         released: false,
-        runBuild: (executable, arguments, {required workingDirectory}) async {
+        runBuild: (executable, arguments, {required workingDirectory}) {
           throw StateError('boom');
         },
       ),

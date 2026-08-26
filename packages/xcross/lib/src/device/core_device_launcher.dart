@@ -51,7 +51,10 @@ abstract final class CoreDeviceLauncher {
       await _runSession(
         transport: transport,
         bundleId: bundleId,
-        arguments: profile.argumentsForLaunch(isDap: _isDap),
+        arguments: profile.argumentsForLaunch(
+          isDap: _isDap,
+          ipv6VmService: transport is KernelTunnelTransport,
+        ),
         hotReload: profile.hotReload,
         onRestartRequested: onRestartRequested,
       );
@@ -140,20 +143,53 @@ abstract final class CoreDeviceLauncher {
       // failed VM connection must not leak the attached debugger or leave a DAP
       // launch paused forever.
       try {
-        hotReloadSetup = await _trySpinUpHotReload(
+        final console = SessionConsole(
+          gdb: gdb,
+          hotReload: null,
+          hotReloadUnavailable: hotReload == null
+              ? null
+              : 'hot reload is still preparing; wait for "Hot reload ready".',
+          onRestartRequested: onRestartRequested,
+        );
+        final consoleFuture = console.run();
+        if (hotReload != null) Log.logInfo('Preparing hot reload…');
+        final setupFuture = _trySpinUpHotReload(
           hotReload: hotReload,
           transport: transport,
+          onVmServiceReady: () async {
+            final forwarder = await _publishVmService(transport: transport);
+            if (console.isStopped) {
+              await forwarder?.close();
+              throw XcrossError('Session stopped');
+            }
+            vmService = forwarder;
+          },
         );
-        hotReloadController = hotReloadSetup.controller;
-        if (hotReloadController != null) {
-          vmService = await _publishVmService(transport: transport);
+        final setupOrStop = await Future.any([
+          setupFuture
+              .then<({HotReloadController? controller, String? unavailable})?>(
+                (setup) => setup,
+              ),
+          console.stopped
+              .then<({HotReloadController? controller, String? unavailable})?>(
+                (_) => null,
+              ),
+        ]);
+        if (setupOrStop != null) {
+          hotReloadSetup = setupOrStop;
+          hotReloadController = hotReloadSetup.controller;
+          console.configureHotReload(
+            controller: hotReloadController,
+            unavailable: hotReloadSetup.unavailable,
+          );
+        } else {
+          unawaited(
+            setupFuture
+                .then((setup) => setup.controller?.close())
+                .catchError((Object _) {}),
+          );
         }
-        await SessionConsole(
-          gdb: gdb,
-          hotReload: hotReloadController,
-          hotReloadUnavailable: hotReloadSetup.unavailable,
-          onRestartRequested: onRestartRequested,
-        ).run();
+        await consoleFuture;
       } finally {
         // Every step is timed out: a single hung flush/close on Windows left
         // `q` in a silent stuck state (no further input or output).
@@ -333,6 +369,7 @@ abstract final class CoreDeviceLauncher {
   _trySpinUpHotReload({
     required HotReloadConfig? hotReload,
     required DeviceTransport transport,
+    Future<void> Function()? onVmServiceReady,
   }) async {
     if (hotReload == null) {
       Log.logInfo('Streaming app output ${Log.dim('— Ctrl-C to stop')}');
@@ -358,6 +395,7 @@ abstract final class CoreDeviceLauncher {
         '${vmService.port}/ws',
       );
       vm = await _waitForVmService(wsUri);
+      await onVmServiceReady?.call();
       // A wireless session dies quietly when the phone locks, sleeps off the
       // network, or the tunnel drops. Without this, `r`/`R` just start
       // failing with opaque RPC errors while the console looks healthy.

@@ -25,7 +25,7 @@ final class SessionConsole {
   static const _unwindTimeout = Duration(seconds: 1);
 
   final GdbRemoteClient gdb;
-  final HotReloadController? hotReload;
+  HotReloadController? hotReload;
 
   /// Rebuild-and-relaunch hook for runtimes without in-place hot reload
   /// (Kotlin/Native Compose is AOT-compiled, so `r` can only mean "build the
@@ -39,7 +39,7 @@ final class SessionConsole {
   ///
   /// A key that does nothing at all reads as a broken terminal, so the session
   /// answers every press even when it has nothing to reload.
-  final String? hotReloadUnavailable;
+  String? hotReloadUnavailable;
 
   /// Completes the moment [_stop] is first called. `run()` awaits it instead of
   /// polling, and [_drainGdbReplies] uses it to bail out without waiting for a
@@ -56,6 +56,18 @@ final class SessionConsole {
   Completer<void>? _keypressDone;
 
   bool get _stopped => _stoppedCompleter.isCompleted;
+
+  bool get isStopped => _stopped;
+
+  Future<void> get stopped => _stoppedCompleter.future;
+
+  void configureHotReload({
+    required HotReloadController? controller,
+    required String? unavailable,
+  }) {
+    hotReload = controller;
+    hotReloadUnavailable = unavailable;
+  }
 
   /// Signal every loop to unwind (idempotent).
   void _stop() {

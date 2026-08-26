@@ -3,10 +3,11 @@ import 'package:xcross/src/device/core_device_launcher.dart';
 import 'package:xcross/src/device/device_log.dart';
 
 void main() {
-  test('device logs disable Python stdout buffering', () {
+  test('device logs use unbuffered UTF-8 Python output', () {
     expect(DeviceLog.processEnvironment(const {'EXISTING': 'value'}), {
       'EXISTING': 'value',
       'PYTHONUNBUFFERED': '1',
+      'PYTHONIOENCODING': 'utf-8',
     });
   });
 
