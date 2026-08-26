@@ -18,6 +18,7 @@ resolution: workspace
 
 executables:
   xcross:
+  xcrun:
 
 dependencies:
   archive: ^4.0.9

@@ -21,6 +21,7 @@ void main() {
       r'download "$base_url/$LICENSE_ASSET" "$staging_dir/$LICENSE_ASSET"',
       r'tar -C "$staging_dir" -xzf "$staging_dir/$archive_name"',
       r'install -m 0755 "$staging_dir/bin/$BINARY_NAME" "$installed_binary"',
+      r'install -m 0755 "$staging_dir/bin/xcrun" "$INSTALL_DIR/xcrun"',
       r'install -m 0644 "$staging_dir/$LICENSE_ASSET" "$installed_license"',
       r'"$installed_binary" --help',
     ]) {
@@ -39,6 +40,7 @@ void main() {
       'LOCALAPPDATA',
       'sysv_abi_bridge.dll',
       r'bin\xcross.exe',
+      r'bin\xcrun.exe',
       '--help',
       r"Join-Path $env:LOCALAPPDATA 'xcross'",
       'SetEnvironmentVariable',

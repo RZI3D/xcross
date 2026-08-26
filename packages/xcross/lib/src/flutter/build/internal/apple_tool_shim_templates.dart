@@ -47,35 +47,6 @@ done
 exec ${shellQuote(clang)} "\$@"
 ''';
 
-String renderUnixXcrunShim({
-  required String iosSdk,
-  required Map<String, String> tools,
-}) =>
-    '''
-#!/bin/sh
-while [ "\$#" -gt 0 ]; do
-  case "\$1" in
-    --sdk) shift; [ "\$#" -gt 0 ] && shift;;
-    --show-sdk-path) echo ${shellQuote(iosSdk)}; exit 0;;
-    --find)
-      shift
-      case "\${1-}" in
-${tools.entries.map((tool) => '        ${tool.key}) echo ${shellQuote(tool.value)};;').join('\n')}
-        *) exit 1;;
-      esac
-      exit 0;;
-    *)
-      tool="\$1"; shift
-      case "\$tool" in
-${tools.entries.map((tool) => '        ${tool.key}) exec ${shellQuote(tool.value)} "\$@";;').join('\n')}
-        codesign) exit 0;;
-        *) echo "xcrun: unknown tool \$tool" >&2; exit 1;;
-      esac;;
-  esac
-done
-exit 1
-''';
-
 String renderPowerShellCompilerShim({
   required String iosSdk,
   required String clang,
@@ -107,38 +78,6 @@ if (!\$hasLdPath) { \$defaults += ${powerShellQuote('--ld-path=$linker')} }
 & ${powerShellQuote(clang)} @(\$defaults + \$Arguments)
 exit \$LASTEXITCODE
 ''';
-
-String renderPowerShellXcrunShim({
-  required String iosSdk,
-  required Map<String, String> tools,
-}) {
-  final toolMap = tools.entries
-      .map((tool) => '${tool.key} = ${powerShellQuote(tool.value)}')
-      .join('; ');
-  return '''
-param([Parameter(ValueFromRemainingArguments = \$true)][string[]]\$Arguments)
-\$tools = @{ $toolMap }
-for (\$i = 0; \$i -lt \$Arguments.Count; \$i++) {
-  switch (\$Arguments[\$i]) {
-    '--sdk' { \$i++; continue }
-    '--show-sdk-path' { Write-Output ${powerShellQuote(iosSdk)}; exit 0 }
-    '--find' {
-      if (++\$i -ge \$Arguments.Count -or !\$tools[\$Arguments[\$i]]) { exit 1 }
-      Write-Output \$tools[\$Arguments[\$i]]; exit 0
-    }
-    default {
-      if (\$Arguments[\$i] -eq 'codesign') { exit 0 }
-      \$tool = \$tools[\$Arguments[\$i]]
-      if (!\$tool) { Write-Error "xcrun: unknown tool \$(\$Arguments[\$i])"; exit 1 }
-      \$tail = if (\$i + 1 -lt \$Arguments.Count) { \$Arguments[(\$i + 1)..(\$Arguments.Count - 1)] } else { @() }
-      & \$tool @tail
-      exit \$LASTEXITCODE
-    }
-  }
-}
-exit 1
-''';
-}
 
 String renderUnixOtoolShim({required String tool, required bool usesObjdump}) =>
     usesObjdump

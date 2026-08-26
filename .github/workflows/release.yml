@@ -171,6 +171,7 @@ jobs:
             'LICENSE'
             'THIRD_PARTY_LICENSES/provision-dart.txt'
             'bin/xcross.exe'
+            'bin/xcrun.exe'
             'lib/sysv_abi_bridge.dll'
           ) | Sort-Object
           $root = Resolve-Path smoke

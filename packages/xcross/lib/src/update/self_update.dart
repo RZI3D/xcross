@@ -115,6 +115,8 @@ abstract final class SelfUpdate {
   static String get _executableName =>
       Platform.isWindows ? 'xcross.exe' : 'xcross';
 
+  static String get _xcrunName => Platform.isWindows ? 'xcrun.exe' : 'xcrun';
+
   // ------------------------------------------------------------------ swap
 
   static Future<void> installBundle({
@@ -146,6 +148,10 @@ abstract final class SelfUpdate {
         await swap.replace(
           source: p.join(bundleRoot.path, 'bin', _executableName),
           target: p.join(layout.binDir, p.basename(layout.binaryPath)),
+        );
+        await swap.replace(
+          source: p.join(bundleRoot.path, 'bin', _xcrunName),
+          target: p.join(layout.binDir, _xcrunName),
         );
         final libs = Directory(
           p.join(bundleRoot.path, 'lib'),

@@ -74,18 +74,7 @@ final class IosNativeAssetsBuilder {
     }
     final shims = await Directory.systemTemp.createTemp('xcross-apple-tools-');
     try {
-      await installAppleToolShims(
-        shims.path,
-        tools,
-        launcherExecutable: p.join(
-          flutterRoot,
-          'bin',
-          'cache',
-          'dart-sdk',
-          'bin',
-          ProcessRunner.hostExecutableName('dart'),
-        ),
-      );
+      await installAppleToolShims(shims.path, tools);
       await _runFlutterAssemble(output, shims.path, tools.iosSdk);
     } finally {
       await shims.delete(recursive: true);

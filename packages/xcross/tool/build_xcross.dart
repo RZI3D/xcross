@@ -39,15 +39,45 @@ Future<int> buildXcross({
   final original = await generated.readAsBytes();
   try {
     await generated.writeAsString(_identitySource(version, released));
-    return await (runBuild ?? _runBuild)(Platform.resolvedExecutable, const [
+    final run = runBuild ?? _runBuild;
+    final result = await run(Platform.resolvedExecutable, const [
       'build',
       'cli',
       '-t',
       'bin/xcross.dart',
     ], workingDirectory: packageRoot.path);
+    if (result != 0) return result;
+    final binDirectory = _builtBinDirectory(packageRoot);
+    final xcrunBuild = p.join(packageRoot.path, 'build', 'xcrun');
+    final xcrunResult = await run(Platform.resolvedExecutable, [
+      'build',
+      'cli',
+      '-t',
+      'bin/xcrun.dart',
+      '-o',
+      xcrunBuild,
+    ], workingDirectory: packageRoot.path);
+    if (xcrunResult != 0) return xcrunResult;
+    final executable = Platform.isWindows ? 'xcrun.exe' : 'xcrun';
+    await File(
+      p.join(xcrunBuild, 'bundle', 'bin', executable),
+    ).copy(p.join(binDirectory.path, executable));
+    return 0;
   } finally {
     await generated.writeAsBytes(original, flush: true);
   }
+}
+
+Directory _builtBinDirectory(Directory packageRoot) {
+  final build = Directory(p.join(packageRoot.path, 'build', 'cli'));
+  final executable = Platform.isWindows ? 'xcross.exe' : 'xcross';
+  for (final entity in build.listSync(recursive: true).whereType<File>()) {
+    if (p.basename(entity.path) == executable &&
+        p.basename(p.dirname(entity.path)) == 'bin') {
+      return entity.parent;
+    }
+  }
+  throw StateError('dart build cli did not produce bin/$executable');
 }
 
 void _validateIdentity(

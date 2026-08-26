@@ -143,6 +143,9 @@ try {
   if (-not (Test-Path (Join-Path $staged 'bin\xcross.exe'))) {
     Fail 'archive missing bin\xcross.exe'
   }
+  if (-not (Test-Path (Join-Path $staged 'bin\xcrun.exe'))) {
+    Fail 'archive missing bin\xcrun.exe'
+  }
   if (-not (Test-Path (Join-Path $staged 'lib\sysv_abi_bridge.dll'))) {
     Fail 'archive missing lib\sysv_abi_bridge.dll'
   }
