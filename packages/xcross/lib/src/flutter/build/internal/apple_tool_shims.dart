@@ -95,8 +95,9 @@ Future<String> locateLlvmTool(String name) async {
 /// Installs the Apple command-line surface needed by Flutter build hooks.
 Future<void> installAppleToolShims(
   String directory,
-  AppleToolShimConfig config,
-) async {
+  AppleToolShimConfig config, {
+  String? launcherExecutable,
+}) async {
   await Directory(directory).create(recursive: true);
   final compilerShim = p.join(
     directory,
@@ -116,6 +117,85 @@ Future<void> installAppleToolShims(
   };
 
   if (Platform.isWindows) {
+    if (launcherExecutable != null) {
+      final source = p.join(directory, 'xcrun.dart');
+      await File(source).writeAsString(r'''
+import 'dart:io';
+
+Future<void> main(List<String> arguments) async {
+  final executable = Platform.resolvedExecutable;
+  final directory = File(executable).parent.path;
+  final name = executable.split(Platform.pathSeparator).last.split('.').first;
+  if (name != 'xcrun') {
+    final target = File('$directory\\$name.path').readAsStringSync();
+    final process = await Process.start(
+      target,
+      arguments,
+      mode: ProcessStartMode.inheritStdio,
+    );
+    exitCode = await process.exitCode;
+    return;
+  }
+  if (arguments.contains('--show-sdk-path')) {
+    stdout.writeln(File('$executable.sdk').readAsStringSync());
+    return;
+  }
+  final toolIndex = arguments.indexWhere(
+    (argument) => !argument.startsWith('-') && File('$directory\\$argument.bat').existsSync(),
+  );
+  if (toolIndex >= 0) {
+    final process = await Process.start(
+      '$directory\\${arguments[toolIndex]}.bat',
+      arguments.sublist(toolIndex + 1),
+      mode: ProcessStartMode.inheritStdio,
+      runInShell: true,
+    );
+    exitCode = await process.exitCode;
+    return;
+  }
+  final find = arguments.indexOf('--find');
+  if (find >= 0 && find + 1 < arguments.length) {
+    final tool = arguments[find + 1];
+    final shim = '$directory\\$tool.bat';
+    if (File(shim).existsSync()) {
+      stdout.writeln(shim);
+      return;
+    }
+    final mapping = File('$directory\\$tool.path');
+    if (mapping.existsSync()) {
+      stdout.writeln(mapping.readAsStringSync());
+      return;
+    }
+
+  }
+  stderr.writeln('error: unsupported xcrun invocation: ${arguments.join(' ')}');
+  exitCode = 1;
+}
+''');
+      await ProcessRunner.runChecked(launcherExecutable, [
+        'compile',
+        'exe',
+        source,
+        '-o',
+        p.join(directory, 'xcrun.exe'),
+      ], label: 'xcrun shim');
+      await File(
+        p.join(directory, 'xcrun.exe.sdk'),
+      ).writeAsString(config.iosSdk);
+      for (final entry in {
+        'ar': config.archiver,
+        'ld': config.linker,
+        'cc': compilerShim,
+      }.entries) {
+        await File(
+          p.join(directory, '${entry.key}.path'),
+        ).writeAsString(entry.value);
+        await File(
+          p.join(directory, 'xcrun.exe'),
+        ).copy(p.join(directory, '${entry.key}.exe'));
+      }
+    }
+
     if (config.otool case final otool?) {
       await File(p.join(directory, 'otool.ps1')).writeAsString(
         renderPowerShellOtoolShim(
@@ -143,19 +223,33 @@ Future<void> installAppleToolShims(
       'clang',
       renderBatchPowerShellShim('clang.ps1'),
     );
-    await _writeWindowsShim(
-      directory,
-      'cc',
-      renderBatchPowerShellShim('clang.ps1'),
-    );
-    await File(p.join(directory, 'xcrun.ps1')).writeAsString(
-      renderPowerShellXcrunShim(iosSdk: config.iosSdk, tools: tools),
-    );
-    await _writeWindowsShim(
-      directory,
-      'xcrun',
-      renderBatchPowerShellShim('xcrun.ps1'),
-    );
+    if (launcherExecutable == null) {
+      await _writeWindowsShim(
+        directory,
+        'cc',
+        renderBatchPowerShellShim('clang.ps1'),
+      );
+      await _writeWindowsShim(
+        directory,
+        'ar',
+        renderBatchToolShim(config.archiver),
+      );
+      await _writeWindowsShim(
+        directory,
+        'ld',
+        renderBatchToolShim(config.linker),
+      );
+    }
+    if (launcherExecutable == null) {
+      await File(p.join(directory, 'xcrun.ps1')).writeAsString(
+        renderPowerShellXcrunShim(iosSdk: config.iosSdk, tools: tools),
+      );
+      await _writeWindowsShim(
+        directory,
+        'xcrun',
+        renderBatchPowerShellShim('xcrun.ps1'),
+      );
+    }
     for (final tool in tools.entries.skip(3)) {
       if (tool.key != 'otool') {
         await _writeWindowsShim(
@@ -165,7 +259,27 @@ Future<void> installAppleToolShims(
         );
       }
     }
+    if (config.installNameTool == null) {
+      await _writeWindowsShim(
+        directory,
+        'install_name_tool',
+        batchCodesignShim,
+      );
+    }
     await _writeWindowsShim(directory, 'codesign', batchCodesignShim);
+    await File(p.join(directory, 'rsync.ps1')).writeAsString(r'''
+$items = @($args | Where-Object { -not $_.StartsWith('-') -and $_ -ne '.DS_Store/' })
+if ($items.Count -lt 2) { exit 1 }
+$source = $items[$items.Count - 2]
+$destination = $items[$items.Count - 1]
+Copy-Item -LiteralPath $source -Destination $destination -Recurse -Force
+exit 0
+''');
+    await _writeWindowsShim(
+      directory,
+      'rsync',
+      renderBatchPowerShellShim('rsync.ps1'),
+    );
     return;
   }
 

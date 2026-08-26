@@ -5,6 +5,8 @@ import 'package:meta/meta.dart';
 import 'package:path/path.dart' as p;
 import 'package:xcross/src/flutter/build/internal/apple_tool_shims.dart';
 import 'package:xcross/src/flutter/build/internal/native_asset_frameworks.dart';
+import 'package:xcross/src/flutter/build/internal/recursive_directory_copy.dart';
+import 'package:xcross/src/flutter/build/ios_engine_cache.dart';
 import 'package:xcross/src/flutter/build/internal/native_assets_hook_discovery.dart';
 import 'package:xcross/src/flutter/build/ios_deployment_target.dart';
 import 'package:xcross/src/flutter/errors.dart';
@@ -52,12 +54,37 @@ final class IosNativeAssetsBuilder {
     }
 
     final tools = await AppleToolShimConfig.resolve(deploymentTarget.version);
+    final engineCache = IosEngineCache(flutterRoot: flutterRoot);
+    await engineCache.ensureArtifactsAvailable();
+    final flutterCachedFramework = p.join(
+      flutterRoot,
+      'bin',
+      'cache',
+      'artifacts',
+      'engine',
+      'ios',
+      'Flutter.xcframework',
+    );
+    final stagedEngine = !Directory(flutterCachedFramework).existsSync();
+    if (stagedEngine) {
+      await copyDirectoryPreservingSymlinks(
+        engineCache.flutterXcframework,
+        flutterCachedFramework,
+      );
+    }
     final shims = await Directory.systemTemp.createTemp('xcross-apple-tools-');
     try {
-      await installAppleToolShims(shims.path, tools);
+      await installAppleToolShims(
+        shims.path,
+        tools,
+        launcherExecutable: Platform.resolvedExecutable,
+      );
       await _runFlutterAssemble(output, shims.path, tools.iosSdk);
     } finally {
       await shims.delete(recursive: true);
+      if (stagedEngine) {
+        await Directory(flutterCachedFramework).delete(recursive: true);
+      }
     }
 
     final manifest = p.join(

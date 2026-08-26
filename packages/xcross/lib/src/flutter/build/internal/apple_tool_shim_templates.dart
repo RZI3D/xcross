@@ -84,7 +84,7 @@ String renderPowerShellCompilerShim({
   required String deploymentTarget,
 }) =>
     '''
-param([Parameter(ValueFromRemainingArguments = \$true)][string[]]\$Arguments)
+\$Arguments = \$args
 \$isAppleTarget = \$false; \$hasTarget = \$false; \$hasSysroot = \$false; \$hasDeployment = \$false
 \$hasFuseLd = \$false; \$hasLdPath = \$false
 for (\$i = 0; \$i -lt \$Arguments.Count; \$i++) {
@@ -159,10 +159,10 @@ String renderPowerShellOtoolShim({
   required bool usesObjdump,
 }) => usesObjdump
     ? '''
-param([Parameter(ValueFromRemainingArguments = \$true)][string[]]\$Arguments)
-if (\$Arguments.Count -eq 0) { Write-Error 'otool: missing option'; exit 64 }
-\$option = \$Arguments[0]
-\$tail = if (\$Arguments.Count -gt 1) { \$Arguments[1..(\$Arguments.Count - 1)] } else { @() }
+\$ToolArguments = \$args
+if (\$ToolArguments.Count -eq 0) { Write-Error 'otool: missing option'; exit 64 }
+\$option = \$ToolArguments[0]
+\$tail = if (\$ToolArguments.Count -gt 1) { \$ToolArguments[1..(\$ToolArguments.Count - 1)] } else { @() }
 \$translated = switch (\$option) {
   '-L' { @('--macho', '--dylibs-used') }
   '-D' { @('--macho', '--dylib-id') }
