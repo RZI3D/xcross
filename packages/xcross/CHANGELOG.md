@@ -1,3 +1,7 @@
+## 1.3.1
+
+- Fix Flutter iOS native-asset builds on Windows by using the resolved LLVM Clang as the `cc` host compiler and falling back from unavailable `llvm-otool` to `llvm-objdump` with compatible Mach-O inspection arguments.
+
 ## 1.3.0
 
 - Expand Flutter iOS compatibility with SwiftPM Firebase support, packaged native assets, dependency fonts, resilient Swift interop targets, correct UIScene window attachment, and support for read-only Flutter SDKs.
