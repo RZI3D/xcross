@@ -87,6 +87,53 @@ void main() {
     );
   });
 
+  test('falls back from llvm-otool to llvm-objdump', () async {
+    final requested = <String>[];
+    final result = await resolveOtool(
+      find: (name) async {
+        requested.add(name);
+        return name == 'llvm-objdump' ? '/llvm/llvm-objdump' : null;
+      },
+    );
+
+    expect(requested, ['llvm-otool', 'llvm-objdump']);
+    expect(result?.executable, '/llvm/llvm-objdump');
+    expect(result?.usesObjdump, isTrue);
+  });
+
+  test('translates otool options for llvm-objdump', () {
+    final unix = renderUnixOtoolShim(tool: '/llvm/objdump', usesObjdump: true);
+    final windows = renderPowerShellOtoolShim(
+      tool: r'C:\LLVM\llvm-objdump.exe',
+      usesObjdump: true,
+    );
+
+    for (final translation in [
+      '--macho --dylibs-used',
+      '--macho --dylib-id',
+      '--macho --private-headers',
+    ]) {
+      expect(unix, contains(translation));
+    }
+    for (final translation in [
+      "@('--macho', '--dylibs-used')",
+      "@('--macho', '--dylib-id')",
+      "@('--macho', '--private-headers')",
+    ]) {
+      expect(windows, contains(translation));
+    }
+  });
+
+  test('Windows uses the resolved clang as its host C compiler', () async {
+    expect(
+      await resolveHostCompiler(
+        r'C:\Program Files\LLVM\bin\clang.exe',
+        windows: true,
+      ),
+      r'C:\Program Files\LLVM\bin\clang.exe',
+    );
+  });
+
   test('Apple tool shims expose the Darwin SDK and configured tools', () async {
     if (Platform.isWindows) return;
     final tmp = await Directory.systemTemp.createTemp('apple_shims_test-');
@@ -101,7 +148,7 @@ void main() {
           linker: '/toolchain/ld64.lld',
           deploymentTarget: '15.6',
           lipo: '/bin/echo',
-          otool: '/bin/echo',
+          otool: OtoolConfig('/bin/echo', usesObjdump: false),
           installNameTool: '/bin/echo',
         ),
       );

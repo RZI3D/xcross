@@ -140,6 +140,45 @@ exit 1
 ''';
 }
 
+String renderUnixOtoolShim({required String tool, required bool usesObjdump}) =>
+    usesObjdump
+    ? '''
+#!/bin/sh
+case "\${1-}" in
+  -L) shift; exec ${shellQuote(tool)} --macho --dylibs-used "\$@";;
+  -D) shift; exec ${shellQuote(tool)} --macho --dylib-id "\$@";;
+  -l) shift; exec ${shellQuote(tool)} --macho --private-headers "\$@";;
+  --version) exec ${shellQuote(tool)} --version;;
+  *) echo "otool: unsupported option \${1-}" >&2; exit 64;;
+esac
+'''
+    : renderUnixToolShim(tool);
+
+String renderPowerShellOtoolShim({
+  required String tool,
+  required bool usesObjdump,
+}) => usesObjdump
+    ? '''
+param([Parameter(ValueFromRemainingArguments = \$true)][string[]]\$Arguments)
+if (\$Arguments.Count -eq 0) { Write-Error 'otool: missing option'; exit 64 }
+\$option = \$Arguments[0]
+\$tail = if (\$Arguments.Count -gt 1) { \$Arguments[1..(\$Arguments.Count - 1)] } else { @() }
+\$translated = switch (\$option) {
+  '-L' { @('--macho', '--dylibs-used') }
+  '-D' { @('--macho', '--dylib-id') }
+  '-l' { @('--macho', '--private-headers') }
+  '--version' { @('--version') }
+  default { Write-Error "otool: unsupported option \$option"; exit 64 }
+}
+& ${powerShellQuote(tool)} @(\$translated + \$tail)
+exit \$LASTEXITCODE
+'''
+    : '''
+param([Parameter(ValueFromRemainingArguments = \$true)][string[]]\$Arguments)
+& ${powerShellQuote(tool)} @Arguments
+exit \$LASTEXITCODE
+''';
+
 String renderBatchPowerShellShim(String script) =>
     '''
 @echo off

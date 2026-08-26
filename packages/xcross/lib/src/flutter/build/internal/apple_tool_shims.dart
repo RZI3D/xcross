@@ -8,6 +8,14 @@ import 'package:xcross/src/flutter/build/internal/apple_tool_shim_templates.dart
 import 'package:xcross/src/flutter/errors.dart';
 
 @immutable
+final class OtoolConfig {
+  const OtoolConfig(this.executable, {required this.usesObjdump});
+
+  final String executable;
+  final bool usesObjdump;
+}
+
+@immutable
 final class AppleToolShimConfig {
   const AppleToolShimConfig({
     required this.iosSdk,
@@ -27,8 +35,8 @@ final class AppleToolShimConfig {
   final String archiver;
   final String linker;
   final String lipo;
-  final String otool;
-  final String installNameTool;
+  final OtoolConfig? otool;
+  final String? installNameTool;
   final String deploymentTarget;
 
   static Future<AppleToolShimConfig> resolve(String deploymentTarget) async {
@@ -43,16 +51,19 @@ final class AppleToolShimConfig {
     return AppleToolShimConfig(
       iosSdk: sdk.iPhoneOSSdk(),
       clang: clang,
-      hostCompiler: await ProcessRunner.locateTool('cc'),
+      hostCompiler: await resolveHostCompiler(clang),
       archiver: await _locateArchiver(clang),
       linker: await DarwinSdk.resolveLd64Lld(sdk),
       lipo: await locateLlvmTool('llvm-lipo'),
-      otool: await locateLlvmTool('llvm-otool'),
-      installNameTool: await locateLlvmTool('llvm-install-name-tool'),
+      otool: await resolveOtool(),
+      installNameTool: await findLlvmTool('llvm-install-name-tool'),
       deploymentTarget: deploymentTarget,
     );
   }
 }
+
+Future<String> resolveHostCompiler(String clang, {bool? windows}) async =>
+    (windows ?? Platform.isWindows) ? clang : ProcessRunner.locateTool('cc');
 
 Future<String> _locateArchiver(String clang) async {
   final besideClang = p.join(
@@ -63,10 +74,20 @@ Future<String> _locateArchiver(String clang) async {
   return locateLlvmTool('llvm-ar');
 }
 
+Future<String?> findLlvmTool(String name) =>
+    DarwinSdk.locateLlvmTool(ProcessRunner.hostExecutableName(name));
+
+Future<OtoolConfig?> resolveOtool({
+  Future<String?> Function(String name) find = findLlvmTool,
+}) async {
+  final otool = await find('llvm-otool');
+  if (otool != null) return OtoolConfig(otool, usesObjdump: false);
+  final objdump = await find('llvm-objdump');
+  return objdump == null ? null : OtoolConfig(objdump, usesObjdump: true);
+}
+
 Future<String> locateLlvmTool(String name) async {
-  final tool = await DarwinSdk.locateLlvmTool(
-    ProcessRunner.hostExecutableName(name),
-  );
+  final tool = await findLlvmTool(name);
   if (tool != null) return tool;
   throw FlutterBuildError("Could not find '$name'. Install LLVM and retry.");
 }
@@ -81,16 +102,33 @@ Future<void> installAppleToolShims(
     directory,
     Platform.isWindows ? 'clang.bat' : 'clang',
   );
+  final otoolShim = p.join(
+    directory,
+    Platform.isWindows ? 'otool.bat' : 'otool',
+  );
   final tools = <String, String>{
     'clang': compilerShim,
     'ar': config.archiver,
     'ld': config.linker,
     'lipo': config.lipo,
-    'otool': config.otool,
-    'install_name_tool': config.installNameTool,
+    if (config.otool != null) 'otool': otoolShim,
+    if (config.installNameTool case final tool?) 'install_name_tool': tool,
   };
 
   if (Platform.isWindows) {
+    if (config.otool case final otool?) {
+      await File(p.join(directory, 'otool.ps1')).writeAsString(
+        renderPowerShellOtoolShim(
+          tool: otool.executable,
+          usesObjdump: otool.usesObjdump,
+        ),
+      );
+      await _writeWindowsShim(
+        directory,
+        'otool',
+        renderBatchPowerShellShim('otool.ps1'),
+      );
+    }
     await File(p.join(directory, 'clang.ps1')).writeAsString(
       renderPowerShellCompilerShim(
         iosSdk: config.iosSdk,
@@ -119,16 +157,28 @@ Future<void> installAppleToolShims(
       renderBatchPowerShellShim('xcrun.ps1'),
     );
     for (final tool in tools.entries.skip(3)) {
-      await _writeWindowsShim(
-        directory,
-        tool.key,
-        renderBatchToolShim(tool.value),
-      );
+      if (tool.key != 'otool') {
+        await _writeWindowsShim(
+          directory,
+          tool.key,
+          renderBatchToolShim(tool.value),
+        );
+      }
     }
     await _writeWindowsShim(directory, 'codesign', batchCodesignShim);
     return;
   }
 
+  if (config.otool case final otool?) {
+    await _writeUnixShim(
+      directory,
+      'otool',
+      renderUnixOtoolShim(
+        tool: otool.executable,
+        usesObjdump: otool.usesObjdump,
+      ),
+    );
+  }
   final compilerScript = renderUnixCompilerShim(
     iosSdk: config.iosSdk,
     clang: config.clang,
@@ -144,7 +194,9 @@ Future<void> installAppleToolShims(
     renderUnixXcrunShim(iosSdk: config.iosSdk, tools: tools),
   );
   for (final tool in tools.entries.skip(3)) {
-    await _writeUnixShim(directory, tool.key, renderUnixToolShim(tool.value));
+    if (tool.key != 'otool') {
+      await _writeUnixShim(directory, tool.key, renderUnixToolShim(tool.value));
+    }
   }
   await _writeUnixShim(directory, 'codesign', unixCodesignShim);
 }
