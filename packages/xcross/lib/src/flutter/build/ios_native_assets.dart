@@ -5,10 +5,10 @@ import 'package:meta/meta.dart';
 import 'package:path/path.dart' as p;
 import 'package:xcross/src/flutter/build/internal/apple_tool_shims.dart';
 import 'package:xcross/src/flutter/build/internal/native_asset_frameworks.dart';
-import 'package:xcross/src/flutter/build/internal/recursive_directory_copy.dart';
-import 'package:xcross/src/flutter/build/ios_engine_cache.dart';
 import 'package:xcross/src/flutter/build/internal/native_assets_hook_discovery.dart';
+import 'package:xcross/src/flutter/build/internal/recursive_directory_copy.dart';
 import 'package:xcross/src/flutter/build/ios_deployment_target.dart';
+import 'package:xcross/src/flutter/build/ios_engine_cache.dart';
 import 'package:xcross/src/flutter/errors.dart';
 
 /// Native code assets produced by Flutter's Dart build-hook pipeline.
@@ -77,7 +77,14 @@ final class IosNativeAssetsBuilder {
       await installAppleToolShims(
         shims.path,
         tools,
-        launcherExecutable: Platform.resolvedExecutable,
+        launcherExecutable: p.join(
+          flutterRoot,
+          'bin',
+          'cache',
+          'dart-sdk',
+          'bin',
+          ProcessRunner.hostExecutableName('dart'),
+        ),
       );
       await _runFlutterAssemble(output, shims.path, tools.iosSdk);
     } finally {

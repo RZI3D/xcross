@@ -179,6 +179,9 @@ Future<void> main(List<String> arguments) async {
         '-o',
         p.join(directory, 'xcrun.exe'),
       ], label: 'xcrun shim');
+      if (!File(p.join(directory, 'xcrun.exe')).existsSync()) {
+        throw FlutterBuildError('Failed to create the xcrun executable shim.');
+      }
       await File(
         p.join(directory, 'xcrun.exe.sdk'),
       ).writeAsString(config.iosSdk);

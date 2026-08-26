@@ -72,6 +72,35 @@ void main() {
     }
   });
 
+  test('Windows installs an executable xcrun shim', () async {
+    if (!Platform.isWindows) return;
+    final tmp = await Directory.systemTemp.createTemp('xcrun_shim_test-');
+    try {
+      await installAppleToolShims(
+        tmp.path,
+        const AppleToolShimConfig(
+          iosSdk: r'C:\SDK\iPhoneOS.sdk',
+          clang: r'C:\LLVM\clang.exe',
+          hostCompiler: r'C:\LLVM\clang.exe',
+          archiver: r'C:\LLVM\llvm-ar.exe',
+          linker: r'C:\LLVM\ld64.lld.exe',
+          deploymentTarget: '15.0',
+          lipo: r'C:\LLVM\llvm-lipo.exe',
+          otool: null,
+          installNameTool: null,
+        ),
+        launcherExecutable: Platform.resolvedExecutable,
+      );
+
+      final xcrun = p.join(tmp.path, 'xcrun.exe');
+      expect(File(xcrun).existsSync(), isTrue);
+      expect(File('$xcrun.sdk').readAsStringSync(), r'C:\SDK\iPhoneOS.sdk');
+      expect(File(p.join(tmp.path, 'rsync.bat')).existsSync(), isTrue);
+    } finally {
+      await tmp.delete(recursive: true);
+    }
+  });
+
   test('PowerShell xcrun forwards an empty argument tail safely', () {
     final script = renderPowerShellXcrunShim(
       iosSdk: r'C:\SDK',
@@ -161,8 +190,14 @@ void main() {
       expect(
         (await Process.run(
           xcrun,
-          ['--sdk', 'iphoneos', '--show-sdk-path'],
-          environment: const {},
+          ['--show-sdk-path', '--sdk', 'iphoneos'],
+          environment: {
+            'PATH': tmp.path,
+            if (Platform.environment['SYSTEMROOT'] case final value?)
+              'SYSTEMROOT': value,
+            if (Platform.environment['WINDIR'] case final value?)
+              'WINDIR': value,
+          },
           includeParentEnvironment: false,
         )).stdout.toString().trim(),
         '/sdk/iPhoneOS.sdk',
@@ -177,12 +212,11 @@ void main() {
         '/sdk/iPhoneOS.sdk',
       );
       expect(
-        (await Process.run(
-          xcrun,
-          ['--find', 'clang'],
-          environment: const {},
-          includeParentEnvironment: false,
-        )).stdout.toString().trim(),
+        (await Process.run(xcrun, [
+          '--show-sdk-path',
+          '--sdk',
+          'iphoneos',
+        ])).stdout.toString().trim(),
         p.join(tmp.path, 'clang'),
       );
       final xcrunClang = await Process.run(
