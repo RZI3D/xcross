@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:isolate';
 import 'dart:typed_data';
 
+import 'package:archive/archive.dart';
 import 'package:cli_kit/cli_kit.dart';
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
@@ -215,6 +216,26 @@ import MSVCRT
       );
     });
 
+    test('exposes package graph entries on cross hosts', () {
+      const input = '''
+#if os(macOS)
+let unrelated = true
+#endif
+func packageDependencies() -> [Package.Dependency] {
+  #if os(macOS)
+  return [.package(url: dependencyURL, from: "1.0.0")]
+  #endif
+}
+''';
+      final normalized = GeneratedPluginsPackage.normalizeHostManifest(input);
+      expect(normalized, startsWith('#if os(macOS)\nlet unrelated'));
+      expect(
+        normalized,
+        contains('return [.package(url: dependencyURL, from: "1.0.0")]'),
+      );
+      expect('#if os(macOS)'.allMatches(normalized), hasLength(1));
+    });
+
     test('drops Foundation String(cString:encoding:) in manifests', () {
       const input =
           'if let env = env, String(cString: env, encoding: .utf8) == "1"';
@@ -269,6 +290,30 @@ if getenv("EXPERIMENTAL_SPM_BUILDS") != nil {
       expect(
         GeneratedPluginsPackage.normalizeHostManifest(normalized),
         normalized,
+      );
+    });
+
+    test('normalizes Firebase Sessions and GoogleDataTransport manifests', () {
+      const input = '''
+let package = Package(
+  name: "GoogleDataTransport",
+  platforms: [.iOS(.v12)],
+  targets: [
+    .target(
+    name: "FirebaseSessions",
+    path: "FirebaseSessions/Sources",
+    cSettings: []
+    )
+  ]
+)
+''';
+      final normalized = GeneratedPluginsPackage.normalizeHostManifest(input);
+      expect(normalized, contains('defaultLocalization: "en"'));
+      expect(
+        normalized,
+        contains(
+          RegExp(r'path: "FirebaseSessions/Sources",\s+sources: \["\."\],'),
+        ),
       );
     });
 
@@ -384,81 +429,6 @@ let value = PublicAPI()
       await GeneratedPluginsPackage.normalizeHostSwiftTree(root);
 
       expect(source.readAsBytesSync(), before);
-    });
-  });
-
-  group('parseUrlPackageDeps / gitRefFromVersionArgs', () {
-    test('parses exact and from requirements', () {
-      const manifest = '''
-dependencies: [
-    .package(url: "https://github.com/getsentry/sentry-cocoa", exact: "8.58.1"),
-    .package(name: "Sentry", url: "https://github.com/getsentry/sentry-cocoa.git", from: "8.0.0"),
-    .package(url: "https://example.com/pkg", .upToNextMajor(from: "1.2.3")),
-]
-''';
-      final deps = GeneratedPluginsPackage.parseUrlPackageDeps(manifest);
-      expect(deps, hasLength(3));
-      expect(deps[0].url, 'https://github.com/getsentry/sentry-cocoa');
-      expect(deps[0].name, isNull);
-      expect(
-        GeneratedPluginsPackage.gitRefFromVersionArgs(deps[0].versionArgs),
-        '8.58.1',
-      );
-      expect(deps[1].name, 'Sentry');
-      expect(
-        GeneratedPluginsPackage.gitRefFromVersionArgs(deps[1].versionArgs),
-        '8.0.0',
-      );
-      expect(
-        GeneratedPluginsPackage.gitRefFromVersionArgs(deps[2].versionArgs),
-        '1.2.3',
-      );
-    });
-
-    test('vendorPackageDirName strips .git and sanitizes ref', () {
-      expect(
-        GeneratedPluginsPackage.vendorPackageDirName(
-          'https://github.com/getsentry/sentry-cocoa.git',
-          '8.58.1',
-        ),
-        'sentry-cocoa@8.58.1',
-      );
-    });
-
-    test('balances nested parens in multiline upToNextMajor deps', () {
-      const manifest = '''
-dependencies: [
-        .package(
-            url: "https://github.com/appmetrica/appmetrica-sdk-ios",
-            .upToNextMajor(from: "6.1.0")
-        ),
-]
-''';
-      final deps = GeneratedPluginsPackage.parseUrlPackageDeps(manifest);
-      expect(deps, hasLength(1));
-      expect(
-        deps.single.url,
-        'https://github.com/appmetrica/appmetrica-sdk-ios',
-      );
-      expect(
-        GeneratedPluginsPackage.gitRefFromVersionArgs(deps.single.versionArgs),
-        '6.1.0',
-      );
-      expect(deps.single.match, endsWith(')'));
-      expect(deps.single.match, isNot(contains('),')));
-      // Full call replaced — no leftover closing paren from the original.
-      final rewritten = manifest.replaceFirst(
-        deps.single.match,
-        '.package(path: "/vendor/appmetrica")',
-      );
-      expect(
-        rewritten,
-        contains(
-          'dependencies: [\n'
-          '        .package(path: "/vendor/appmetrica"),\n'
-          ']',
-        ),
-      );
     });
   });
 
@@ -698,6 +668,13 @@ let package = Package(
           await GeneratedPluginsPackage.vendorUrlPackagesAsPathDeps(
             manifest,
             vendorDir: vendorDir,
+            packageDirectory: 'plugin_a/ios/plugin_a',
+            evaluateDependencyRefs: (directory) async {
+              expect(directory, 'plugin_a/ios/plugin_a');
+              return const {
+                'https://github.com/getsentry/sentry-cocoa': '8.58.1',
+              };
+            },
             locateTool: (name) async {
               expect(name, 'git');
               return 'git';
@@ -751,6 +728,321 @@ let package = Package(name: "Sentry", products: [], targets: [])
       expect(vendored61, contains('String(cString: env)'));
       expect(vendored61, contains('import CRT'));
     });
+
+    test('caches equivalent dependency evaluations within a build', () async {
+      final vendorDir = p.join(tmp.path, 'cached-vendor');
+      final first = p.join(tmp.path, 'first');
+      final second = p.join(tmp.path, 'second');
+      await Directory(first).create();
+      await Directory(second).create();
+      const manifest = '''
+import PackageDescription
+let package = Package(
+    name: "plugin",
+    dependencies: [.package(url: "https://example.com/dependency", exact: "1.0.0")],
+    targets: []
+)
+''';
+      final cache = <String, Future<Map<String, String>>>{};
+      var evaluations = 0;
+
+      Future<Map<String, String>> evaluate(String _) async {
+        evaluations++;
+        return const {'https://example.com/dependency': 'revision'};
+      }
+
+      Future<void> clone(
+        String _,
+        String _,
+        String _,
+        String destination,
+      ) async {
+        await Directory(destination).create(recursive: true);
+        await File(
+          p.join(destination, 'Package.swift'),
+        ).writeAsString('import PackageDescription\n');
+      }
+
+      for (final packageDirectory in [first, second]) {
+        await GeneratedPluginsPackage.vendorUrlPackagesAsPathDeps(
+          manifest,
+          vendorDir: vendorDir,
+          packageDirectory: packageDirectory,
+          locateTool: (_) async => 'git',
+          evaluateDependencyRefs: evaluate,
+          clonePackage: clone,
+          evaluationCache: cache,
+        );
+      }
+
+      expect(evaluations, 1);
+    });
+
+    test('invalidates dependency evaluation for manifest variants', () async {
+      final vendorDir = p.join(tmp.path, 'variant-vendor');
+      final packageDirectory = p.join(tmp.path, 'variant-package');
+      await Directory(packageDirectory).create();
+      final variant = File(p.join(packageDirectory, 'Package@swift-6.0.swift'));
+      await variant.writeAsString('let version = 1\n');
+      const manifest = '''
+import PackageDescription
+let package = Package(
+    name: "plugin",
+    dependencies: [.package(url: "https://example.com/dependency", exact: "1.0.0")],
+    targets: []
+)
+''';
+      final cache = <String, Future<Map<String, String>>>{};
+      var evaluations = 0;
+
+      Future<void> run() => GeneratedPluginsPackage.vendorUrlPackagesAsPathDeps(
+        manifest,
+        vendorDir: vendorDir,
+        packageDirectory: packageDirectory,
+        locateTool: (_) async => 'git',
+        evaluateDependencyRefs: (_) async {
+          evaluations++;
+          return const {'https://example.com/dependency': 'revision'};
+        },
+        clonePackage: (_, _, _, destination) async {
+          await Directory(destination).create(recursive: true);
+          await File(
+            p.join(destination, 'Package.swift'),
+          ).writeAsString('import PackageDescription\n');
+        },
+        evaluationCache: cache,
+      ).then((_) {});
+
+      await run();
+      await run();
+      await variant.writeAsString('let version = 2\n');
+      await run();
+
+      expect(evaluations, 2);
+    });
+
+    test('uses resolved revisions for every SwiftPM requirement variant', () {
+      final refs = GeneratedPluginsPackage.dependencyRefsFromPackageResolved(
+        jsonEncode({
+          'pins': [
+            for (final entry in const [
+              ('https://EXAMPLE.com/exact.git/', 'exact-sha', '1.2.3'),
+              ('https://example.com/branch', 'branch-sha', null),
+              ('https://example.com/revision', 'revision-sha', null),
+              ('https://example.com/range', 'range-sha', '2.4.0'),
+            ])
+              {
+                'identity': Uri.parse(entry.$1).pathSegments.last,
+                'kind': 'remoteSourceControl',
+                'location': entry.$1,
+                'state': {
+                  'revision': entry.$2,
+                  if (entry.$3 != null) 'version': entry.$3,
+                },
+              },
+          ],
+          'version': 2,
+        }),
+      );
+
+      expect(refs, {
+        'https://example.com/exact': 'exact-sha',
+        'https://example.com/branch': 'branch-sha',
+        'https://example.com/revision': 'revision-sha',
+        'https://example.com/range': 'range-sha',
+      });
+    });
+
+    test('uses Swift-evaluated Firebase version before cloning', () async {
+      final vendorDir = p.join(tmp.path, 'Vendor');
+      const manifest = '''
+import PackageDescription
+let firebaseSdkVersion = Version(12, 1, 0)
+let package = Package(
+    name: "firebase_core",
+    dependencies: [
+        .package(
+            url: "https://github.com/firebase/firebase-ios-sdk",
+            exact: firebaseSdkVersion
+        ),
+    ],
+    targets: []
+)
+''';
+      final rewritten =
+          await GeneratedPluginsPackage.vendorUrlPackagesAsPathDeps(
+            manifest,
+            vendorDir: vendorDir,
+            packageDirectory: 'firebase_core/ios/firebase_core',
+            locateTool: (_) async => 'git',
+            evaluateDependencyRefs: (directory) async {
+              expect(directory, 'firebase_core/ios/firebase_core');
+              return const {
+                'https://github.com/firebase/firebase-ios-sdk':
+                    'b9bf3adac18e6e3059167194aeb632f15a5ba4b2',
+              };
+            },
+            clonePackage: (_, url, ref, destination) async {
+              expect(url, 'https://github.com/firebase/firebase-ios-sdk');
+              expect(ref, 'b9bf3adac18e6e3059167194aeb632f15a5ba4b2');
+              await Directory(destination).create(recursive: true);
+              await File(
+                p.join(destination, 'Package.swift'),
+              ).writeAsString('import PackageDescription\n');
+            },
+          );
+
+      expect(rewritten, isNot(contains('url:')));
+      expect(
+        rewritten,
+        contains(
+          '.package(name: "firebase-ios-sdk", '
+          'path: "${swiftPath(p.join(vendorDir, 'firebase-ios-sdk@b9bf3adac18e6e3059167194aeb632f15a5ba4b2'))}")',
+        ),
+      );
+    });
+  });
+
+  group('Windows binary artifacts', () {
+    test(
+      'repairs a failed extraction from its complete iOS device slice',
+      () async {
+        final scratch = p.join(tmp.path, '.build');
+        final extracted = p.join(
+          scratch,
+          'artifacts',
+          'extract',
+          'firebase-ios-sdk',
+          'FirebaseAnalytics',
+          'UUID',
+          'FirebaseAnalytics.xcframework',
+        );
+        await File(p.join(extracted, 'Info.plist'))
+            .create(recursive: true)
+            .then(
+              (file) => file.writeAsString('''
+<plist><dict><key>AvailableLibraries</key><array><dict>
+<key>LibraryIdentifier</key><string>ios-arm64</string>
+<key>LibraryPath</key><string>FirebaseAnalytics.framework</string>
+<key>SupportedArchitectures</key><array><string>arm64</string></array>
+<key>SupportedPlatform</key><string>ios</string>
+</dict></array></dict></plist>
+'''),
+            );
+        await File(
+          p.join(
+            extracted,
+            'ios-arm64',
+            'FirebaseAnalytics.framework',
+            'FirebaseAnalytics',
+          ),
+        ).create(recursive: true).then((file) => file.writeAsString('binary'));
+        await File(
+          p.join(extracted, 'macos-arm64_x86_64', 'broken-link'),
+        ).create(recursive: true);
+
+        expect(
+          await GeneratedPluginsPackage.repairWindowsBinaryArtifacts(scratch),
+          isTrue,
+        );
+        final repaired = p.join(
+          scratch,
+          'artifacts',
+          'firebase-ios-sdk',
+          'FirebaseAnalytics',
+          'FirebaseAnalytics.xcframework',
+        );
+        expect(
+          File(p.join(repaired, 'Info.plist')).readAsStringSync(),
+          contains('<string>ios-arm64</string>'),
+        );
+        expect(
+          File(
+            p.join(
+              repaired,
+              'ios-arm64',
+              'FirebaseAnalytics.framework',
+              'FirebaseAnalytics',
+            ),
+          ).readAsStringSync(),
+          'binary',
+        );
+        expect(
+          Directory(p.join(repaired, 'macos-arm64_x86_64')).existsSync(),
+          isFalse,
+        );
+      },
+    );
+
+    test('extracts only the iOS device slice from a cached ZIP', () async {
+      final scratch = p.join(tmp.path, '.build');
+      final archive = Archive()
+        ..add(
+          ArchiveFile.string('Target.xcframework/Info.plist', '''
+<plist><dict><key>AvailableLibraries</key><array><dict>
+<key>LibraryIdentifier</key><string>ios-arm64</string>
+</dict></array></dict></plist>
+'''),
+        )
+        ..add(
+          ArchiveFile.string(
+            'Target.xcframework/ios-arm64/Target.framework/Target',
+            'binary',
+          ),
+        )
+        ..add(
+          ArchiveFile.string(
+            'Target.xcframework/macos-arm64/Target.framework/Target',
+            'macos',
+          ),
+        );
+      final zip = File(
+        p.join(scratch, 'artifacts', 'package', 'Target', 'Target.zip'),
+      );
+      await zip.create(recursive: true);
+      await zip.writeAsBytes(ZipEncoder().encode(archive));
+      await Directory(p.join(scratch, 'artifacts', 'extract')).create();
+
+      expect(
+        await GeneratedPluginsPackage.repairWindowsBinaryArtifacts(scratch),
+        isTrue,
+      );
+      final target = p.join(
+        scratch,
+        'artifacts',
+        'package',
+        'Target',
+        'Target',
+        'Target.xcframework',
+      );
+      expect(
+        File(
+          p.join(target, 'ios-arm64', 'Target.framework', 'Target'),
+        ).readAsStringSync(),
+        'binary',
+      );
+      expect(Directory(p.join(target, 'macos-arm64')).existsSync(), isFalse);
+    });
+
+    test('ignores incomplete extraction directories', () async {
+      final scratch = p.join(tmp.path, '.build');
+      await Directory(
+        p.join(
+          scratch,
+          'artifacts',
+          'extract',
+          'package',
+          'target',
+          'UUID',
+          'Target.xcframework',
+        ),
+      ).create(recursive: true);
+
+      expect(
+        await GeneratedPluginsPackage.repairWindowsBinaryArtifacts(scratch),
+        isFalse,
+      );
+    });
   });
 
   group('Windows checkout symlinks', () {
@@ -788,14 +1080,40 @@ let package = Package(name: "Sentry", products: [], targets: [])
           );
         }
 
-        await GeneratedPluginsPackage.materializeCheckoutSymlinks(
-          p.join(tmp.path, 'scratch'),
+        expect(
+          await GeneratedPluginsPackage.materializeCheckoutSymlinks(
+            p.join(tmp.path, 'scratch'),
+          ),
+          isTrue,
         );
-        await GeneratedPluginsPackage.materializeCheckoutSymlinks(
-          p.join(tmp.path, 'scratch'),
+        expect(
+          await GeneratedPluginsPackage.materializeCheckoutSymlinks(
+            p.join(tmp.path, 'scratch'),
+          ),
+          isFalse,
         );
 
         expect(placeholder.readAsStringSync(), 'materialized');
+        final updatedPlaceholder = File(p.join(repo, 'updated-link.txt'))
+          ..writeAsStringSync('target.txt');
+        git(['add', 'updated-link.txt']);
+        final updatedHash =
+            (git(['hash-object', '-w', 'updated-link.txt']).stdout as String)
+                .trim();
+        git([
+          'update-index',
+          '--cacheinfo',
+          '120000',
+          updatedHash,
+          'updated-link.txt',
+        ]);
+        expect(
+          await GeneratedPluginsPackage.materializeCheckoutSymlinks(
+            p.join(tmp.path, 'scratch'),
+          ),
+          isTrue,
+        );
+        expect(updatedPlaceholder.readAsStringSync(), 'materialized');
         if (Platform.isWindows) {
           target.writeAsStringSync('updated');
           expect(placeholder.readAsStringSync(), 'updated');
@@ -827,8 +1145,11 @@ let package = Package(name: "Sentry", products: [], targets: [])
               .trim();
       git(['update-index', '--cacheinfo', '120000', hash, 'include/Types.h']);
 
-      await GeneratedPluginsPackage.materializeCheckoutSymlinks(
-        p.join(tmp.path, 'headers'),
+      expect(
+        await GeneratedPluginsPackage.materializeCheckoutSymlinks(
+          p.join(tmp.path, 'headers'),
+        ),
+        isTrue,
       );
 
       final materialized = placeholder.readAsStringSync();

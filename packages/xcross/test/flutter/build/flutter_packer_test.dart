@@ -94,7 +94,6 @@ void main() {
       await tmp.delete(recursive: true);
     }
   });
-
   test('uses xcross build, temp, and DevFS names', () {
     final debugBundler = _read('build/flutter_debug_bundler.dart');
     final packOperation = _read('build/flutter_pack_operation.dart');
