@@ -1,3 +1,10 @@
+## 1.3.0
+
+- Expand Flutter iOS compatibility with SwiftPM Firebase support, packaged native assets, dependency fonts, resilient Swift interop targets, correct UIScene window attachment, and support for read-only Flutter SDKs.
+- Improve Flutter launch and hot-reload reliability with transport-specific VM Service binding, immediate session controls while hot reload prepares, clearer diagnostics, and safer device log streaming.
+- Make wireless device sessions more reliable by bounding Developer Disk Image mounts, shortening timeout recovery, and restarting stale Wi-Fi tunnel daemons.
+- Improve update cleanup so stale source-build clones are always removed.
+
 ## 1.2.2
 
 - Phase release and update identity work so source-ref installs report injected normalized refs, tagged release archives report the release tag, and unreleased builds stay clearly marked until the next official update.
