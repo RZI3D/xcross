@@ -957,6 +957,25 @@ let package = Package(
   });
 
   group('Windows binary artifacts', () {
+    test('bounds robocopy retries', () {
+      expect(
+        GeneratedPluginsPackage.windowsCopyArguments('source', 'destination'),
+        [
+          'source',
+          'destination',
+          '/E',
+          '/R:0',
+          '/W:0',
+          '/MT:8',
+          '/NFL',
+          '/NDL',
+          '/NJH',
+          '/NJS',
+          '/NP',
+        ],
+      );
+    });
+
     test(
       'repairs a failed extraction from its complete iOS device slice',
       () async {
@@ -1185,6 +1204,9 @@ let package = Package(
           ..writeAsStringSync('binary');
         final package = Directory(p.join(tmp.path, 'vendor', 'dependency'))
           ..createSync(recursive: true);
+        final stale = File(
+          p.join(package.path, 'GenericBinary.xcframework', 'stale'),
+        )..createSync(recursive: true);
         final manifest = File(p.join(package.path, 'Package.swift'))
           ..writeAsStringSync('''
 let package = Package(targets: [
@@ -1222,6 +1244,7 @@ let package = Package(targets: [
           ).readAsStringSync(),
           'binary',
         );
+        expect(stale.existsSync(), isFalse);
       },
     );
 

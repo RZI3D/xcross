@@ -3531,16 +3531,10 @@ $diagnosticsStart$registrations$diagnosticsEnd}
   }) async {
     await _deleteEntity(destination);
     if (Platform.isWindows) {
-      final result = await Process.run('robocopy', [
-        source,
-        destination,
-        '/E',
-        '/NFL',
-        '/NDL',
-        '/NJH',
-        '/NJS',
-        '/NP',
-      ]);
+      final result = await Process.run(
+        'robocopy',
+        windowsCopyArguments(source, destination),
+      );
       if (result.exitCode > 7) {
         throw FileSystemException(
           '$failureDescription: ${result.stderr}',
@@ -3557,6 +3551,22 @@ $diagnosticsStart$registrations$diagnosticsEnd}
       );
     }
   }
+
+  @visibleForTesting
+  static List<String> windowsCopyArguments(String source, String destination) =>
+      [
+        source,
+        destination,
+        '/E',
+        '/R:0',
+        '/W:0',
+        '/MT:8',
+        '/NFL',
+        '/NDL',
+        '/NJH',
+        '/NJS',
+        '/NP',
+      ];
 
   static Future<void> _deleteUnless(
     String path,

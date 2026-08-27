@@ -249,6 +249,18 @@ jobs:
       - name: Restore cached Darwin SDK
         uses: ./.github/actions/setup-darwin-sdk
 
+      - name: Restore cached Compose toolchains
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: ~/.konan
+          key: >-
+            xcross-compose-v1-${{ runner.os }}-${{ runner.arch }}-${{
+            hashFiles(
+              'packages/xcross/lib/src/compose/toolchain/**',
+              'examples/**/gradle/libs.versions.toml',
+              'examples/**/gradle.properties'
+            ) }}
+
       - name: Build examples on Linux
         if: runner.os == 'Linux'
         shell: bash
