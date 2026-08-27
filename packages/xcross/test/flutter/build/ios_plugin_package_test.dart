@@ -2640,7 +2640,6 @@ module FirebaseFirestore {
         'GIT_CONFIG_KEY_0': 'core.symlinks',
         'GIT_CONFIG_VALUE_0': 'false',
         'EXPERIMENTAL_SPM_BUILDS': '1',
-        'SWIFTPM_MAXIMUM_CONCURRENT_OPERATIONS': '1',
       });
     });
   });

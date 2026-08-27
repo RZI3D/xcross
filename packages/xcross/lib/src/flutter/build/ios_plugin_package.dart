@@ -117,7 +117,7 @@ abstract final class GeneratedPluginsPackage {
         );
 
         final pluginsDir = p.join(outputDir, 'Plugins');
-        final scratchPath = p.join(projectRoot, 'build', '.xs');
+        final scratchPath = p.join(projectRoot, 'build', 'spm');
         await _runSwiftBuild(
           outputDir: outputDir,
           pluginsDir: pluginsDir,
@@ -167,6 +167,13 @@ abstract final class GeneratedPluginsPackage {
       throw FlutterBuildError(SdkInstall.mismatchGuidance(mismatch));
     }
     final swift = await ProcessRunner.locateTool('swift');
+    final swiftPackage = Platform.isWindows
+        ? await ProcessRunner.locateTool('swift-package')
+        : swift;
+    final swiftBuild = Platform.isWindows
+        ? await ProcessRunner.locateTool('swift-build')
+        : swift;
+
     // Real `Flutter.framework` (not our FlutterFramework binary-target
     // wrapper). Our own aggregate target resolves `import Flutter` via
     // that wrapper's declared package dependency, but individual
@@ -208,7 +215,7 @@ abstract final class GeneratedPluginsPackage {
     final environment = swiftProcessEnvironment(windows: windows);
     if (windows) {
       await _resolveWindowsDependencies(
-        swift: swift,
+        swift: swiftPackage,
         pluginsDir: pluginsDir,
         scratchPath: scratchPath,
         swiftSdksPath: swiftSdksPath,
@@ -235,8 +242,9 @@ abstract final class GeneratedPluginsPackage {
         ),
         ...selection,
       ];
+      if (windows) arguments.removeAt(0);
       Future<void> invoke() => ProcessRunner.runChecked(
-        swift,
+        swiftBuild,
         arguments,
         environment: environment,
         inheritStdio: windows && Log.isVerbose,
@@ -378,7 +386,7 @@ abstract final class GeneratedPluginsPackage {
         scratchPath: scratchPath,
         swiftSdksPath: swiftSdksPath,
         toolsetPath: toolsetPath,
-      ),
+      ).skip(1).toList(),
       environment: environment,
       inheritStdio: Log.isVerbose,
       label: 'swift package resolve',
@@ -412,7 +420,7 @@ abstract final class GeneratedPluginsPackage {
       if (firestore == null) rethrow;
       final vendorFramework = p.join(
         p.dirname(p.dirname(outputDir)),
-        '.xv',
+        'vendor',
         'fb@346daa9f4631',
         'FirebaseFirestoreInternal.xcframework',
       );
@@ -659,7 +667,6 @@ abstract final class GeneratedPluginsPackage {
       'GIT_CONFIG_KEY_0': 'core.symlinks',
       'GIT_CONFIG_VALUE_0': 'false',
       'EXPERIMENTAL_SPM_BUILDS': '1',
-      'SWIFTPM_MAXIMUM_CONCURRENT_OPERATIONS': '1',
     };
   }
 
@@ -840,8 +847,6 @@ abstract final class GeneratedPluginsPackage {
     '--scratch-path',
     scratchPath,
     if (windows ?? Platform.isWindows) ...[
-      '--jobs',
-      '1',
       '--disable-automatic-resolution',
       // Windows Swift's interface verifier does not inherit SwiftPM's search
       // path for generated sibling Clang modules during Darwin cross builds.
@@ -1094,7 +1099,7 @@ abstract final class GeneratedPluginsPackage {
     final packagesDir = p.join(outputDir, 'Packages');
     final frameworkDir = p.join(packagesDir, _flutterFrameworkPackageName);
     final pluginsDir = p.join(outputDir, 'Plugins');
-    final vendorDir = p.join(p.dirname(p.dirname(outputDir)), '.xv');
+    final vendorDir = p.join(p.dirname(p.dirname(outputDir)), 'vendor');
     final shouldVendor = vendorRemotePackages ?? true;
 
     await Directory(packagesDir).create(recursive: true);
@@ -2493,11 +2498,13 @@ let package = Package(
     String packageDirectory,
     Future<String> Function(String name) locateTool,
   ) async {
-    final swift = await locateTool('swift');
+    final swift = await locateTool(
+      Platform.isWindows ? 'swift-package' : 'swift',
+    );
     final resolvedFile = File(p.join(packageDirectory, 'Package.resolved'));
     if (resolvedFile.existsSync()) await resolvedFile.delete();
     final result = await ProcessRunner.run(swift, [
-      'package',
+      if (!Platform.isWindows) 'package',
       '--package-path',
       packageDirectory,
       'resolve',

@@ -260,7 +260,7 @@ final class FlutterPacker {
       projectRoot: projectRoot,
       plugins: spmPlugins,
       flutterXcframework: xcframework,
-      outputDir: p.join(projectRoot, 'build', '.xp'),
+      outputDir: p.join(projectRoot, 'build', 'plugins'),
       deploymentTarget: deploymentTarget,
       verbose: verbose,
     );
