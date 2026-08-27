@@ -134,7 +134,6 @@ abstract final class GeneratedPluginsPackage {
         };
 
         await writeGeneratedPackages(
-
           outputDir: outputDir,
           plugins: spmPlugins,
           flutterXcframework: flutterXcframework,
@@ -175,7 +174,6 @@ abstract final class GeneratedPluginsPackage {
         final result = await discoverAndRewriteDylibs(targetDebugDir);
         await _writeStable(fingerprintFile.path, fingerprint);
         return result;
-
       });
 
   @visibleForTesting
@@ -223,19 +221,24 @@ abstract final class GeneratedPluginsPackage {
       }
     }
 
-    for (final plugin in plugins.toList()..sort((a, b) => a.name.compareTo(b.name))) {
+    for (final plugin
+        in plugins.toList()..sort((a, b) => a.name.compareTo(b.name))) {
       add(plugin.name);
       add(plugin.platformDirectoryName);
       await addTree(plugin.packageRoot);
     }
     final frameworkFiles = <File>[];
-    await for (final entity in Directory(flutterXcframework).list(recursive: true)) {
+    await for (final entity in Directory(
+      flutterXcframework,
+    ).list(recursive: true)) {
       if (entity is File) frameworkFiles.add(entity);
     }
     frameworkFiles.sort((a, b) => a.path.compareTo(b.path));
     for (final file in frameworkFiles) {
       final stat = file.statSync();
-      add(p.relative(file.path, from: flutterXcframework).replaceAll(r'\', '/'));
+      add(
+        p.relative(file.path, from: flutterXcframework).replaceAll(r'\', '/'),
+      );
       add(stat.size.toString());
       add(stat.modified.microsecondsSinceEpoch.toString());
     }
@@ -344,6 +347,7 @@ abstract final class GeneratedPluginsPackage {
         ),
         ...selection,
       ];
+
       if (windows) arguments.removeAt(0);
       Future<void> invoke() => ProcessRunner.runChecked(
         swiftBuild,
@@ -481,7 +485,6 @@ abstract final class GeneratedPluginsPackage {
     required String vendorDir,
     required Map<String, String>? environment,
   }) async {
-
     Future<void> resolve() => ProcessRunner.runChecked(
       swift,
       swiftResolveArguments(
@@ -603,7 +606,6 @@ abstract final class GeneratedPluginsPackage {
   @visibleForTesting
   static Future<bool> normalizeResolvedPackageManifests(
     String scratchPath,
-
   ) async {
     final checkouts = Directory(p.join(scratchPath, 'checkouts'));
     var changed = false;
@@ -647,11 +649,8 @@ abstract final class GeneratedPluginsPackage {
         targetBuildDir,
         candidates: interopTargetCandidates,
       );
-      if (failure != null &&
-          !(windows ?? Platform.isWindows) &&
-          !isMissingSwiftInteropHeaderFailure(failure, targets)) {
-        return false;
-      }
+      if (failure != null && targets.isEmpty) return false;
+
       for (final target in targets) {
         await buildTarget(target);
       }

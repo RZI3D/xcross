@@ -94,9 +94,10 @@ jobs:
           flutter config --no-analytics
           flutter precache --ios
           dart pub get
-          (cd packages/xcross && dart build cli -t bin/xcross.dart)
+          (cd packages/xcross && dart run tool/build_xcross.dart)
           cp -r packages/xcross/build/cli/*/bundle "$RUNNER_TEMP/xcross-bundle"
           chmod +x "$RUNNER_TEMP/xcross-bundle/bin/xcross"
+          chmod +x "$RUNNER_TEMP/xcross-bundle/bin/xcrun"
           "$RUNNER_TEMP/xcross-bundle/bin/xcross" setup
           sudo apt-get install -y llvm
           tools=(
@@ -234,7 +235,7 @@ jobs:
           flutter precache --ios
           dart pub get
           Push-Location packages/xcross
-          dart build cli -t bin/xcross.dart
+          dart run tool/build_xcross.dart
           Pop-Location
           Copy-Item -Recurse `
             packages/xcross/build/cli/windows_x64/bundle `
@@ -244,18 +245,20 @@ jobs:
       - name: Restore cached Darwin SDK
         uses: ./.github/actions/setup-darwin-sdk
 
-      - name: Build Compose smoke examples on Linux
+      - name: Build examples on Linux
         if: runner.os == 'Linux'
         shell: bash
         run: |
           set -euo pipefail
           xcross="$RUNNER_TEMP/xcross-bundle/bin/xcross"
-          cd "$GITHUB_WORKSPACE/examples/compose_app"
           "$xcross" compose setup
-          "$xcross" compose build
-          cd "$GITHUB_WORKSPACE/examples/kmp_swift_app"
-          "$xcross" compose build
-          cd "$GITHUB_WORKSPACE"
+          for example in "$GITHUB_WORKSPACE"/examples/*; do
+            if [[ -f "$example/pubspec.yaml" ]]; then
+              (cd "$example" && "$xcross" flutter build)
+            elif [[ -f "$example/settings.gradle.kts" ]]; then
+              (cd "$example" && "$xcross" compose build)
+            fi
+          done
           test -f examples/compose_app/build/xcross-ios/ComposeApp.app/Runner
           test -f examples/kmp_swift_app/build/xcross-ios/KmpSwiftApp.app/Runner
 
@@ -297,20 +300,29 @@ jobs:
             }
           done
 
-      - name: Build Compose smoke examples on Windows
+      - name: Build examples on Windows
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           $xcross = "$env:RUNNER_TEMP\xcross-bundle\bin\xcross.exe"
-          Set-Location "$env:GITHUB_WORKSPACE\examples\compose_app"
           & $xcross compose setup
           if ($LASTEXITCODE -ne 0) { throw 'xcross compose setup failed' }
-          & $xcross compose build
-          if ($LASTEXITCODE -ne 0) { throw 'xcross compose build compose_app failed' }
-          Set-Location "$env:GITHUB_WORKSPACE\examples\kmp_swift_app"
-          & $xcross compose build
-          if ($LASTEXITCODE -ne 0) { throw 'xcross compose build kmp_swift_app failed' }
+          Get-ChildItem "$env:GITHUB_WORKSPACE\examples" -Directory |
+            ForEach-Object {
+              $command = if (Test-Path (Join-Path $_ 'pubspec.yaml')) {
+                'flutter'
+              } elseif (Test-Path (Join-Path $_ 'settings.gradle.kts')) {
+                'compose'
+              } else {
+                return
+              }
+              Set-Location $_.FullName
+              & $xcross $command build
+              if ($LASTEXITCODE -ne 0) {
+                throw "xcross $command build failed: $($_.Name)"
+              }
+            }
           Set-Location $env:GITHUB_WORKSPACE
           $outputs = @(
             'examples/compose_app/build/xcross-ios/ComposeApp.app/Runner',

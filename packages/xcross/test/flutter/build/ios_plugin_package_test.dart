@@ -79,11 +79,10 @@ flutter:
         'stable_plugin',
         packageManifest: 'let package = Package()\n',
       );
-      final source = File(
-        p.join(plugin.swiftPackageDir, 'Sources', 'Plugin.swift'),
-      )
-        ..createSync(recursive: true)
-        ..writeAsStringSync('let value = 1\n');
+      final source =
+          File(p.join(plugin.swiftPackageDir, 'Sources', 'Plugin.swift'))
+            ..createSync(recursive: true)
+            ..writeAsStringSync('let value = 1\n');
       final framework = Directory(p.join(tmp.path, 'Flutter.xcframework'))
         ..createSync();
       File(p.join(framework.path, 'Info.plist')).writeAsStringSync('<plist/>');
@@ -127,7 +126,6 @@ flutter:
   });
 
   group('flutterFrameworkManifest', () {
-
     test('matches the exact wrapper manifest', () {
       expect(GeneratedPluginsPackage.flutterFrameworkManifest(), '''
 // swift-tools-version: 5.9
@@ -1160,32 +1158,34 @@ let package = Package(
       );
     });
 
-    test('stages repaired XCFrameworks into matching binary packages', () async {
-      final scratch = p.join(tmp.path, '.build');
-      final repaired = p.join(
-        scratch,
-        'artifacts',
-        'dependency',
-        'GenericBinary',
-        'GenericBinary.xcframework',
-      );
-      File(p.join(repaired, 'Info.plist'))
-        ..createSync(recursive: true)
-        ..writeAsStringSync('<plist/>');
-      File(
-        p.join(
-          repaired,
-          'ios-arm64',
-          'GenericBinary.framework',
+    test(
+      'stages repaired XCFrameworks into matching binary packages',
+      () async {
+        final scratch = p.join(tmp.path, '.build');
+        final repaired = p.join(
+          scratch,
+          'artifacts',
+          'dependency',
           'GenericBinary',
-        ),
-      )
-        ..createSync(recursive: true)
-        ..writeAsStringSync('binary');
-      final package = Directory(p.join(tmp.path, 'vendor', 'dependency'))
-        ..createSync(recursive: true);
-      final manifest = File(p.join(package.path, 'Package.swift'))
-        ..writeAsStringSync('''
+          'GenericBinary.xcframework',
+        );
+        File(p.join(repaired, 'Info.plist'))
+          ..createSync(recursive: true)
+          ..writeAsStringSync('<plist/>');
+        File(
+            p.join(
+              repaired,
+              'ios-arm64',
+              'GenericBinary.framework',
+              'GenericBinary',
+            ),
+          )
+          ..createSync(recursive: true)
+          ..writeAsStringSync('binary');
+        final package = Directory(p.join(tmp.path, 'vendor', 'dependency'))
+          ..createSync(recursive: true);
+        final manifest = File(p.join(package.path, 'Package.swift'))
+          ..writeAsStringSync('''
 let package = Package(targets: [
   .binaryTarget(
     name: "GenericBinary",
@@ -1195,33 +1195,34 @@ let package = Package(targets: [
 ])
 ''');
 
-      expect(
-        await GeneratedPluginsPackage.stageExtractedBinaryArtifacts(
-          scratchPath: scratch,
-          vendorDir: p.join(tmp.path, 'vendor'),
-        ),
-        isTrue,
-      );
-      expect(
-        manifest.readAsStringSync(),
-        contains(
-          '.binaryTarget(name: "GenericBinary", '
-          'path: "GenericBinary.xcframework")',
-        ),
-      );
-      expect(
-        File(
-          p.join(
-            package.path,
-            'GenericBinary.xcframework',
-            'ios-arm64',
-            'GenericBinary.framework',
-            'GenericBinary',
+        expect(
+          await GeneratedPluginsPackage.stageExtractedBinaryArtifacts(
+            scratchPath: scratch,
+            vendorDir: p.join(tmp.path, 'vendor'),
           ),
-        ).readAsStringSync(),
-        'binary',
-      );
-    });
+          isTrue,
+        );
+        expect(
+          manifest.readAsStringSync(),
+          contains(
+            '.binaryTarget(name: "GenericBinary", '
+            'path: "GenericBinary.xcframework")',
+          ),
+        );
+        expect(
+          File(
+            p.join(
+              package.path,
+              'GenericBinary.xcframework',
+              'ios-arm64',
+              'GenericBinary.framework',
+              'GenericBinary',
+            ),
+          ).readAsStringSync(),
+          'binary',
+        );
+      },
+    );
 
     test('ignores broken extraction trees and repairs checkouts', () async {
       final scratch = p.join(tmp.path, '.build');
@@ -1248,9 +1249,8 @@ let package = Package(targets: [
         ),
       )..createSync(recursive: true);
       broken.deleteSync();
-      final checkout = Directory(
-        p.join(scratch, 'checkouts', 'dependency'),
-      )..createSync(recursive: true);
+      final checkout = Directory(p.join(scratch, 'checkouts', 'dependency'))
+        ..createSync(recursive: true);
       final manifest = File(p.join(checkout.path, 'Package.swift'))
         ..writeAsStringSync('''
 let target = Target.binaryTarget(
@@ -1267,17 +1267,20 @@ let target = Target.binaryTarget(
         ),
         isTrue,
       );
-      expect(manifest.readAsStringSync(), contains('path: "Target.xcframework"'));
       expect(
-        File(p.join(checkout.path, 'Target.xcframework', 'Info.plist'))
-            .existsSync(),
+        manifest.readAsStringSync(),
+        contains('path: "Target.xcframework"'),
+      );
+      expect(
+        File(
+          p.join(checkout.path, 'Target.xcframework', 'Info.plist'),
+        ).existsSync(),
         isTrue,
       );
     });
   });
 
   group('Windows checkout symlinks', () {
-
     test(
       'materializes tracked file symlinks without duplicate files',
       () async {
@@ -2681,35 +2684,36 @@ module FirebaseFirestore {
     });
 
     test(
-      'does not retry an unrelated failure that exposes a missing header',
+      'prebuilds a newly exposed missing header despite truncated diagnostics',
       () async {
         final buildDir = p.join(tmp.path, 'arm64-apple-ios', 'debug');
         final include = p.join(buildDir, 'FirebaseFirestore.build', 'include');
         var attempts = 0;
 
-        await expectLater(
-          GeneratedPluginsPackage.buildWithInteropRecovery(
-            targetBuildDir: buildDir,
-            interopTargetCandidates: const {'FirebaseFirestore'},
-            windows: false,
-            build: () {
-              attempts++;
-              Directory(include).createSync(recursive: true);
-              File(p.join(include, 'module.modulemap')).writeAsStringSync('''
+        await GeneratedPluginsPackage.buildWithInteropRecovery(
+          targetBuildDir: buildDir,
+          interopTargetCandidates: const {'FirebaseFirestore'},
+          windows: false,
+          build: () async {
+            attempts++;
+            if (attempts != 1) return;
+            Directory(include).createSync(recursive: true);
+            File(p.join(include, 'module.modulemap')).writeAsStringSync('''
 module FirebaseFirestore {
   header "FirebaseFirestore-Swift.h"
 }
 ''');
-              return Future<void>.error(
-                StateError('unrelated compile failure'),
-              );
-            },
-            buildTarget: (_) async => fail('no target should be prebuilt'),
-          ),
-          throwsStateError,
+            throw StateError('command failed without compiler output');
+          },
+          buildTarget: (target) async {
+            expect(target, 'FirebaseFirestore');
+            File(
+              p.join(include, 'FirebaseFirestore-Swift.h'),
+            ).writeAsStringSync('// generated');
+          },
         );
 
-        expect(attempts, 1);
+        expect(attempts, 2);
       },
     );
 
