@@ -9,6 +9,7 @@ import 'package:cli_kit/cli_kit.dart';
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 import 'package:xcross/src/cli/basic/sdk_install.dart';
+import 'package:xcross/src/flutter/build/internal/swiftpm_workspace.dart';
 import 'package:xcross/src/flutter/build/ios_deployment_target.dart';
 import 'package:xcross/src/flutter/build/ios_plugin_package.dart';
 import 'package:xcross/src/flutter/build/ios_plugins.dart';
@@ -3057,18 +3058,21 @@ module FirebaseFirestore {
     test(
       'returns null and writes nothing when there are no SPM plugins',
       () async {
-        final outputDir = p.join(tmp.path, 'out');
+        final workspace = SwiftPmWorkspace.forProject(
+          tmp.path,
+          environment: {'XCROSS_CACHE_DIR': tmp.path},
+        );
 
         final result = await GeneratedPluginsPackage.build(
           projectRoot: tmp.path,
+          workspace: workspace,
           plugins: const [],
           flutterXcframework: p.join(tmp.path, 'Flutter.xcframework'),
-          outputDir: outputDir,
           deploymentTarget: IosDeploymentTarget.fallback,
         );
 
         expect(result, isNull);
-        expect(Directory(outputDir).existsSync(), isFalse);
+        expect(Directory(workspace.packages).existsSync(), isFalse);
       },
     );
 
@@ -3081,18 +3085,21 @@ module FirebaseFirestore {
           p.join(podspecOnly, 'ios', 'plugin_pod.podspec'),
         ).writeAsStringSync('');
         final plugin = IosPlugin(name: 'plugin_pod', packageRoot: podspecOnly);
-        final outputDir = p.join(tmp.path, 'out');
+        final workspace = SwiftPmWorkspace.forProject(
+          tmp.path,
+          environment: {'XCROSS_CACHE_DIR': tmp.path},
+        );
 
         final result = await GeneratedPluginsPackage.build(
           projectRoot: tmp.path,
+          workspace: workspace,
           plugins: [plugin],
           flutterXcframework: p.join(tmp.path, 'Flutter.xcframework'),
-          outputDir: outputDir,
           deploymentTarget: IosDeploymentTarget.fallback,
         );
 
         expect(result, isNull);
-        expect(Directory(outputDir).existsSync(), isFalse);
+        expect(Directory(workspace.packages).existsSync(), isFalse);
       },
     );
   });

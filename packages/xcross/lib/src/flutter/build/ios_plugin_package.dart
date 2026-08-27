@@ -70,20 +70,18 @@ abstract final class GeneratedPluginsPackage {
   /// [projectRoot]        — Flutter project root (logging context only).
   /// [flutterXcframework] — Path to the real `Flutter.xcframework` (from
   ///                         `IosEngineCache.flutterXcframework`).
-  /// [outputDir]           — Stable directory to synthesize the wrapper
-  ///                         packages and run `swift build` in. Not deleted
-  ///                         between calls, so SwiftPM's `.build` cache
-  ///                         persists; only the generated `.swift` files are
-  ///                         overwritten each call.
+  /// [workspace] owns the stable generated-package, scratch, and vendored
+  /// dependency directories reused between builds.
   static Future<GeneratedPluginsBuildResult?> build({
     required String projectRoot,
+    required SwiftPmWorkspace workspace,
     required List<IosPlugin> plugins,
     required String flutterXcframework,
-    required String outputDir,
     required IosDeploymentTarget deploymentTarget,
     bool verbose = false,
   }) =>
       Log.logStep('Building Flutter plugins (Swift Package Manager)', () async {
+        final outputDir = workspace.packages;
         final spmPlugins = plugins
             .where((plugin) => plugin.usesSwiftPackageManager)
             .toList();
@@ -94,7 +92,6 @@ abstract final class GeneratedPluginsPackage {
           'spmPlugins=${[for (final plugin in spmPlugins) plugin.name]}',
         );
 
-        final workspace = SwiftPmWorkspace.forProject(projectRoot);
         final targetDebugDir = p.join(
           workspace.scratch,
           'arm64-apple-ios',
@@ -153,7 +150,7 @@ abstract final class GeneratedPluginsPackage {
           'Flutter.xcframework',
         );
         await _runSwiftBuild(
-          outputDir: outputDir,
+          workspace: workspace,
           pluginsDir: pluginsDir,
           scratchPath: scratchPath,
           flutterXcframework: stagedFlutterXcframework,
@@ -250,13 +247,14 @@ abstract final class GeneratedPluginsPackage {
 
   /// `swift build --swift-sdk arm64-apple-ios`.
   static Future<void> _runSwiftBuild({
-    required String outputDir,
+    required SwiftPmWorkspace workspace,
     required String pluginsDir,
     required String scratchPath,
     required String flutterXcframework,
     required Set<String> interopTargetCandidates,
     required Map<String, Set<String>> interopConsumers,
   }) async {
+    final outputDir = workspace.packages;
     final sdk = DarwinSdk.current();
     if (sdk == null) {
       throw FlutterBuildError(
@@ -325,7 +323,7 @@ abstract final class GeneratedPluginsPackage {
         scratchPath: scratchPath,
         swiftSdksPath: swiftSdksPath,
         toolsetPath: toolsetPath,
-        vendorDir: p.join(p.dirname(outputDir), 'vendor'),
+        vendorDir: workspace.vendor,
         environment: environment,
       );
     }
@@ -522,7 +520,7 @@ abstract final class GeneratedPluginsPackage {
     final vendor = Directory(vendorDir);
     if (!artifacts.existsSync()) return false;
 
-    final frameworks = <String, Directory>{};
+    final repairedFrameworksByTarget = <String, Directory>{};
     for (final package in artifacts.listSync(followLinks: false)) {
       if (package is! Directory || p.basename(package.path) == 'extract') {
         continue;
@@ -535,19 +533,19 @@ abstract final class GeneratedPluginsPackage {
           }
           final name = p.basenameWithoutExtension(entity.path);
           if (File(p.join(entity.path, 'Info.plist')).existsSync()) {
-            frameworks[name] = entity;
+            repairedFrameworksByTarget[name] = entity;
           }
         }
       }
     }
-    if (frameworks.isEmpty) return false;
+    if (repairedFrameworksByTarget.isEmpty) return false;
 
-    final packageRoots = <Directory>[
+    final manifestSearchRoots = <Directory>[
       vendor,
       Directory(p.join(scratchPath, 'checkouts')),
     ];
     var changed = false;
-    for (final packageRoot in packageRoots) {
+    for (final packageRoot in manifestSearchRoots) {
       if (!packageRoot.existsSync()) continue;
       await for (final package in packageRoot.list(followLinks: false)) {
         if (package is! Directory) continue;
@@ -563,32 +561,18 @@ abstract final class GeneratedPluginsPackage {
           final original = manifest;
           for (final call in _swiftCalls(manifest, '.binaryTarget').reversed) {
             final name = _namedString(call.text, 'name');
-            final framework = name == null ? null : frameworks[name];
+            final framework = name == null
+                ? null
+                : repairedFrameworksByTarget[name];
             if (framework == null || _namedString(call.text, 'url') == null) {
               continue;
             }
             final destination = p.join(package.path, '$name.xcframework');
-            await _deleteEntity(destination);
-            if (Platform.isWindows) {
-              final copy = await Process.run('robocopy', [
-                framework.path,
-                destination,
-                '/E',
-                '/NFL',
-                '/NDL',
-                '/NJH',
-                '/NJS',
-                '/NP',
-              ]);
-              if (copy.exitCode > 7) {
-                throw FileSystemException(
-                  'Could not stage repaired binary artifact: ${copy.stderr}',
-                  framework.path,
-                );
-              }
-            } else {
-              await _syncDirectory(framework.path, destination);
-            }
+            await _copyDirectoryPortable(
+              framework.path,
+              destination,
+              failureDescription: 'Could not stage repaired binary artifact',
+            );
             manifest = manifest.replaceRange(
               call.start,
               call.end,
@@ -644,13 +628,11 @@ abstract final class GeneratedPluginsPackage {
   }) async {
     final repair = repairConsumers ?? () async {};
 
-    Future<bool> recoverMissingTargets([Object? failure]) async {
+    Future<bool> recoverMissingTargets() async {
       final targets = missingSwiftInteropTargets(
         targetBuildDir,
         candidates: interopTargetCandidates,
       );
-      if (failure != null && targets.isEmpty) return false;
-
       for (final target in targets) {
         await buildTarget(target);
       }
@@ -667,8 +649,8 @@ abstract final class GeneratedPluginsPackage {
     final before = swiftInteropSearchPaths(targetBuildDir).toSet();
     try {
       await build();
-    } on Object catch (error) {
-      if (await recoverMissingTargets(error)) {
+    } on Object {
+      if (await recoverMissingTargets()) {
         await build();
         return;
       }
@@ -681,18 +663,6 @@ abstract final class GeneratedPluginsPackage {
       await repair();
       await build();
     }
-  }
-
-  @visibleForTesting
-  static bool isMissingSwiftInteropHeaderFailure(
-    Object error,
-    Iterable<String> targets,
-  ) {
-    final message = '$error';
-    return targets.any(
-      (target) =>
-          message.contains('$target-Swift.h') && message.contains('not found'),
-    );
   }
 
   @visibleForTesting
@@ -2875,35 +2845,11 @@ let package = Package(
       final (deviceSlice, info) = candidate;
       await _deleteEntity(destination);
       await Directory(destination).create(recursive: true);
-      if (Platform.isWindows) {
-        final result = await Process.run('robocopy', [
-          deviceSlice.path,
-          p.join(destination, 'ios-arm64'),
-          '/E',
-          '/NFL',
-          '/NDL',
-          '/NJH',
-          '/NJS',
-          '/NP',
-        ]);
-        if (result.exitCode > 7) {
-          throw FileSystemException(
-            'Could not copy extracted binary artifact: ${result.stderr}',
-            deviceSlice.path,
-          );
-        }
-        if (!Directory(p.join(destination, 'ios-arm64')).existsSync()) {
-          throw FileSystemException(
-            'Binary artifact copy produced no iOS device slice',
-            deviceSlice.path,
-          );
-        }
-      } else {
-        await _syncDirectory(
-          deviceSlice.path,
-          p.join(destination, 'ios-arm64'),
-        );
-      }
+      await _copyDirectoryPortable(
+        deviceSlice.path,
+        p.join(destination, 'ios-arm64'),
+        failureDescription: 'Could not copy extracted binary artifact',
+      );
       final plist = await info.readAsString();
       final identifier = plist.indexOf('<string>ios-arm64</string>');
       final deviceStart = identifier < 0
@@ -3578,6 +3524,40 @@ $diagnosticsStart$registrations$diagnosticsEnd}
 
   /// Deletes whatever occupies [path] unless it already is a [keep] entry,
   /// so links can become directories and vice versa without stale state.
+  static Future<void> _copyDirectoryPortable(
+    String source,
+    String destination, {
+    required String failureDescription,
+  }) async {
+    await _deleteEntity(destination);
+    if (Platform.isWindows) {
+      final result = await Process.run('robocopy', [
+        source,
+        destination,
+        '/E',
+        '/NFL',
+        '/NDL',
+        '/NJH',
+        '/NJS',
+        '/NP',
+      ]);
+      if (result.exitCode > 7) {
+        throw FileSystemException(
+          '$failureDescription: ${result.stderr}',
+          source,
+        );
+      }
+    } else {
+      await _syncDirectory(source, destination);
+    }
+    if (!Directory(destination).existsSync()) {
+      throw FileSystemException(
+        '$failureDescription: no output produced',
+        source,
+      );
+    }
+  }
+
   static Future<void> _deleteUnless(
     String path,
     FileSystemEntityType keep,

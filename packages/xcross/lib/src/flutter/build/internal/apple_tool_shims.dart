@@ -119,94 +119,111 @@ Future<void> installAppleToolShims(
     directory,
     Platform.isWindows ? 'otool.bat' : 'otool',
   );
-  final tools = <String, String>{
-    'clang': compilerShim,
-    'ar': config.archiver,
-    'ld': config.linker,
+  final auxiliaryTools = <String, String>{
     'lipo': config.lipo,
     if (config.otool != null) 'otool': otoolShim,
     if (config.installNameTool case final tool?) 'install_name_tool': tool,
   };
 
   if (Platform.isWindows) {
-    if (toolForwarderExecutable != null) {
-      for (final entry in {
-        'cc': compilerShim,
-        'ar': config.archiver,
-        'ld': config.linker,
-      }.entries) {
-        final executable = p.join(directory, '${entry.key}.exe');
-        await File(toolForwarderExecutable).copy(executable);
-        await File('$executable.path').writeAsString(entry.value);
-      }
-      await File(config.xcrun).copy(p.join(directory, 'xcrun.exe'));
-      final plutil = p.join(directory, 'plutil.exe');
-      await File(toolForwarderExecutable).copy(plutil);
-    }
+    await _installWindowsToolShims(
+      directory,
+      config,
+      compilerShim: compilerShim,
+      auxiliaryTools: auxiliaryTools,
+      toolForwarderExecutable: toolForwarderExecutable,
+    );
+    return;
+  }
 
-    if (config.otool case final otool?) {
-      await File(p.join(directory, 'otool.ps1')).writeAsString(
-        renderPowerShellOtoolShim(
-          tool: otool.executable,
-          usesObjdump: otool.usesObjdump,
-        ),
-      );
-      await _writeWindowsShim(
-        directory,
-        'otool',
-        renderBatchPowerShellShim('otool.ps1'),
-      );
+  await _installUnixToolShims(
+    directory,
+    config,
+    auxiliaryTools: auxiliaryTools,
+    toolForwarderExecutable: toolForwarderExecutable,
+  );
+}
+
+Future<void> _installWindowsToolShims(
+  String directory,
+  AppleToolShimConfig config, {
+  required String compilerShim,
+  required Map<String, String> auxiliaryTools,
+  required String? toolForwarderExecutable,
+}) async {
+  if (toolForwarderExecutable != null) {
+    for (final entry in {
+      'cc': compilerShim,
+      'ar': config.archiver,
+      'ld': config.linker,
+    }.entries) {
+      final executable = p.join(directory, '${entry.key}.exe');
+      await File(toolForwarderExecutable).copy(executable);
+      await File('$executable.path').writeAsString(entry.value);
     }
-    await File(p.join(directory, 'clang.ps1')).writeAsString(
-      renderPowerShellCompilerShim(
-        iosSdk: config.iosSdk,
-        clang: config.clang,
-        hostCompiler: config.hostCompiler,
-        linker: config.linker,
-        deploymentTarget: config.deploymentTarget,
+    await File(config.xcrun).copy(p.join(directory, 'xcrun.exe'));
+    await File(toolForwarderExecutable).copy(p.join(directory, 'plutil.exe'));
+  }
+
+  if (config.otool case final otool?) {
+    await File(p.join(directory, 'otool.ps1')).writeAsString(
+      renderPowerShellOtoolShim(
+        tool: otool.executable,
+        usesObjdump: otool.usesObjdump,
       ),
     );
     await _writeWindowsShim(
       directory,
-      'clang',
+      'otool',
+      renderBatchPowerShellShim('otool.ps1'),
+    );
+  }
+  await File(p.join(directory, 'clang.ps1')).writeAsString(
+    renderPowerShellCompilerShim(
+      iosSdk: config.iosSdk,
+      clang: config.clang,
+      hostCompiler: config.hostCompiler,
+      linker: config.linker,
+      deploymentTarget: config.deploymentTarget,
+    ),
+  );
+  await _writeWindowsShim(
+    directory,
+    'clang',
+    renderBatchPowerShellShim('clang.ps1'),
+  );
+  if (toolForwarderExecutable == null) {
+    await _writeWindowsShim(
+      directory,
+      'cc',
       renderBatchPowerShellShim('clang.ps1'),
     );
-    if (toolForwarderExecutable == null) {
-      await _writeWindowsShim(
-        directory,
-        'cc',
-        renderBatchPowerShellShim('clang.ps1'),
-      );
-      await _writeWindowsShim(
-        directory,
-        'ar',
-        renderBatchToolShim(config.archiver),
-      );
-      await _writeWindowsShim(
-        directory,
-        'ld',
-        renderBatchToolShim(config.linker),
-      );
-    }
+    await _writeWindowsShim(
+      directory,
+      'ar',
+      renderBatchToolShim(config.archiver),
+    );
+    await _writeWindowsShim(
+      directory,
+      'ld',
+      renderBatchToolShim(config.linker),
+    );
+  }
 
-    for (final tool in tools.entries.skip(3)) {
-      if (tool.key != 'otool') {
-        await _writeWindowsShim(
-          directory,
-          tool.key,
-          renderBatchToolShim(tool.value),
-        );
-      }
-    }
-    if (config.installNameTool == null) {
+  for (final tool in auxiliaryTools.entries) {
+    if (tool.key != 'otool') {
       await _writeWindowsShim(
         directory,
-        'install_name_tool',
-        batchCodesignShim,
+        tool.key,
+        renderBatchToolShim(tool.value),
       );
     }
-    await _writeWindowsShim(directory, 'codesign', batchCodesignShim);
-    await File(p.join(directory, 'rsync.ps1')).writeAsString(r'''
+  }
+  if (config.installNameTool == null) {
+    await _writeWindowsShim(directory, 'install_name_tool', batchCodesignShim);
+  }
+  await _writeWindowsShim(directory, 'codesign', batchCodesignShim);
+  await File(p.join(directory, 'rsync.ps1')).writeAsString(r'''
 $items = @($args | Where-Object { -not $_.StartsWith('-') -and $_ -ne '.DS_Store/' })
 if ($items.Count -lt 2) { exit 1 }
 $source = $items[$items.Count - 2]
@@ -214,14 +231,19 @@ $destination = $items[$items.Count - 1]
 Copy-Item -LiteralPath $source -Destination $destination -Recurse -Force
 exit 0
 ''');
-    await _writeWindowsShim(
-      directory,
-      'rsync',
-      renderBatchPowerShellShim('rsync.ps1'),
-    );
-    return;
-  }
+  await _writeWindowsShim(
+    directory,
+    'rsync',
+    renderBatchPowerShellShim('rsync.ps1'),
+  );
+}
 
+Future<void> _installUnixToolShims(
+  String directory,
+  AppleToolShimConfig config, {
+  required Map<String, String> auxiliaryTools,
+  required String? toolForwarderExecutable,
+}) async {
   if (config.otool case final otool?) {
     await _writeUnixShim(
       directory,
@@ -250,7 +272,7 @@ exit 0
     );
   }
 
-  for (final tool in tools.entries.skip(3)) {
+  for (final tool in auxiliaryTools.entries) {
     if (tool.key != 'otool') {
       await _writeUnixShim(directory, tool.key, renderUnixToolShim(tool.value));
     }

@@ -40,33 +40,47 @@ Future<int> buildXcross({
   try {
     await generated.writeAsString(_identitySource(version, released));
     final run = runBuild ?? _runBuild;
-    final result = await run(Platform.resolvedExecutable, const [
-      'build',
-      'cli',
-      '-t',
-      'bin/xcross.dart',
-    ], workingDirectory: packageRoot.path);
-    if (result != 0) return result;
-    final binDirectory = _builtBinDirectory(packageRoot);
+    final xcrossResult = await _buildCliExecutable(
+      run,
+      packageRoot,
+      target: 'bin/xcross.dart',
+    );
+    if (xcrossResult != 0) return xcrossResult;
+
     final xcrunBuild = p.join(packageRoot.path, 'build', 'xcrun');
-    final xcrunResult = await run(Platform.resolvedExecutable, [
-      'build',
-      'cli',
-      '-t',
-      'bin/xcrun.dart',
-      '-o',
-      xcrunBuild,
-    ], workingDirectory: packageRoot.path);
+    final xcrunResult = await _buildCliExecutable(
+      run,
+      packageRoot,
+      target: 'bin/xcrun.dart',
+      output: xcrunBuild,
+    );
     if (xcrunResult != 0) return xcrunResult;
+
     final executable = Platform.isWindows ? 'xcrun.exe' : 'xcrun';
-    await File(
-      p.join(xcrunBuild, 'bundle', 'bin', executable),
-    ).copy(p.join(binDirectory.path, executable));
+    final source = p.join(xcrunBuild, 'bundle', 'bin', executable);
+    final destination = p.join(
+      _builtBinDirectory(packageRoot).path,
+      executable,
+    );
+    await File(source).copy(destination);
     return 0;
   } finally {
     await generated.writeAsBytes(original, flush: true);
   }
 }
+
+Future<int> _buildCliExecutable(
+  BuildCliRun run,
+  Directory packageRoot, {
+  required String target,
+  String? output,
+}) => run(Platform.resolvedExecutable, [
+  'build',
+  'cli',
+  '-t',
+  target,
+  if (output != null) ...['-o', output],
+], workingDirectory: packageRoot.path);
 
 Directory _builtBinDirectory(Directory packageRoot) {
   final build = Directory(p.join(packageRoot.path, 'build', 'cli'));

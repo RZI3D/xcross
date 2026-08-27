@@ -261,9 +261,9 @@ final class FlutterPacker {
     final workspace = SwiftPmWorkspace.forProject(projectRoot);
     return GeneratedPluginsPackage.build(
       projectRoot: projectRoot,
+      workspace: workspace,
       plugins: spmPlugins,
       flutterXcframework: xcframework,
-      outputDir: workspace.packages,
       deploymentTarget: deploymentTarget,
       verbose: verbose,
     );
