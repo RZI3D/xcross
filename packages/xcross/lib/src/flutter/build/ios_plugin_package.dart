@@ -8,6 +8,7 @@ import 'package:darwin_sdk_kit/darwin_sdk_kit.dart';
 import 'package:meta/meta.dart';
 import 'package:path/path.dart' as p;
 import 'package:xcross/src/cli/basic/sdk_install.dart';
+import 'package:xcross/src/flutter/build/internal/swiftpm_workspace.dart';
 import 'package:xcross/src/flutter/build/ios_deployment_target.dart';
 import 'package:xcross/src/flutter/build/ios_linker_compatibility.dart';
 import 'package:xcross/src/flutter/build/ios_plugins.dart';
@@ -107,22 +108,31 @@ abstract final class GeneratedPluginsPackage {
           for (final products in interopProductsByPlugin.values) ...products,
         };
 
+        final workspace = SwiftPmWorkspace.forProject(projectRoot);
         await writeGeneratedPackages(
           outputDir: outputDir,
           plugins: spmPlugins,
           flutterXcframework: flutterXcframework,
-          copyPluginPackages: interopProductsByPlugin.keys.toSet(),
+          copyFlutterXcframework: true,
+          vendorDir: workspace.vendor,
+          copyPluginPackages: spmPlugins.map((plugin) => plugin.name).toSet(),
           deploymentTarget: deploymentTarget,
           verbose: verbose,
         );
 
         final pluginsDir = p.join(outputDir, 'Plugins');
-        final scratchPath = p.join(projectRoot, 'build', 'spm');
+        final scratchPath = workspace.scratch;
+        final stagedFlutterXcframework = p.join(
+          outputDir,
+          'Packages',
+          _flutterFrameworkPackageName,
+          'Flutter.xcframework',
+        );
         await _runSwiftBuild(
           outputDir: outputDir,
           pluginsDir: pluginsDir,
           scratchPath: scratchPath,
-          flutterXcframework: flutterXcframework,
+          flutterXcframework: stagedFlutterXcframework,
           interopTargetCandidates: interopTargetCandidates,
           interopConsumers: {
             for (final plugin in spmPlugins)
@@ -419,7 +429,7 @@ abstract final class GeneratedPluginsPackage {
       }
       if (firestore == null) rethrow;
       final vendorFramework = p.join(
-        p.dirname(p.dirname(outputDir)),
+        p.dirname(outputDir),
         'vendor',
         'fb@346daa9f4631',
         'FirebaseFirestoreInternal.xcframework',
@@ -1093,13 +1103,14 @@ abstract final class GeneratedPluginsPackage {
     bool verbose = false,
     bool? copyFlutterXcframework,
     bool? vendorRemotePackages,
+    String? vendorDir,
     Set<String> copyPluginPackages = const {},
   }) async {
     final windows = Platform.isWindows;
     final packagesDir = p.join(outputDir, 'Packages');
     final frameworkDir = p.join(packagesDir, _flutterFrameworkPackageName);
     final pluginsDir = p.join(outputDir, 'Plugins');
-    final vendorDir = p.join(p.dirname(p.dirname(outputDir)), 'vendor');
+    final resolvedVendorDir = vendorDir ?? p.join(outputDir, 'vendor');
     final shouldVendor = vendorRemotePackages ?? true;
 
     await Directory(packagesDir).create(recursive: true);
@@ -1121,7 +1132,7 @@ abstract final class GeneratedPluginsPackage {
         alias: packageAlias,
         target: plugin.swiftPackageDir,
         platformDir: plugin.platformDirectoryName,
-        vendorDir: shouldVendor ? vendorDir : null,
+        vendorDir: shouldVendor ? resolvedVendorDir : null,
         packageTargets: pluginTargets,
         copySources: copyPluginPackages.contains(plugin.name),
         vendorNormalizationCache: vendorNormalizationCache,

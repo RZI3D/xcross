@@ -9,12 +9,14 @@ import 'package:xcross/src/flutter/build/flutter_debug_bundler.dart';
 import 'package:xcross/src/flutter/build/info_plist.dart';
 import 'package:xcross/src/flutter/build/internal/recursive_directory_copy.dart';
 import 'package:xcross/src/flutter/build/internal/runner_binary.dart';
+import 'package:xcross/src/flutter/build/internal/swiftpm_workspace.dart';
 import 'package:xcross/src/flutter/build/ios_app_extensions.dart';
 import 'package:xcross/src/flutter/build/ios_bundle_resources.dart';
 import 'package:xcross/src/flutter/build/ios_bundle_versions.dart';
 import 'package:xcross/src/flutter/build/ios_deployment_target.dart';
 import 'package:xcross/src/flutter/build/ios_engine_cache.dart';
 import 'package:xcross/src/flutter/build/ios_native_assets.dart';
+
 import 'package:xcross/src/flutter/build/ios_plugin_package.dart';
 import 'package:xcross/src/flutter/build/ios_plugins.dart';
 import 'package:xcross/src/flutter/build/runner_shim.dart';
@@ -256,11 +258,12 @@ final class FlutterPacker {
       flutterRoot: flutterRoot,
     ).flutterXcframework;
 
+    final workspace = SwiftPmWorkspace.forProject(projectRoot);
     return GeneratedPluginsPackage.build(
       projectRoot: projectRoot,
       plugins: spmPlugins,
       flutterXcframework: xcframework,
-      outputDir: p.join(projectRoot, 'build', 'plugins'),
+      outputDir: workspace.packages,
       deploymentTarget: deploymentTarget,
       verbose: verbose,
     );
