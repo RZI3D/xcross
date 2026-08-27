@@ -26,7 +26,9 @@ final class AppleToolShimConfig {
     required this.lipo,
     required this.otool,
     required this.installNameTool,
+    required this.xcrun,
     required this.deploymentTarget,
+
   });
 
   final String iosSdk;
@@ -37,7 +39,9 @@ final class AppleToolShimConfig {
   final String lipo;
   final OtoolConfig? otool;
   final String? installNameTool;
+  final String xcrun;
   final String deploymentTarget;
+
 
   static Future<AppleToolShimConfig> resolve(String deploymentTarget) async {
     final sdk = DarwinSdk.current();
@@ -57,12 +61,24 @@ final class AppleToolShimConfig {
       lipo: await locateLlvmTool('llvm-lipo'),
       otool: await resolveOtool(),
       installNameTool: await findLlvmTool('llvm-install-name-tool'),
+      xcrun: await resolveXcrun(),
       deploymentTarget: deploymentTarget,
+
     );
   }
 }
 
+Future<String> resolveXcrun() async {
+  final sibling = p.join(
+    p.dirname(Platform.resolvedExecutable),
+    ProcessRunner.hostExecutableName('xcrun'),
+  );
+  if (File(sibling).existsSync()) return sibling;
+  return ProcessRunner.locateTool('xcrun');
+}
+
 Future<String> resolveHostCompiler(String clang, {bool? windows}) async =>
+
     (windows ?? Platform.isWindows) ? clang : ProcessRunner.locateTool('cc');
 
 Future<String> _locateArchiver(String clang) async {
@@ -127,6 +143,8 @@ Future<void> installAppleToolShims(
         await File(toolForwarderExecutable).copy(executable);
         await File('$executable.path').writeAsString(entry.value);
       }
+      await File(config.xcrun).copy(p.join(directory, 'xcrun.exe'));
+
     }
 
     if (config.otool case final otool?) {
@@ -226,6 +244,8 @@ exit 0
   );
   await _writeUnixShim(directory, 'clang', compilerScript);
   await _writeUnixShim(directory, 'cc', compilerScript);
+  await _writeUnixShim(directory, 'xcrun', renderUnixToolShim(config.xcrun));
+
 
   for (final tool in tools.entries.skip(3)) {
     if (tool.key != 'otool') {

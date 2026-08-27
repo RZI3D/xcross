@@ -120,7 +120,8 @@ void main() {
   });
 
   test(
-    'Apple tool shims expose configured tools without replacing xcrun',
+    'Apple tool shims expose configured tools including xcrun',
+
     () async {
       if (Platform.isWindows) return;
       final tmp = await Directory.systemTemp.createTemp('apple_shims_test-');
@@ -137,9 +138,19 @@ void main() {
             lipo: '/bin/echo',
             otool: OtoolConfig('/bin/echo', usesObjdump: false),
             installNameTool: '/bin/echo',
+            xcrun: '/bin/echo',
           ),
         );
-        expect(File(p.join(tmp.path, 'xcrun')).existsSync(), isFalse);
+        expect(File(p.join(tmp.path, 'xcrun')).existsSync(), isTrue);
+        final xcrun = await Process.run(
+          'xcrun',
+          const ['--show-sdk-path'],
+          environment: {'PATH': tmp.path},
+          includeParentEnvironment: false,
+        );
+        expect(xcrun.exitCode, 0);
+        expect(xcrun.stdout.toString().trim(), '--show-sdk-path');
+
         final hostCc = await Process.run(
           'cc',
           const ['-m64', '-Wl,--as-needed', 'host.c'],
