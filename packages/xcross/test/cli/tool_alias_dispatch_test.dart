@@ -30,6 +30,27 @@ void main() {
     },
   );
 
+  test('dispatches native asset aliases through sidecar mappings', () async {
+    final temp = Directory.systemTemp.createTempSync('xcross_tool_alias_');
+    addTearDown(() => temp.deleteSync(recursive: true));
+    final alias = File(p.join(temp.path, 'cc.exe'))..writeAsStringSync('alias');
+    File('${alias.path}.path').writeAsStringSync(r'C:\shims\clang.bat');
+
+    String? executable;
+    final code = await runPreparedToolAlias(
+      ['--version'],
+      executablePath: alias.path,
+      environment: const {},
+      run: (target, _) async {
+        executable = target;
+        return 0;
+      },
+    );
+
+    expect(code, 0);
+    expect(executable, r'C:\shims\clang.bat');
+  });
+
   test('does not intercept the normal xcross executable', () async {
     expect(
       await runPreparedToolAlias(

@@ -117,9 +117,7 @@ abstract final class GeneratedPluginsPackage {
         );
 
         final pluginsDir = p.join(outputDir, 'Plugins');
-        final scratchPath = Platform.isWindows
-            ? p.join(projectRoot, 'build', '.xs')
-            : p.join(pluginsDir, '.build');
+        final scratchPath = p.join(projectRoot, 'build', '.xs');
         await _runSwiftBuild(
           outputDir: outputDir,
           pluginsDir: pluginsDir,
@@ -1096,9 +1094,7 @@ abstract final class GeneratedPluginsPackage {
     final packagesDir = p.join(outputDir, 'Packages');
     final frameworkDir = p.join(packagesDir, _flutterFrameworkPackageName);
     final pluginsDir = p.join(outputDir, 'Plugins');
-    final vendorDir = Platform.isWindows
-        ? p.join(p.dirname(p.dirname(outputDir)), '.xv')
-        : p.join(outputDir, 'Vendor');
+    final vendorDir = p.join(p.dirname(p.dirname(outputDir)), '.xv');
     final shouldVendor = vendorRemotePackages ?? true;
 
     await Directory(packagesDir).create(recursive: true);

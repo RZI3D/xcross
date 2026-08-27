@@ -77,14 +77,7 @@ final class IosNativeAssetsBuilder {
       await installAppleToolShims(
         shims.path,
         tools,
-        launcherExecutable: p.join(
-          flutterRoot,
-          'bin',
-          'cache',
-          'dart-sdk',
-          'bin',
-          ProcessRunner.hostExecutableName('dart'),
-        ),
+        toolForwarderExecutable: Platform.resolvedExecutable,
       );
       await _runFlutterAssemble(output, shims.path, tools.iosSdk);
     } finally {

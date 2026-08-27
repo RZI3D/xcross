@@ -260,9 +260,7 @@ final class FlutterPacker {
       projectRoot: projectRoot,
       plugins: spmPlugins,
       flutterXcframework: xcframework,
-      outputDir: Platform.isWindows
-          ? p.join(projectRoot, 'build', '.xp')
-          : p.join(projectRoot, 'build', 'xcross-flutter-plugins'),
+      outputDir: p.join(projectRoot, 'build', '.xp'),
       deploymentTarget: deploymentTarget,
       verbose: verbose,
     );

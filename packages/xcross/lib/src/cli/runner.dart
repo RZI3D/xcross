@@ -41,7 +41,10 @@ Future<int?> runPreparedToolAlias(
           .toLowerCase();
   final variable = _toolAliasVariables[name];
   if (variable == null) return null;
-  final target = (environment ?? Platform.environment)[variable];
+  final mapping = File('$path.path');
+  final target = mapping.existsSync()
+      ? mapping.readAsStringSync().trim()
+      : (environment ?? Platform.environment)[variable];
   if (target == null || target.isEmpty) {
     stderr.writeln('error: missing trusted tool mapping $variable');
     return 1;
@@ -67,6 +70,7 @@ Future<int> _runToolAlias(String executable, List<String> arguments) async {
     executable,
     arguments,
     mode: ProcessStartMode.inheritStdio,
+    runInShell: Platform.isWindows && executable.endsWith('.bat'),
   );
   return process.exitCode;
 }
@@ -78,6 +82,8 @@ const _toolAliasVariables = {
   'libtool': 'XCROSS_APPLE_TOOL_LIBTOOL',
   'clang': 'XCROSS_APPLE_TOOL_CLANG',
   'clang++': 'XCROSS_APPLE_TOOL_CLANGXX',
+  'cc': 'XCROSS_APPLE_TOOL_CC',
+  'ar': 'XCROSS_APPLE_TOOL_AR',
 };
 
 /// Namespace for building and running the xcross CLI.

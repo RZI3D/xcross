@@ -96,7 +96,7 @@ Future<String> locateLlvmTool(String name) async {
 Future<void> installAppleToolShims(
   String directory,
   AppleToolShimConfig config, {
-  String? launcherExecutable,
+  String? toolForwarderExecutable,
 }) async {
   await Directory(directory).create(recursive: true);
   final compilerShim = p.join(
@@ -117,39 +117,14 @@ Future<void> installAppleToolShims(
   };
 
   if (Platform.isWindows) {
-    if (launcherExecutable != null) {
-      final source = p.join(directory, 'tool_launcher.dart');
-      await File(source).writeAsString(r'''
-import 'dart:io';
-
-Future<void> main(List<String> arguments) async {
-  final executable = Platform.resolvedExecutable;
-  final mapping = File('$executable.path');
-  final target = mapping.readAsStringSync();
-  final process = await Process.start(
-    target,
-    arguments,
-    mode: ProcessStartMode.inheritStdio,
-    runInShell: target.endsWith('.bat'),
-  );
-  exitCode = await process.exitCode;
-}
-''');
-      final launcher = p.join(directory, 'tool_launcher.exe');
-      await ProcessRunner.runChecked(launcherExecutable, [
-        'compile',
-        'exe',
-        source,
-        '-o',
-        launcher,
-      ], label: 'Apple tool launcher');
+    if (toolForwarderExecutable != null) {
       for (final entry in {
         'cc': compilerShim,
         'ar': config.archiver,
         'ld': config.linker,
       }.entries) {
         final executable = p.join(directory, '${entry.key}.exe');
-        await File(launcher).copy(executable);
+        await File(toolForwarderExecutable).copy(executable);
         await File('$executable.path').writeAsString(entry.value);
       }
     }
@@ -181,7 +156,7 @@ Future<void> main(List<String> arguments) async {
       'clang',
       renderBatchPowerShellShim('clang.ps1'),
     );
-    if (launcherExecutable == null) {
+    if (toolForwarderExecutable == null) {
       await _writeWindowsShim(
         directory,
         'cc',
