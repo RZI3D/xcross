@@ -425,50 +425,84 @@ abstract final class GeneratedPluginsPackage {
   }) async {
     final artifacts = Directory(p.join(scratchPath, 'artifacts'));
     final vendor = Directory(vendorDir);
-    if (!artifacts.existsSync() || !vendor.existsSync()) return false;
+    if (!artifacts.existsSync()) return false;
 
     final frameworks = <String, Directory>{};
-    await for (final entity in artifacts.list(recursive: true)) {
-      if (entity is! Directory || !entity.path.endsWith('.xcframework')) {
+    for (final package in artifacts.listSync(followLinks: false)) {
+      if (package is! Directory || p.basename(package.path) == 'extract') {
         continue;
       }
-      if (p.isWithin(p.join(artifacts.path, 'extract'), entity.path)) continue;
-      final name = p.basenameWithoutExtension(entity.path);
-      if (File(p.join(entity.path, 'Info.plist')).existsSync()) {
-        frameworks[name] = entity;
+      for (final target in package.listSync(followLinks: false)) {
+        if (target is! Directory) continue;
+        for (final entity in target.listSync(followLinks: false)) {
+          if (entity is! Directory || !entity.path.endsWith('.xcframework')) {
+            continue;
+          }
+          final name = p.basenameWithoutExtension(entity.path);
+          if (File(p.join(entity.path, 'Info.plist')).existsSync()) {
+            frameworks[name] = entity;
+          }
+        }
       }
     }
     if (frameworks.isEmpty) return false;
 
+    final packageRoots = <Directory>[
+      vendor,
+      Directory(p.join(scratchPath, 'checkouts')),
+    ];
     var changed = false;
-    await for (final package in vendor.list(followLinks: false)) {
-      if (package is! Directory) continue;
-      await for (final entity in package.list(followLinks: false)) {
-        if (entity is! File) continue;
-        final fileName = p.basename(entity.path);
-        if (fileName != 'Package.swift' &&
-            !(fileName.startsWith('Package@') && fileName.endsWith('.swift'))) {
-          continue;
-        }
-        var manifest = await entity.readAsString();
-        final original = manifest;
-        for (final call in _swiftCalls(manifest, '.binaryTarget').reversed) {
-          final name = _namedString(call.text, 'name');
-          final framework = name == null ? null : frameworks[name];
-          if (framework == null || _namedString(call.text, 'url') == null) {
+    for (final packageRoot in packageRoots) {
+      if (!packageRoot.existsSync()) continue;
+      await for (final package in packageRoot.list(followLinks: false)) {
+        if (package is! Directory) continue;
+        await for (final entity in package.list(followLinks: false)) {
+          if (entity is! File) continue;
+          final fileName = p.basename(entity.path);
+          if (fileName != 'Package.swift' &&
+              !(fileName.startsWith('Package@') &&
+                  fileName.endsWith('.swift'))) {
             continue;
           }
-          final destination = p.join(package.path, '$name.xcframework');
-          await _deleteEntity(destination);
-          await _syncDirectory(framework.path, destination);
-          manifest = manifest.replaceRange(
-            call.start,
-            call.end,
-            '.binaryTarget(name: "$name", path: "$name.xcframework")',
-          );
-          changed = true;
+          var manifest = await entity.readAsString();
+          final original = manifest;
+          for (final call in _swiftCalls(manifest, '.binaryTarget').reversed) {
+            final name = _namedString(call.text, 'name');
+            final framework = name == null ? null : frameworks[name];
+            if (framework == null || _namedString(call.text, 'url') == null) {
+              continue;
+            }
+            final destination = p.join(package.path, '$name.xcframework');
+            await _deleteEntity(destination);
+            if (Platform.isWindows) {
+              final copy = await Process.run('robocopy', [
+                framework.path,
+                destination,
+                '/E',
+                '/NFL',
+                '/NDL',
+                '/NJH',
+                '/NJS',
+                '/NP',
+              ]);
+              if (copy.exitCode > 7) {
+                throw FileSystemException(
+                  'Could not stage repaired binary artifact: ${copy.stderr}',
+                  framework.path,
+                );
+              }
+            } else {
+              await _syncDirectory(framework.path, destination);
+            }
+            manifest = manifest.replaceRange(
+              call.start,
+              call.end,
+              '.binaryTarget(name: "$name", path: "$name.xcframework")',
+            );
+            changed = true;
+          }
+          if (manifest != original) await _writeStable(entity.path, manifest);
         }
-        if (manifest != original) await _writeStable(entity.path, manifest);
       }
     }
     return changed;
@@ -476,8 +510,8 @@ abstract final class GeneratedPluginsPackage {
 
   @visibleForTesting
   static Future<bool> normalizeResolvedPackageManifests(
-
     String scratchPath,
+
   ) async {
     final checkouts = Directory(p.join(scratchPath, 'checkouts'));
     var changed = false;

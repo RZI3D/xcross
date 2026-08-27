@@ -1168,10 +1168,62 @@ let package = Package(targets: [
         'binary',
       );
     });
+
+    test('ignores broken extraction trees and repairs checkouts', () async {
+      final scratch = p.join(tmp.path, '.build');
+      final repaired = p.join(
+        scratch,
+        'artifacts',
+        'dependency',
+        'Target',
+        'Target.xcframework',
+      );
+      File(p.join(repaired, 'Info.plist'))
+        ..createSync(recursive: true)
+        ..writeAsStringSync('<plist/>');
+      final broken = Directory(
+        p.join(
+          scratch,
+          'artifacts',
+          'extract',
+          'dependency',
+          'Target',
+          'UUID',
+          'Target.xcframework',
+          'missing',
+        ),
+      )..createSync(recursive: true);
+      broken.deleteSync();
+      final checkout = Directory(
+        p.join(scratch, 'checkouts', 'dependency'),
+      )..createSync(recursive: true);
+      final manifest = File(p.join(checkout.path, 'Package.swift'))
+        ..writeAsStringSync('''
+let target = Target.binaryTarget(
+  name: "Target",
+  url: "https://example.invalid/Target.zip",
+  checksum: "checksum"
+)
+''');
+
+      expect(
+        await GeneratedPluginsPackage.stageExtractedBinaryArtifacts(
+          scratchPath: scratch,
+          vendorDir: p.join(tmp.path, 'missing-vendor'),
+        ),
+        isTrue,
+      );
+      expect(manifest.readAsStringSync(), contains('path: "Target.xcframework"'));
+      expect(
+        File(p.join(checkout.path, 'Target.xcframework', 'Info.plist'))
+            .existsSync(),
+        isTrue,
+      );
+    });
   });
 
-
   group('Windows checkout symlinks', () {
+
     test(
       'materializes tracked file symlinks without duplicate files',
       () async {
