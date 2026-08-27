@@ -37,6 +37,10 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Update example submodule
+        shell: bash
+        run: git submodule update --init --remote
+
       - name: Use JDK 21 on Linux
         if: runner.os == 'Linux'
         shell: bash
@@ -244,18 +248,34 @@ jobs:
       - name: Restore cached Darwin SDK
         uses: ./.github/actions/setup-darwin-sdk
 
-      - name: Build Compose smoke examples on Linux
+      - name: Build examples on Linux
         if: runner.os == 'Linux'
         shell: bash
         run: |
           set -euo pipefail
           xcross="$RUNNER_TEMP/xcross-bundle/bin/xcross"
-          cd "$GITHUB_WORKSPACE/examples/compose_app"
           "$xcross" compose setup
-          "$xcross" compose build
-          cd "$GITHUB_WORKSPACE/examples/kmp_swift_app"
-          "$xcross" compose build
-          cd "$GITHUB_WORKSPACE"
+          declare -a names=()
+          declare -a pids=()
+          for example in "$GITHUB_WORKSPACE"/examples/*; do
+            if [[ -f "$example/pubspec.yaml" ]]; then
+              (cd "$example" && "$xcross" flutter build) &
+            elif [[ -f "$example/settings.gradle.kts" ]]; then
+              (cd "$example" && "$xcross" compose build) &
+            else
+              continue
+            fi
+            names+=("$(basename "$example")")
+            pids+=("$!")
+          done
+          failed=0
+          for i in "${!pids[@]}"; do
+            if ! wait "${pids[$i]}"; then
+              echo "Build failed: ${names[$i]}" >&2
+              failed=1
+            fi
+          done
+          ((failed == 0))
           test -f examples/compose_app/build/xcross-ios/ComposeApp.app/Runner
           test -f examples/kmp_swift_app/build/xcross-ios/KmpSwiftApp.app/Runner
 
@@ -297,20 +317,41 @@ jobs:
             }
           done
 
-      - name: Build Compose smoke examples on Windows
+      - name: Build examples on Windows
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           $xcross = "$env:RUNNER_TEMP\xcross-bundle\bin\xcross.exe"
-          Set-Location "$env:GITHUB_WORKSPACE\examples\compose_app"
           & $xcross compose setup
           if ($LASTEXITCODE -ne 0) { throw 'xcross compose setup failed' }
-          & $xcross compose build
-          if ($LASTEXITCODE -ne 0) { throw 'xcross compose build compose_app failed' }
-          Set-Location "$env:GITHUB_WORKSPACE\examples\kmp_swift_app"
-          & $xcross compose build
-          if ($LASTEXITCODE -ne 0) { throw 'xcross compose build kmp_swift_app failed' }
+          $jobs = Get-ChildItem "$env:GITHUB_WORKSPACE\examples" -Directory |
+            ForEach-Object {
+              $command = if (Test-Path (Join-Path $_ 'pubspec.yaml')) {
+                'flutter'
+              } elseif (Test-Path (Join-Path $_ 'settings.gradle.kts')) {
+                'compose'
+              } else {
+                return
+              }
+              Start-Job -Name $_.Name -ArgumentList $_.FullName, $xcross, $command -ScriptBlock {
+                param($path, $xcross, $command)
+                Set-Location $path
+                & $xcross $command build
+                if ($LASTEXITCODE -ne 0) {
+                  throw "xcross $command build failed"
+                }
+              }
+            }
+          $failed = @()
+          foreach ($job in $jobs) {
+            Receive-Job $job -Wait
+            if ($job.State -ne 'Completed') { $failed += $job.Name }
+          }
+          Remove-Job $jobs
+          if ($failed.Count -ne 0) {
+            throw "Example builds failed: $($failed -join ', ')"
+          }
           Set-Location $env:GITHUB_WORKSPACE
           $outputs = @(
             'examples/compose_app/build/xcross-ios/ComposeApp.app/Runner',
