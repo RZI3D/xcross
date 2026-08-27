@@ -1105,7 +1105,71 @@ let package = Package(
         isFalse,
       );
     });
+
+    test('stages repaired XCFrameworks into matching binary packages', () async {
+      final scratch = p.join(tmp.path, '.build');
+      final repaired = p.join(
+        scratch,
+        'artifacts',
+        'dependency',
+        'GenericBinary',
+        'GenericBinary.xcframework',
+      );
+      File(p.join(repaired, 'Info.plist'))
+        ..createSync(recursive: true)
+        ..writeAsStringSync('<plist/>');
+      File(
+        p.join(
+          repaired,
+          'ios-arm64',
+          'GenericBinary.framework',
+          'GenericBinary',
+        ),
+      )
+        ..createSync(recursive: true)
+        ..writeAsStringSync('binary');
+      final package = Directory(p.join(tmp.path, 'vendor', 'dependency'))
+        ..createSync(recursive: true);
+      final manifest = File(p.join(package.path, 'Package.swift'))
+        ..writeAsStringSync('''
+let package = Package(targets: [
+  .binaryTarget(
+    name: "GenericBinary",
+    url: "https://example.invalid/GenericBinary.zip",
+    checksum: "checksum"
+  )
+])
+''');
+
+      expect(
+        await GeneratedPluginsPackage.stageExtractedBinaryArtifacts(
+          scratchPath: scratch,
+          vendorDir: p.join(tmp.path, 'vendor'),
+        ),
+        isTrue,
+      );
+      expect(
+        manifest.readAsStringSync(),
+        contains(
+          '.binaryTarget(name: "GenericBinary", '
+          'path: "GenericBinary.xcframework")',
+        ),
+      );
+      expect(
+        File(
+          p.join(
+            package.path,
+            'GenericBinary.xcframework',
+            'ios-arm64',
+            'GenericBinary.framework',
+            'GenericBinary',
+          ),
+        ).readAsStringSync(),
+        'binary',
+      );
+    });
   });
+
 
   group('Windows checkout symlinks', () {
     test(

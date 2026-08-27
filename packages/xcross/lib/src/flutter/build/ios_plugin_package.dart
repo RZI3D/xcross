@@ -230,7 +230,7 @@ abstract final class GeneratedPluginsPackage {
         scratchPath: scratchPath,
         swiftSdksPath: swiftSdksPath,
         toolsetPath: toolsetPath,
-        outputDir: outputDir,
+        vendorDir: p.join(p.dirname(outputDir), 'vendor'),
         environment: environment,
       );
     }
@@ -386,9 +386,10 @@ abstract final class GeneratedPluginsPackage {
     required String scratchPath,
     required String swiftSdksPath,
     required String toolsetPath,
-    required String outputDir,
+    required String vendorDir,
     required Map<String, String>? environment,
   }) async {
+
     Future<void> resolve() => ProcessRunner.runChecked(
       swift,
       swiftResolveArguments(
@@ -405,62 +406,77 @@ abstract final class GeneratedPluginsPackage {
       await resolve();
     } on Object {
       if (!await repairWindowsBinaryArtifacts(scratchPath)) rethrow;
-      Directory? firestore;
-      final pending = <Directory>[
-        Directory(p.join(scratchPath, 'artifacts', 'extract')),
-      ];
-      while (pending.isNotEmpty && firestore == null) {
-        final directory = pending.removeLast();
-        List<FileSystemEntity> entities;
-        try {
-          entities = directory.listSync(followLinks: false);
-        } on FileSystemException {
-          continue;
-        }
-        for (final entity in entities) {
-          if (entity is! Directory) continue;
-          if (p.basename(entity.path) ==
-              'FirebaseFirestoreInternal.xcframework') {
-            firestore = entity;
-            break;
-          }
-          pending.add(entity);
-        }
-      }
-      if (firestore == null) rethrow;
-      final vendorFramework = p.join(
-        p.dirname(outputDir),
-        'vendor',
-        'fb@346daa9f4631',
-        'FirebaseFirestoreInternal.xcframework',
+      await stageExtractedBinaryArtifacts(
+        scratchPath: scratchPath,
+        vendorDir: vendorDir,
       );
-      await _deleteEntity(vendorFramework);
-      final copy = await Process.run('robocopy', [
-        firestore.path,
-        vendorFramework,
-        '/E',
-        '/NFL',
-        '/NDL',
-        '/NJH',
-        '/NJS',
-        '/NP',
-      ]);
-      if (copy.exitCode > 7) {
-        throw FileSystemException(
-          'Could not stage Firestore binary artifact: ${copy.stderr}',
-          firestore.path,
-        );
-      }
-      environment?['FIREBASECI_USE_LOCAL_FIRESTORE_ZIP'] = '1';
       await resolve();
     }
+
     final materialized = await materializeCheckoutSymlinks(scratchPath);
     final normalized = await normalizeResolvedPackageManifests(scratchPath);
     if (materialized || normalized) await resolve();
   }
 
   @visibleForTesting
+  static Future<bool> stageExtractedBinaryArtifacts({
+    required String scratchPath,
+    required String vendorDir,
+  }) async {
+    final artifacts = Directory(p.join(scratchPath, 'artifacts'));
+    final vendor = Directory(vendorDir);
+    if (!artifacts.existsSync() || !vendor.existsSync()) return false;
+
+    final frameworks = <String, Directory>{};
+    await for (final entity in artifacts.list(recursive: true)) {
+      if (entity is! Directory || !entity.path.endsWith('.xcframework')) {
+        continue;
+      }
+      if (p.isWithin(p.join(artifacts.path, 'extract'), entity.path)) continue;
+      final name = p.basenameWithoutExtension(entity.path);
+      if (File(p.join(entity.path, 'Info.plist')).existsSync()) {
+        frameworks[name] = entity;
+      }
+    }
+    if (frameworks.isEmpty) return false;
+
+    var changed = false;
+    await for (final package in vendor.list(followLinks: false)) {
+      if (package is! Directory) continue;
+      await for (final entity in package.list(followLinks: false)) {
+        if (entity is! File) continue;
+        final fileName = p.basename(entity.path);
+        if (fileName != 'Package.swift' &&
+            !(fileName.startsWith('Package@') && fileName.endsWith('.swift'))) {
+          continue;
+        }
+        var manifest = await entity.readAsString();
+        final original = manifest;
+        for (final call in _swiftCalls(manifest, '.binaryTarget').reversed) {
+          final name = _namedString(call.text, 'name');
+          final framework = name == null ? null : frameworks[name];
+          if (framework == null || _namedString(call.text, 'url') == null) {
+            continue;
+          }
+          final destination = p.join(package.path, '$name.xcframework');
+          await _deleteEntity(destination);
+          await _syncDirectory(framework.path, destination);
+          manifest = manifest.replaceRange(
+            call.start,
+            call.end,
+            '.binaryTarget(name: "$name", path: "$name.xcframework")',
+          );
+          changed = true;
+        }
+        if (manifest != original) await _writeStable(entity.path, manifest);
+      }
+    }
+    return changed;
+  }
+
+  @visibleForTesting
   static Future<bool> normalizeResolvedPackageManifests(
+
     String scratchPath,
   ) async {
     final checkouts = Directory(p.join(scratchPath, 'checkouts'));
