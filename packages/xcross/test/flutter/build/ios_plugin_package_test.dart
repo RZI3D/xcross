@@ -73,7 +73,61 @@ flutter:
     );
   }
 
+  group('incremental build fingerprint', () {
+    test('is stable until a plugin input changes', () async {
+      final plugin = makePlugin(
+        'stable_plugin',
+        packageManifest: 'let package = Package()\n',
+      );
+      final source = File(
+        p.join(plugin.swiftPackageDir, 'Sources', 'Plugin.swift'),
+      )
+        ..createSync(recursive: true)
+        ..writeAsStringSync('let value = 1\n');
+      final framework = Directory(p.join(tmp.path, 'Flutter.xcframework'))
+        ..createSync();
+      File(p.join(framework.path, 'Info.plist')).writeAsStringSync('<plist/>');
+
+      Future<String> fingerprint() =>
+          GeneratedPluginsPackage.incrementalBuildFingerprint(
+            plugins: [plugin],
+            flutterXcframework: framework.path,
+            deploymentTarget: const IosDeploymentTarget('15.0'),
+            verbose: false,
+            toolchainIdentity: 'swift-6.3.3',
+            sdkIdentity: 'ios-sdk',
+          );
+
+      final first = await fingerprint();
+      expect(await fingerprint(), first);
+      source.writeAsStringSync('let value = 2\n');
+      expect(await fingerprint(), isNot(first));
+    });
+
+    test('changes with build configuration', () async {
+      final plugin = makePlugin('plugin');
+      final framework = Directory(p.join(tmp.path, 'Flutter.xcframework'))
+        ..createSync();
+
+      Future<String> fingerprint({required bool verbose}) =>
+          GeneratedPluginsPackage.incrementalBuildFingerprint(
+            plugins: [plugin],
+            flutterXcframework: framework.path,
+            deploymentTarget: const IosDeploymentTarget('15.0'),
+            verbose: verbose,
+            toolchainIdentity: 'swift',
+            sdkIdentity: 'sdk',
+          );
+
+      expect(
+        await fingerprint(verbose: true),
+        isNot(await fingerprint(verbose: false)),
+      );
+    });
+  });
+
   group('flutterFrameworkManifest', () {
+
     test('matches the exact wrapper manifest', () {
       expect(GeneratedPluginsPackage.flutterFrameworkManifest(), '''
 // swift-tools-version: 5.9

@@ -94,7 +94,32 @@ abstract final class GeneratedPluginsPackage {
           'spmPlugins=${[for (final plugin in spmPlugins) plugin.name]}',
         );
 
+        final workspace = SwiftPmWorkspace.forProject(projectRoot);
+        final targetDebugDir = p.join(
+          workspace.scratch,
+          'arm64-apple-ios',
+          'debug',
+        );
+        final fingerprint = await incrementalBuildFingerprint(
+          plugins: spmPlugins,
+          flutterXcframework: flutterXcframework,
+          deploymentTarget: deploymentTarget,
+          verbose: verbose,
+        );
+        final fingerprintFile = File(
+          p.join(outputDir, '.xcross-build-fingerprint'),
+        );
+        if (fingerprintFile.existsSync() &&
+            await fingerprintFile.readAsString() == fingerprint &&
+            File(
+              p.join(targetDebugDir, 'lib$_pluginsProductName.dylib'),
+            ).existsSync()) {
+          Log.logTrace('reusing unchanged SwiftPM plugin build');
+          return discoverAndRewriteDylibs(targetDebugDir);
+        }
+
         final interopProductsByPlugin = <String, Set<String>>{};
+
         for (final plugin in spmPlugins) {
           final manifest = await File(
             p.join(plugin.swiftPackageDir, 'Package.swift'),
@@ -108,8 +133,8 @@ abstract final class GeneratedPluginsPackage {
           for (final products in interopProductsByPlugin.values) ...products,
         };
 
-        final workspace = SwiftPmWorkspace.forProject(projectRoot);
         await writeGeneratedPackages(
+
           outputDir: outputDir,
           plugins: spmPlugins,
           flutterXcframework: flutterXcframework,
@@ -147,12 +172,79 @@ abstract final class GeneratedPluginsPackage {
           },
         );
 
-        return discoverAndRewriteDylibs(
-          p.join(scratchPath, 'arm64-apple-ios', 'debug'),
-        );
+        final result = await discoverAndRewriteDylibs(targetDebugDir);
+        await _writeStable(fingerprintFile.path, fingerprint);
+        return result;
+
       });
 
+  @visibleForTesting
+  static Future<String> incrementalBuildFingerprint({
+    required List<IosPlugin> plugins,
+    required String flutterXcframework,
+    required IosDeploymentTarget deploymentTarget,
+    required bool verbose,
+    String? toolchainIdentity,
+    String? sdkIdentity,
+  }) async {
+    Digest? result;
+    final input = sha256.startChunkedConversion(
+      ChunkedConversionSink.withCallback((digests) => result = digests.single),
+    );
+
+    void add(String value) {
+      input.add(utf8.encode(value));
+      input.add(const [0]);
+    }
+
+    add('xcross-swiftpm-build-v1');
+    add(deploymentTarget.version);
+    add(verbose.toString());
+    final swift = toolchainIdentity ?? await ProcessRunner.locateTool('swift');
+    add(swift);
+    final sdk = sdkIdentity ?? DarwinSdk.current()?.swiftSdkPath;
+    add(sdk ?? '');
+
+    Future<void> addTree(String root) async {
+      final directory = Directory(root);
+      if (!directory.existsSync()) {
+        add('missing:$root');
+        return;
+      }
+      final files = <File>[];
+      await for (final entity in directory.list(recursive: true)) {
+        if (entity is File) files.add(entity);
+      }
+      files.sort((a, b) => a.path.compareTo(b.path));
+      for (final file in files) {
+        add(p.relative(file.path, from: root).replaceAll(r'\', '/'));
+        input.add(await file.readAsBytes());
+        input.add(const [0]);
+      }
+    }
+
+    for (final plugin in plugins.toList()..sort((a, b) => a.name.compareTo(b.name))) {
+      add(plugin.name);
+      add(plugin.platformDirectoryName);
+      await addTree(plugin.packageRoot);
+    }
+    final frameworkFiles = <File>[];
+    await for (final entity in Directory(flutterXcframework).list(recursive: true)) {
+      if (entity is File) frameworkFiles.add(entity);
+    }
+    frameworkFiles.sort((a, b) => a.path.compareTo(b.path));
+    for (final file in frameworkFiles) {
+      final stat = file.statSync();
+      add(p.relative(file.path, from: flutterXcframework).replaceAll(r'\', '/'));
+      add(stat.size.toString());
+      add(stat.modified.microsecondsSinceEpoch.toString());
+    }
+    input.close();
+    return result!.toString();
+  }
+
   /// Cross-compiles the synthesized packages in [pluginsDir] with
+
   /// `swift build --swift-sdk arm64-apple-ios`.
   static Future<void> _runSwiftBuild({
     required String outputDir,
