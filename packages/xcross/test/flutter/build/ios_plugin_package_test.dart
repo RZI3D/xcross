@@ -897,7 +897,7 @@ let package = Package(
         rewritten,
         contains(
           '.package(name: "firebase-ios-sdk", '
-          'path: "${swiftPath(p.join(vendorDir, 'firebase-ios-sdk@b9bf3adac18e6e3059167194aeb632f15a5ba4b2'))}")',
+          'path: "${swiftPath(p.join(vendorDir, 'fb@b9bf3adac18e'))}")',
         ),
       );
     });
@@ -970,6 +970,68 @@ let package = Package(
         expect(
           Directory(p.join(repaired, 'macos-arm64_x86_64')).existsSync(),
           isFalse,
+        );
+      },
+    );
+
+    test(
+      'repairs duplicate extractions without emptying the artifact',
+      () async {
+        final scratch = p.join(tmp.path, '.build');
+        for (final uuid in ['UUID-A', 'UUID-B']) {
+          final extracted = p.join(
+            scratch,
+            'artifacts',
+            'extract',
+            'firebase-ios-sdk@revision',
+            'FirebaseFirestoreInternal',
+            uuid,
+            'FirebaseFirestoreInternal.xcframework',
+          );
+          await File(p.join(extracted, 'Info.plist'))
+              .create(recursive: true)
+              .then(
+                (file) => file.writeAsString('''
+<plist><dict><key>AvailableLibraries</key><array><dict>
+<key>LibraryIdentifier</key><string>ios-arm64</string>
+<key>LibraryPath</key><string>FirebaseFirestoreInternal.framework</string>
+<key>SupportedArchitectures</key><array><string>arm64</string></array>
+<key>SupportedPlatform</key><string>ios</string>
+</dict></array></dict></plist>
+'''),
+              );
+          await File(
+            p.join(
+              extracted,
+              'ios-arm64',
+              'FirebaseFirestoreInternal.framework',
+              'FirebaseFirestoreInternal',
+            ),
+          ).create(recursive: true).then((file) => file.writeAsString(uuid));
+        }
+
+        expect(
+          await GeneratedPluginsPackage.repairWindowsBinaryArtifacts(scratch),
+          isTrue,
+        );
+        final repaired = p.join(
+          scratch,
+          'artifacts',
+          'firebase-ios-sdk@revision',
+          'FirebaseFirestoreInternal',
+          'FirebaseFirestoreInternal.xcframework',
+        );
+        expect(File(p.join(repaired, 'Info.plist')).existsSync(), isTrue);
+        expect(
+          File(
+            p.join(
+              repaired,
+              'ios-arm64',
+              'FirebaseFirestoreInternal.framework',
+              'FirebaseFirestoreInternal',
+            ),
+          ).readAsStringSync(),
+          anyOf('UUID-A', 'UUID-B'),
         );
       },
     );
@@ -2578,6 +2640,7 @@ module FirebaseFirestore {
         'GIT_CONFIG_KEY_0': 'core.symlinks',
         'GIT_CONFIG_VALUE_0': 'false',
         'EXPERIMENTAL_SPM_BUILDS': '1',
+        'SWIFTPM_MAXIMUM_CONCURRENT_OPERATIONS': '1',
       });
     });
   });

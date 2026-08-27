@@ -141,8 +141,16 @@ final class FlutterPacker {
     }
 
     final flutter = await ProcessRunner.locateTool('flutter');
+    final resolved = File(flutter).resolveSymbolicLinksSync();
+    if (Platform.isWindows && p.basename(p.dirname(resolved)) == 'shims') {
+      final result = await Process.run('mise', ['where', 'flutter']);
+      if (result.exitCode == 0) {
+        final root = result.stdout.toString().trim();
+        if (Directory(p.join(root, 'bin')).existsSync()) return root;
+      }
+    }
     // The `flutter` script lives at <root>/bin/flutter.
-    return p.dirname(p.dirname(File(flutter).resolveSymbolicLinksSync()));
+    return p.dirname(p.dirname(resolved));
   }
 
   /// Run `flutter pub get`. Tolerates failures when `package_config.json`
@@ -252,7 +260,9 @@ final class FlutterPacker {
       projectRoot: projectRoot,
       plugins: spmPlugins,
       flutterXcframework: xcframework,
-      outputDir: p.join(projectRoot, 'build', 'xcross-flutter-plugins'),
+      outputDir: Platform.isWindows
+          ? p.join(projectRoot, 'build', '.xp')
+          : p.join(projectRoot, 'build', 'xcross-flutter-plugins'),
       deploymentTarget: deploymentTarget,
       verbose: verbose,
     );
@@ -445,6 +455,7 @@ final class FlutterPacker {
       );
     }
   }
+
   /// Generate and write `Info.plist` into [bundleDir] with `$(VAR)`
   /// substitution, mandatory iOS keys, storyboard stripping, and ObjC class
   /// name normalization.

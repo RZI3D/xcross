@@ -118,7 +118,7 @@ abstract final class GeneratedPluginsPackage {
 
         final pluginsDir = p.join(outputDir, 'Plugins');
         final scratchPath = Platform.isWindows
-            ? p.join(projectRoot, 'build', '.xcross-spm-v2')
+            ? p.join(projectRoot, 'build', '.xs')
             : p.join(pluginsDir, '.build');
         await _runSwiftBuild(
           outputDir: outputDir,
@@ -261,6 +261,13 @@ abstract final class GeneratedPluginsPackage {
         if (!repaired) rethrow;
         await invoke();
       }
+      if (windows) {
+        await repairWindowsGeneratedBuildFiles(
+          scratchPath,
+          targetBuildDir,
+          windows: true,
+        );
+      }
     }
 
     await buildTranslatingSdkMismatch(
@@ -289,7 +296,10 @@ abstract final class GeneratedPluginsPackage {
     if (!root.existsSync()) return false;
     var changed = false;
     for (final json in [
-      File(p.join(targetBuildDir, 'description.json')),
+      ...root
+          .listSync(recursive: true, followLinks: false)
+          .whereType<File>()
+          .where((file) => p.extension(file.path) == '.json'),
       File(
         p.join(
           scratchPath,
@@ -301,20 +311,26 @@ abstract final class GeneratedPluginsPackage {
     ]) {
       if (!json.existsSync()) continue;
       final original = await json.readAsString();
-      final normalized = original.replaceAll(r'\\?\C:\?\C:\', r'C:\');
+      final normalized = original.replaceAll(r'\\\\?\\C:\\?\\C:\\', r'C:\\');
       if (normalized != original) {
         await json.writeAsString(normalized);
         changed = true;
       }
     }
-    for (final buildDir in root.listSync(followLinks: false)) {
-      if (buildDir is! Directory || !buildDir.path.endsWith('.build')) continue;
-      final accessor = File(
-        p.join(buildDir.path, 'DerivedSources', 'resource_bundle_accessor.m'),
-      );
-      if (!accessor.existsSync()) continue;
+    for (final accessor
+        in root
+            .listSync(recursive: true, followLinks: false)
+            .whereType<File>()
+            .where(
+              (file) => p.basename(file.path) == 'resource_bundle_accessor.m',
+            )) {
       final original = await accessor.readAsString();
-      final normalized = original.replaceAll(r'\', '/');
+      final normalized = original
+          .replaceAll(r'\', '/')
+          .replaceAll(
+            '#import <Foundation/Foundation.h>',
+            '#include <Foundation/Foundation.h>',
+          );
       if (normalized != original) {
         await accessor.writeAsString(normalized);
         changed = true;
@@ -373,6 +389,53 @@ abstract final class GeneratedPluginsPackage {
       await resolve();
     } on Object {
       if (!await repairWindowsBinaryArtifacts(scratchPath)) rethrow;
+      Directory? firestore;
+      final pending = <Directory>[
+        Directory(p.join(scratchPath, 'artifacts', 'extract')),
+      ];
+      while (pending.isNotEmpty && firestore == null) {
+        final directory = pending.removeLast();
+        List<FileSystemEntity> entities;
+        try {
+          entities = directory.listSync(followLinks: false);
+        } on FileSystemException {
+          continue;
+        }
+        for (final entity in entities) {
+          if (entity is! Directory) continue;
+          if (p.basename(entity.path) ==
+              'FirebaseFirestoreInternal.xcframework') {
+            firestore = entity;
+            break;
+          }
+          pending.add(entity);
+        }
+      }
+      if (firestore == null) rethrow;
+      final vendorFramework = p.join(
+        p.dirname(p.dirname(outputDir)),
+        '.xv',
+        'fb@346daa9f4631',
+        'FirebaseFirestoreInternal.xcframework',
+      );
+      await _deleteEntity(vendorFramework);
+      final copy = await Process.run('robocopy', [
+        firestore.path,
+        vendorFramework,
+        '/E',
+        '/NFL',
+        '/NDL',
+        '/NJH',
+        '/NJS',
+        '/NP',
+      ]);
+      if (copy.exitCode > 7) {
+        throw FileSystemException(
+          'Could not stage Firestore binary artifact: ${copy.stderr}',
+          firestore.path,
+        );
+      }
+      environment?['FIREBASECI_USE_LOCAL_FIRESTORE_ZIP'] = '1';
       await resolve();
     }
     final materialized = await materializeCheckoutSymlinks(scratchPath);
@@ -593,11 +656,12 @@ abstract final class GeneratedPluginsPackage {
   @visibleForTesting
   static Map<String, String>? swiftProcessEnvironment({bool? windows}) {
     if (!(windows ?? Platform.isWindows)) return null;
-    return const {
+    return {
       'GIT_CONFIG_COUNT': '1',
       'GIT_CONFIG_KEY_0': 'core.symlinks',
       'GIT_CONFIG_VALUE_0': 'false',
       'EXPERIMENTAL_SPM_BUILDS': '1',
+      'SWIFTPM_MAXIMUM_CONCURRENT_OPERATIONS': '1',
     };
   }
 
@@ -778,6 +842,8 @@ abstract final class GeneratedPluginsPackage {
     '--scratch-path',
     scratchPath,
     if (windows ?? Platform.isWindows) ...[
+      '--jobs',
+      '1',
       '--disable-automatic-resolution',
       // Windows Swift's interface verifier does not inherit SwiftPM's search
       // path for generated sibling Clang modules during Darwin cross builds.
@@ -966,7 +1032,10 @@ abstract final class GeneratedPluginsPackage {
         if (path == null) {
           throw FlutterBuildError('Could not find ${tool.value.$1}.');
         }
-        toolset[tool.key] = {'path': path};
+        toolset[tool.key] = {
+          'path': path,
+          'extraCLIOptions': [r'-fdebug-prefix-map=C:\=/'],
+        };
       }
       // The Swift toolchain's own ld64.lld refuses iOS, so take the linker
       // already vetted by DarwinSdk.resolveLd64Lld instead of PATH order.
@@ -1028,7 +1097,7 @@ abstract final class GeneratedPluginsPackage {
     final frameworkDir = p.join(packagesDir, _flutterFrameworkPackageName);
     final pluginsDir = p.join(outputDir, 'Plugins');
     final vendorDir = Platform.isWindows
-        ? p.join(p.dirname(p.dirname(outputDir)), '.xcross-vendor')
+        ? p.join(p.dirname(p.dirname(outputDir)), '.xv')
         : p.join(outputDir, 'Vendor');
     final shouldVendor = vendorRemotePackages ?? true;
 
@@ -1772,7 +1841,11 @@ let package = Package(
   @visibleForTesting
   static String vendorPackageDirName(String url, String ref) {
     final safeRef = ref.replaceAll(RegExp(r'[^\w.\-]+'), '_');
-    return '${packageIdentityFromUrl(url)}@$safeRef';
+    final identity = packageIdentityFromUrl(url);
+    if (identity == 'firebase-ios-sdk') {
+      return 'fb@${safeRef.length > 12 ? safeRef.substring(0, 12) : safeRef}';
+    }
+    return '$identity@$safeRef';
   }
 
   /// SwiftPM package identity implied by a git URL (last path segment, no
@@ -2625,6 +2698,7 @@ let package = Package(
         }
       }
     }
+    final candidates = <String, (Directory, File)>{};
     for (final entity in frameworks) {
       final relative = p.relative(entity.path, from: extractRoot.path);
       final parts = p.split(relative);
@@ -2639,6 +2713,11 @@ let package = Package(
         parts[1],
         parts.last,
       );
+      candidates.putIfAbsent(destination, () => (deviceSlice, info));
+    }
+    for (final MapEntry(key: destination, value: candidate)
+        in candidates.entries) {
+      final (deviceSlice, info) = candidate;
       await _deleteEntity(destination);
       await Directory(destination).create(recursive: true);
       if (Platform.isWindows) {
@@ -2655,6 +2734,12 @@ let package = Package(
         if (result.exitCode > 7) {
           throw FileSystemException(
             'Could not copy extracted binary artifact: ${result.stderr}',
+            deviceSlice.path,
+          );
+        }
+        if (!Directory(p.join(destination, 'ios-arm64')).existsSync()) {
+          throw FileSystemException(
+            'Binary artifact copy produced no iOS device slice',
             deviceSlice.path,
           );
         }

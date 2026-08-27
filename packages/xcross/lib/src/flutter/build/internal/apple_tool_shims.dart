@@ -95,8 +95,9 @@ Future<String> locateLlvmTool(String name) async {
 /// Installs the Apple command-line surface needed by Flutter build hooks.
 Future<void> installAppleToolShims(
   String directory,
-  AppleToolShimConfig config,
-) async {
+  AppleToolShimConfig config, {
+  String? launcherExecutable,
+}) async {
   await Directory(directory).create(recursive: true);
   final compilerShim = p.join(
     directory,
@@ -116,6 +117,43 @@ Future<void> installAppleToolShims(
   };
 
   if (Platform.isWindows) {
+    if (launcherExecutable != null) {
+      final source = p.join(directory, 'tool_launcher.dart');
+      await File(source).writeAsString(r'''
+import 'dart:io';
+
+Future<void> main(List<String> arguments) async {
+  final executable = Platform.resolvedExecutable;
+  final mapping = File('$executable.path');
+  final target = mapping.readAsStringSync();
+  final process = await Process.start(
+    target,
+    arguments,
+    mode: ProcessStartMode.inheritStdio,
+    runInShell: target.endsWith('.bat'),
+  );
+  exitCode = await process.exitCode;
+}
+''');
+      final launcher = p.join(directory, 'tool_launcher.exe');
+      await ProcessRunner.runChecked(launcherExecutable, [
+        'compile',
+        'exe',
+        source,
+        '-o',
+        launcher,
+      ], label: 'Apple tool launcher');
+      for (final entry in {
+        'cc': compilerShim,
+        'ar': config.archiver,
+        'ld': config.linker,
+      }.entries) {
+        final executable = p.join(directory, '${entry.key}.exe');
+        await File(launcher).copy(executable);
+        await File('$executable.path').writeAsString(entry.value);
+      }
+    }
+
     if (config.otool case final otool?) {
       await File(p.join(directory, 'otool.ps1')).writeAsString(
         renderPowerShellOtoolShim(
@@ -143,21 +181,23 @@ Future<void> installAppleToolShims(
       'clang',
       renderBatchPowerShellShim('clang.ps1'),
     );
-    await _writeWindowsShim(
-      directory,
-      'cc',
-      renderBatchPowerShellShim('clang.ps1'),
-    );
-    await _writeWindowsShim(
-      directory,
-      'ar',
-      renderBatchToolShim(config.archiver),
-    );
-    await _writeWindowsShim(
-      directory,
-      'ld',
-      renderBatchToolShim(config.linker),
-    );
+    if (launcherExecutable == null) {
+      await _writeWindowsShim(
+        directory,
+        'cc',
+        renderBatchPowerShellShim('clang.ps1'),
+      );
+      await _writeWindowsShim(
+        directory,
+        'ar',
+        renderBatchToolShim(config.archiver),
+      );
+      await _writeWindowsShim(
+        directory,
+        'ld',
+        renderBatchToolShim(config.linker),
+      );
+    }
 
     for (final tool in tools.entries.skip(3)) {
       if (tool.key != 'otool') {
