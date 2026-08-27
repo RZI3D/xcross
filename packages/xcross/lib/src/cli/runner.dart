@@ -39,8 +39,10 @@ Future<int?> runPreparedToolAlias(
               ? p.windows.basenameWithoutExtension(path)
               : p.basenameWithoutExtension(path))
           .toLowerCase();
+  if (name == 'plutil') return runPlutilAlias(arguments);
   final variable = _toolAliasVariables[name];
   if (variable == null) return null;
+
   final mapping = File('$path.path');
   final target = mapping.existsSync()
       ? mapping.readAsStringSync().trim()
@@ -63,6 +65,32 @@ Future<int?> runPreparedToolAlias(
     return 0;
   }
   return invoke(target, arguments);
+}
+
+Future<int> runPlutilAlias(List<String> arguments) async {
+  if (arguments case [
+    '-replace',
+    'MinimumOSVersion',
+    '-string',
+    final String version,
+    final String path,
+  ]) {
+    final file = File(path);
+    if (!file.existsSync()) return 1;
+    final original = await file.readAsString();
+    final pattern = RegExp(
+      r'<key>MinimumOSVersion</key>\s*<string>[^<]*</string>',
+    );
+    if (!pattern.hasMatch(original)) return 1;
+    await file.writeAsString(
+      original.replaceFirst(
+        pattern,
+        '<key>MinimumOSVersion</key>\n\t<string>$version</string>',
+      ),
+    );
+    return 0;
+  }
+  return 1;
 }
 
 Future<int> _runToolAlias(String executable, List<String> arguments) async {

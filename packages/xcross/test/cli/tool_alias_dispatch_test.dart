@@ -51,6 +51,30 @@ void main() {
     expect(executable, r'C:\shims\clang.bat');
   });
 
+  test('plutil replaces MinimumOSVersion for Flutter assemble', () async {
+    final temp = Directory.systemTemp.createTempSync('xcross_plutil_');
+    addTearDown(() => temp.deleteSync(recursive: true));
+    final plist = File(p.join(temp.path, 'Info.plist'))
+      ..writeAsStringSync('''
+<plist><dict>
+<key>MinimumOSVersion</key>
+<string>12.0</string>
+</dict></plist>
+''');
+
+    expect(
+      await runPreparedToolAlias([
+        '-replace',
+        'MinimumOSVersion',
+        '-string',
+        '15.0',
+        plist.path,
+      ], executablePath: p.join(temp.path, 'plutil')),
+      0,
+    );
+    expect(plist.readAsStringSync(), contains('<string>15.0</string>'));
+  });
+
   test('does not intercept the normal xcross executable', () async {
     expect(
       await runPreparedToolAlias(
