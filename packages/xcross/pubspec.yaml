@@ -37,6 +37,7 @@ dependencies:
   http: ^1.6.0
   xml: ^7.0.1
   crypto: ^3.0.7
+  ffi: ^2.2.0
   pointycastle: ^4.0.0
   propertylistserialization: ^1.5.0
   build_cli_annotations: ^2.1.1

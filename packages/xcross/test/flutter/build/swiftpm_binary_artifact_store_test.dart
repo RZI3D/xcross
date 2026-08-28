@@ -254,6 +254,43 @@ void main() {
     expect(await store.findCompleteTarget('abc', 'A'), isNull);
   });
 
+  test('rejects a Windows directory junction in a staged tree', () async {
+    if (!Platform.isWindows) return;
+    final staging = fixture(temp, 'junction', 'A.artifactbundle', 'value');
+    final target = temp.createTempSync('junction-target-');
+    final junction = p.join(staging.path, 'A.artifactbundle', 'junction');
+    final created = await Process.run('cmd.exe', [
+      '/d',
+      '/c',
+      'mklink',
+      '/J',
+      junction,
+      target.path,
+    ]);
+    if (created.exitCode != 0) {
+      markTestSkipped('directory junction creation is unavailable');
+      return;
+    }
+
+    await expectLater(
+      store.publishTarget(
+        checksum: 'abc',
+        targetName: 'A',
+        stagingRoot: staging,
+        artifactDirectoryName: 'A.artifactbundle',
+        metadata: const {},
+      ),
+      throwsA(
+        isA<FlutterBuildError>().having(
+          (error) => error.isSecurityFailure,
+          'isSecurityFailure',
+          isTrue,
+        ),
+      ),
+    );
+    expect(await store.findCompleteTarget('abc', 'A'), isNull);
+  });
+
   test('rejects unsafe target and artifact names', () async {
     for (final target in ['.', '..', 'A/B', r'A\B']) {
       expect(() => store.targetRoot('abc', target), throwsArgumentError);

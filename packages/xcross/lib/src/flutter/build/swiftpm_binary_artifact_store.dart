@@ -1,9 +1,12 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:ffi';
 import 'dart:io';
 
 import 'package:crypto/crypto.dart';
+import 'package:ffi/ffi.dart';
 import 'package:path/path.dart' as p;
+
 import 'package:xcross/src/flutter/errors.dart';
 
 final class SwiftPmBinaryArtifactEntry {
@@ -354,24 +357,30 @@ final class SwiftPmBinaryArtifactStore {
       return true;
     }
     if (!Platform.isWindows) return false;
-    final result = await Process.run('fsutil.exe', [
-      'reparsepoint',
-      'query',
-      _processPath(path),
-    ]);
-
-    return result.exitCode == 0;
-  }
-
-  static String _processPath(String path) {
-    if (!Platform.isWindows) return path;
-    final normalized = p.windows.normalize(p.windows.absolute(path));
-    if (normalized.startsWith(r'\\?\UNC\')) {
-      return r'\\' + normalized.substring(8);
+    final pointer = _ioPath(path).toNativeUtf16();
+    try {
+      final attributes = _getFileAttributes(pointer);
+      if (attributes == _invalidFileAttributes) {
+        throw FileSystemException(
+          'Could not read SwiftPM binary artifact attributes',
+          path,
+        );
+      }
+      return attributes & _fileAttributeReparsePoint != 0;
+    } finally {
+      calloc.free(pointer);
     }
-    if (normalized.startsWith(r'\\?\')) return normalized.substring(4);
-    return normalized;
   }
+
+  static const _invalidFileAttributes = 0xffffffff;
+  static const _fileAttributeReparsePoint = 0x400;
+  static final int Function(Pointer<Utf16>) _getFileAttributes =
+      Platform.isWindows
+      ? DynamicLibrary.open('kernel32.dll').lookupFunction<
+          Uint32 Function(Pointer<Utf16>),
+          int Function(Pointer<Utf16>)
+        >('GetFileAttributesW')
+      : (_) => _invalidFileAttributes;
 
   static Future<String> _treeDigest(Directory root) async {
     final rootPath = _ioPath(root.path);
