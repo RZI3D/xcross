@@ -364,9 +364,9 @@ Future<bool> probeSwiftPmGate({
     }
 
     stage = 'creating fixture';
-    probeRoot = await Directory(
-      p.join(root, '.probe-${mode.name}'),
-    ).createTemp('run-');
+    final probeParent = Directory(p.join(root, '.probe-${mode.name}'));
+    await probeParent.create(recursive: true);
+    probeRoot = await probeParent.createTemp('run-');
     final fixture = SwiftPmBinaryFixture.generateXcframework(
       root: probeRoot.path,
       name: 'GateFixture',
@@ -495,6 +495,10 @@ Future<bool> probeSwiftPmGate({
     await server?.close(force: true);
     if (probeRoot != null && probeRoot.existsSync()) {
       await probeRoot.delete(recursive: true);
+      final parent = probeRoot.parent;
+      if (parent.existsSync() && parent.listSync().isEmpty) {
+        await parent.delete();
+      }
     }
   }
 }
