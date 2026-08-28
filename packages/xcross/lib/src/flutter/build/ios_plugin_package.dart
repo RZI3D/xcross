@@ -3912,7 +3912,9 @@ let package = Package(
       <int>[],
       (bytes, chunk) => bytes..addAll(chunk),
     );
-    final error = await process.stderr.transform(utf8.decoder).join();
+    final error = await process.stderr
+        .transform(const Utf8Decoder(allowMalformed: true))
+        .join();
     final exitCode = await process.exitCode;
     if (exitCode != 0) {
       throw FlutterBuildError(

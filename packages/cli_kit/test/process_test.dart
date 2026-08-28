@@ -306,6 +306,22 @@ void main() {
         expect(result.stdout + result.stderr, contains('Dart'));
       },
     );
+
+    test('replaces malformed UTF-8 from a successful process', () async {
+      final directory = Directory.systemTemp.createTempSync('process-output-');
+      addTearDown(() => directory.deleteSync(recursive: true));
+      final script = File(p.join(directory.path, 'output.dart'))
+        ..writeAsStringSync(
+          "import 'dart:io'; void main() { stdout.add([255]); }",
+        );
+
+      final result = await ProcessRunner.run(Platform.resolvedExecutable, [
+        script.path,
+      ]);
+
+      expect(result.exitCode, 0);
+      expect(result.stdout, '\u{fffd}');
+    });
   });
 
   group('runChecked', () {
