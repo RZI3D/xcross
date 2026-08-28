@@ -124,7 +124,11 @@ void main() {
     );
     expect(
       shim,
-      contains("'-Wl,-arch,arm64', '-Wl,-platform_version,ios,13.0,26.5'"),
+      contains(
+        "'-Xlinker', '-arch', '-Xlinker', 'arm64', '-Xlinker', "
+        "'-platform_version', '-Xlinker', 'ios', '-Xlinker', '13.0', "
+        "'-Xlinker', '26.5'",
+      ),
     );
   });
 
