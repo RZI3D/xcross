@@ -324,7 +324,7 @@ abstract final class GeneratedPluginsPackage {
         in plugins.toList()..sort((a, b) => a.name.compareTo(b.name))) {
       add(plugin.name);
       add(plugin.platformDirectoryName);
-      await addTree(plugin.packageRoot);
+      await addTree(plugin.swiftPackageDir);
     }
     final frameworkFiles = <File>[];
     await for (final entity in Directory(
@@ -1809,6 +1809,8 @@ abstract final class GeneratedPluginsPackage {
     final pluginPackageDirs = <String, String>{};
     final vendorNormalizationCache = <String, Map<String, List<String>>>{};
     final dependencyEvaluationCache = <String, Future<Map<String, String>>>{};
+    final vendorCheckoutCache = <String, Future<void>>{};
+
     for (final plugin in plugins) {
       final packageAlias = p.join(packagesDir, plugin.name);
       pluginPackageDirs[plugin.name] = await _stagePluginPackage(
@@ -1820,7 +1822,9 @@ abstract final class GeneratedPluginsPackage {
         copySources: copyPluginPackages.contains(plugin.name),
         vendorNormalizationCache: vendorNormalizationCache,
         dependencyEvaluationCache: dependencyEvaluationCache,
+        vendorCheckoutCache: vendorCheckoutCache,
         scratchPath: scratchPath,
+
         binaryArtifactStore: binaryArtifactStore,
         binaryArtifactFallback: binaryArtifactFallback,
         swiftPmArtifactJunctionCapability: swiftPmArtifactJunctionCapability,
@@ -1828,6 +1832,18 @@ abstract final class GeneratedPluginsPackage {
             packageLocalArtifactJunctionCapability,
         evaluateDependencyRefs: evaluateDependencyRefs,
         clonePackage: clonePackage,
+      );
+    }
+    if (windows &&
+        shouldVendor &&
+        binaryArtifactStore != null &&
+        binaryArtifactFallback != null) {
+      await prepareSupportedBinaryArtifacts(
+        packageRoot: resolvedVendorDir,
+        binaryArtifactStore: binaryArtifactStore,
+        binaryArtifactFallback: binaryArtifactFallback,
+        packageLocalArtifactJunctionCapability:
+            packageLocalArtifactJunctionCapability,
       );
     }
     final packagesByDirectoryName = {
@@ -1884,7 +1900,9 @@ abstract final class GeneratedPluginsPackage {
     bool copySources = false,
     Map<String, Map<String, List<String>>>? vendorNormalizationCache,
     Map<String, Future<Map<String, String>>>? dependencyEvaluationCache,
+    Map<String, Future<void>>? vendorCheckoutCache,
     String? scratchPath,
+
     String? binaryArtifactStore,
     String? binaryArtifactFallback,
     bool swiftPmArtifactJunctionCapability = false,
@@ -1948,7 +1966,9 @@ abstract final class GeneratedPluginsPackage {
         fallbackSwiftModules: fallbackSwiftModules,
         normalizationCache: vendorNormalizationCache,
         evaluationCache: dependencyEvaluationCache,
+        checkoutCache: vendorCheckoutCache,
         scratchPath: scratchPath,
+
         binaryArtifactStore: binaryArtifactStore,
         binaryArtifactFallback: binaryArtifactFallback,
         swiftPmArtifactJunctionCapability: swiftPmArtifactJunctionCapability,
@@ -1992,16 +2012,8 @@ abstract final class GeneratedPluginsPackage {
         packageLocalArtifactJunctionCapability:
             packageLocalArtifactJunctionCapability,
       );
-      if (vendorDir != null) {
-        await prepareSupportedBinaryArtifacts(
-          packageRoot: vendorDir,
-          binaryArtifactStore: binaryArtifactStore,
-          binaryArtifactFallback: binaryArtifactFallback,
-          packageLocalArtifactJunctionCapability:
-              packageLocalArtifactJunctionCapability,
-        );
-      }
     }
+
     return stagedPackage;
   }
 
@@ -3654,7 +3666,9 @@ let package = Package(
     clonePackage,
     Map<String, Map<String, List<String>>>? normalizationCache,
     Map<String, Future<Map<String, String>>>? evaluationCache,
+    Map<String, Future<void>>? checkoutCache,
     String? scratchPath,
+
     String? binaryArtifactStore,
     String? binaryArtifactFallback,
     bool swiftPmArtifactJunctionCapability = false,
@@ -3753,8 +3767,25 @@ let package = Package(
       final identity = dep.identity;
       if (seen.add(dirName)) {
         final destination = p.join(vendorDir, dirName);
-        await clone(git, dep.url, ref, destination);
+        if (checkoutCache == null) {
+          await clone(git, dep.url, ref, destination);
+        } else {
+          final key = p.normalize(destination);
+          final pending = checkoutCache.putIfAbsent(
+            key,
+            () => clone(git, dep.url, ref, destination),
+          );
+          try {
+            await pending;
+          } on Object {
+            if (identical(checkoutCache[key], pending)) {
+              final _ = checkoutCache.remove(key);
+            }
+            rethrow;
+          }
+        }
         final consumedProducts = _consumedProducts(manifest, identity);
+
         final cacheKey = [
           p.normalize(destination),
           ...(consumedProducts.toList()..sort()),

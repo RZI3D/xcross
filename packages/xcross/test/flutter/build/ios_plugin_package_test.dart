@@ -849,6 +849,53 @@ let package = Package(
       expect(evaluations, 1);
     });
 
+    test('caches equivalent vendor checkouts within a build', () async {
+      final vendorDir = p.join(tmp.path, 'checkout-cache-vendor');
+      final first = p.join(tmp.path, 'checkout-first');
+      final second = p.join(tmp.path, 'checkout-second');
+      await Directory(first).create();
+      await Directory(second).create();
+      const manifest = '''
+import PackageDescription
+let package = Package(
+    name: "plugin",
+    dependencies: [.package(url: "https://example.com/dependency", exact: "1.0.0")],
+    targets: []
+)
+''';
+      final cache = <String, Future<void>>{};
+      var clones = 0;
+
+      Future<void> clone(
+        String _,
+        String _,
+        String _,
+        String destination,
+      ) async {
+        clones++;
+        await Directory(destination).create(recursive: true);
+        await File(
+          p.join(destination, 'Package.swift'),
+        ).writeAsString('import PackageDescription\n');
+      }
+
+      for (final packageDirectory in [first, second]) {
+        await GeneratedPluginsPackage.vendorUrlPackagesAsPathDeps(
+          manifest,
+          vendorDir: vendorDir,
+          packageDirectory: packageDirectory,
+          locateTool: (_) async => 'git',
+          evaluateDependencyRefs: (_) async => const {
+            'https://example.com/dependency': 'revision',
+          },
+          clonePackage: clone,
+          checkoutCache: cache,
+        );
+      }
+
+      expect(clones, 1);
+    });
+
     test('removes failed dependency evaluations from the cache', () async {
       final packageDirectory = p.join(tmp.path, 'failed-cache-package');
       await Directory(packageDirectory).create();
