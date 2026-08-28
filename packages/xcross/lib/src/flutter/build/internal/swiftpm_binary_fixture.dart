@@ -161,10 +161,13 @@ public final class BinaryFixturePlugin: NSObject, FlutterPlugin {
     final binaryTarget = path != null
         ? '.binaryTarget(name: "$targetName", path: "$path")'
         : '.binaryTarget(name: "$targetName", url: "$url", checksum: "$checksum")';
+    File(p.join(root, 'Sources', 'GateProbe', 'GateProbe.swift'))
+      ..createSync(recursive: true)
+      ..writeAsStringSync('public enum GateProbe {}\n');
     File(p.join(root, 'Package.swift')).writeAsStringSync('''
 // swift-tools-version: 6.0
 import PackageDescription
-let package = Package(name: "Gate", products: [.library(name: "Gate", targets: ["$targetName"])], targets: [$binaryTarget])
+let package = Package(name: "Gate", products: [.library(name: "Gate", targets: ["GateProbe"])], targets: [$binaryTarget, .target(name: "GateProbe", dependencies: ["$targetName"])])
 ''');
   }
 
