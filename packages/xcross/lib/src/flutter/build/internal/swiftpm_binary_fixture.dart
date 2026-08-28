@@ -179,22 +179,30 @@ let package = Package(name: "Gate", products: [.library(name: "Gate", targets: [
       ..setUint32(0, 0xfeedfacf, Endian.little)
       ..setUint32(4, 0x0100000c, Endian.little)
       ..setUint32(12, 1, Endian.little);
-    final name = utf8.encode('fixture.o/');
-    final header = Uint8List.fromList([
+    List<int> member(String name, List<int> content) {
+      final encodedName = utf8.encode('$name\u0000');
+      final size = encodedName.length + content.length;
+      final member = <int>[
+        ...utf8.encode('#1/${encodedName.length}'.padRight(16)),
+        ...utf8.encode('0'.padRight(12)),
+        ...utf8.encode('0'.padRight(6)),
+        ...utf8.encode('0'.padRight(6)),
+        ...utf8.encode('100644'.padRight(8)),
+        ...utf8.encode('$size'.padRight(10)),
+        0x60,
+        0x0a,
+        ...encodedName,
+        ...content,
+      ];
+      if (member.length.isOdd) member.add(0x0a);
+      return member;
+    }
+
+    final index = ByteData(8);
+    return Uint8List.fromList([
       ...utf8.encode('!<arch>\n'),
-      ...name,
-      ...List<int>.filled(16 - name.length, 0x20),
-      ...utf8.encode('0'.padRight(12)),
-      ...utf8.encode('0'.padRight(6)),
-      ...utf8.encode('0'.padRight(6)),
-      ...utf8.encode('100644'.padRight(8)),
-      ...utf8.encode('${bytes.length}'.padRight(10)),
-      0x60,
-      0x0a,
-      ...bytes,
+      ...member('__.SYMDEF', index.buffer.asUint8List()),
+      ...member('fixture.o', bytes),
     ]);
-    return header.length.isEven
-        ? header
-        : Uint8List.fromList([...header, 0x0a]);
   }
 }
