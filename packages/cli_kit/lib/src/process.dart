@@ -49,8 +49,8 @@ abstract final class ProcessRunner {
       arguments,
       workingDirectory: workingDirectory,
       environment: environment,
-      stdoutEncoding: utf8,
-      stderrEncoding: utf8,
+      stdoutEncoding: const Utf8Codec(allowMalformed: true),
+      stderrEncoding: const Utf8Codec(allowMalformed: true),
     );
     return CapturedProcess(
       result.exitCode,
@@ -199,8 +199,12 @@ abstract final class ProcessRunner {
     }
 
     final drained = Future.wait([
-      process.stdout.transform(utf8.decoder).forEach(sink),
-      process.stderr.transform(utf8.decoder).forEach(sink),
+      process.stdout
+          .transform(const Utf8Decoder(allowMalformed: true))
+          .forEach(sink),
+      process.stderr
+          .transform(const Utf8Decoder(allowMalformed: true))
+          .forEach(sink),
     ]);
 
     unawaited(process.stdin.done.catchError((Object _) {}));

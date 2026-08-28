@@ -1192,13 +1192,15 @@ final class SwiftPmBinaryArtifactPreparer {
 
 final class _DiagnosticCollector {
   _DiagnosticCollector(Stream<List<int>> stream) {
-    _subscription = stream.transform(utf8.decoder).listen((chunk) {
-      if (_buffer.length >= _limit) return;
-      final remaining = _limit - _buffer.length;
-      _buffer.write(
-        chunk.length <= remaining ? chunk : chunk.substring(0, remaining),
-      );
-    }, onDone: _done.complete);
+    _subscription = stream
+        .transform(const Utf8Decoder(allowMalformed: true))
+        .listen((chunk) {
+          if (_buffer.length >= _limit) return;
+          final remaining = _limit - _buffer.length;
+          _buffer.write(
+            chunk.length <= remaining ? chunk : chunk.substring(0, remaining),
+          );
+        }, onDone: _done.complete);
   }
 
   static const _limit = 1024;

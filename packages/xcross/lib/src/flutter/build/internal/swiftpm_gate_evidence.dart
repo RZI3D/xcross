@@ -544,8 +544,12 @@ Future<ProcessResult> _runBounded(
     environment: environment,
   );
   try {
-    final output = process.stdout.transform(utf8.decoder).join();
-    final error = process.stderr.transform(utf8.decoder).join();
+    final output = process.stdout
+        .transform(const Utf8Decoder(allowMalformed: true))
+        .join();
+    final error = process.stderr
+        .transform(const Utf8Decoder(allowMalformed: true))
+        .join();
     final exitCode = await process.exitCode.timeout(timeout);
     return ProcessResult(process.pid, exitCode, await output, await error);
   } on TimeoutException {
