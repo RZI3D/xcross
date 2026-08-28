@@ -76,7 +76,9 @@ if (!\$hasDeployment) { \$defaults += '-miphoneos-version-min=$deploymentTarget'
 if (!\$hasFuseLd) { \$defaults += '-fuse-ld=lld' }
 if (!\$hasLdPath) { \$defaults += ${powerShellQuote('--ld-path=$linker')} }
 \$defaults += @('-Xlinker', '-arch', '-Xlinker', 'arm64', '-Xlinker', '-platform_version', '-Xlinker', 'ios', '-Xlinker', '$deploymentTarget', '-Xlinker', '26.5')
-& ${powerShellQuote(clang)} @(\$defaults + \$Arguments)
+\$compiler = ${powerShellQuote(clang)}
+\$compilerArguments = @(\$defaults + \$Arguments)
+& \$compiler @compilerArguments
 exit \$LASTEXITCODE
 ''';
 

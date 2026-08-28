@@ -130,6 +130,7 @@ void main() {
         "'-Xlinker', '26.5'",
       ),
     );
+    expect(shim, contains(r'& $compiler @compilerArguments'));
   });
 
   test('Windows uses the resolved clang as its host C compiler', () async {
