@@ -340,6 +340,7 @@ Future<bool> probeSwiftPmGate({
   if (!(windows ?? Platform.isWindows)) return false;
   Directory? probeRoot;
   HttpServer? server;
+  var stage = 'validating toolchain';
   try {
     final identity = jsonDecode(toolchainIdentity);
     if (identity is! Map) return false;
@@ -362,6 +363,7 @@ Future<bool> probeSwiftPmGate({
       return false;
     }
 
+    stage = 'creating fixture';
     probeRoot = await Directory(
       p.join(root, '.probe-${mode.name}'),
     ).createTemp('run-');
@@ -381,6 +383,7 @@ Future<bool> probeSwiftPmGate({
         targetName: 'GateFixture',
         path: 'artifacts/GateFixture.xcframework',
       );
+      stage = 'creating package-local junction';
       if (!await _createJunction(junction, fixture.path, run)) return false;
     } else {
       final archive = SwiftPmBinaryFixture.archiveXcframework(
@@ -402,6 +405,7 @@ Future<bool> probeSwiftPmGate({
       );
     }
 
+    stage = 'writing toolset';
     final toolset = await GeneratedPluginsPackage.writeToolset(
       outputDir: package.path,
       linkerPath: toolPath('ld64.lld'),
@@ -451,25 +455,41 @@ Future<bool> probeSwiftPmGate({
     }
 
     for (var repetition = 0; repetition < 2; repetition++) {
+      stage = 'resolve ${repetition + 1}';
       if (!await _runSwift(
-            swiftPackage,
-            resolve.skip(1).toList(),
-            environment,
-            run,
-          ) ||
-          !await _runSwift(
-            swiftBuild,
-            build.skip(1).toList(),
-            environment,
-            run,
-          ) ||
-          p.normalize(await Directory(junction!).resolveSymbolicLinks()) !=
-              p.normalize(await fixture.resolveSymbolicLinks())) {
+        swiftPackage,
+        resolve.skip(1).toList(),
+        environment,
+        run,
+      )) {
+        return false;
+      }
+      stage = 'build ${repetition + 1}';
+      if (!await _runSwift(
+        swiftBuild,
+        build.skip(1).toList(),
+        environment,
+        run,
+      )) {
+        return false;
+      }
+      stage = 'verifying junction ${repetition + 1}';
+      final actual = p.normalize(
+        await Directory(junction!).resolveSymbolicLinks(),
+      );
+      final expected = p.normalize(await fixture.resolveSymbolicLinks());
+      if (!p.equals(actual, expected)) {
+        stderr.writeln(
+          'SwiftPM junction gate target mismatch at $stage: '
+          'expected $expected, got $actual',
+        );
         return false;
       }
     }
     return true;
-  } on Object {
+  } on Object catch (error, stackTrace) {
+    stderr.writeln('SwiftPM junction gate failed at $stage: $error');
+    stderr.writeln(stackTrace);
     return false;
   } finally {
     await server?.close(force: true);
