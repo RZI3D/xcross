@@ -527,9 +527,16 @@ Future<bool> _runSwift(
     swift,
     arguments,
     environment: environment,
-    timeout: const Duration(seconds: 25),
+    timeout: const Duration(minutes: 2),
   );
-  return result.exitCode == 0;
+  if (result.exitCode != 0) {
+    stderr.writeln(
+      'SwiftPM junction gate command failed (${result.exitCode}): '
+      '${result.stderr}\n${result.stdout}',
+    );
+    return false;
+  }
+  return true;
 }
 
 Future<ProcessResult> _runBounded(
