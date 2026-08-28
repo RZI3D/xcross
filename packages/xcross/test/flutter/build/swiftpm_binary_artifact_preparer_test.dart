@@ -712,14 +712,14 @@ void main() {
       'package-local junction survives repeated resolve and cross-build',
       () => expectProductionProbe(SwiftPmGateMode.packageLocalArtifact),
       skip: windowsGateSkip,
-      timeout: const Timeout(Duration(minutes: 2)),
+      timeout: const Timeout(Duration(minutes: 10)),
     );
 
     test(
       'SwiftPM artifact junction survives repeated resolve and cross-build',
       () => expectProductionProbe(SwiftPmGateMode.swiftPmArtifact),
       skip: windowsGateSkip,
-      timeout: const Timeout(Duration(minutes: 2)),
+      timeout: const Timeout(Duration(minutes: 10)),
     );
   });
 

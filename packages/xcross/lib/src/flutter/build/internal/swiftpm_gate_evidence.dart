@@ -551,7 +551,7 @@ Future<bool> _runSwift(
     swift,
     arguments,
     environment: environment,
-    timeout: const Duration(minutes: 2),
+    timeout: const Duration(minutes: 5),
   );
   if (result.exitCode != 0) {
     stderr.writeln(
