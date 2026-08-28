@@ -357,9 +357,20 @@ final class SwiftPmBinaryArtifactStore {
     final result = await Process.run('fsutil.exe', [
       'reparsepoint',
       'query',
-      path,
+      _processPath(path),
     ]);
+
     return result.exitCode == 0;
+  }
+
+  static String _processPath(String path) {
+    if (!Platform.isWindows) return path;
+    final normalized = p.windows.normalize(p.windows.absolute(path));
+    if (normalized.startsWith(r'\\?\UNC\')) {
+      return r'\\' + normalized.substring(8);
+    }
+    if (normalized.startsWith(r'\\?\')) return normalized.substring(4);
+    return normalized;
   }
 
   static Future<String> _treeDigest(Directory root) async {

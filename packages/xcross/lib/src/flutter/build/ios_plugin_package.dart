@@ -920,149 +920,199 @@ abstract final class GeneratedPluginsPackage {
     final artifactsRoot = p.join(scratchPath, 'artifacts');
     final artifacts = Directory(artifactsRoot);
     final vendor = Directory(vendorDir);
-    if (!artifacts.existsSync() || !vendor.existsSync()) return false;
+    final checkouts = Directory(p.join(scratchPath, 'checkouts'));
+    if (!artifacts.existsSync() ||
+        (!vendor.existsSync() && !checkouts.existsSync())) {
+      return false;
+    }
     final preparer = SwiftPmBinaryArtifactPreparer(
       store: SwiftPmBinaryArtifactStore(binaryArtifactStore),
     );
     var changed = false;
     final remove = removeDestination ?? _deleteEntity;
     final write = writeManifest ?? _writeAtomic;
-    await for (final package in vendor.list(followLinks: false)) {
-      if (package is! Directory) continue;
-      final packageIdentity = packageIdentities[p.normalize(package.path)];
-      if (packageIdentity == null) continue;
-      await for (final entity in package.list(followLinks: false)) {
-        if (entity is! File) continue;
-        final fileName = p.basename(entity.path);
-        if (fileName != 'Package.swift' &&
-            !(fileName.startsWith('Package@') && fileName.endsWith('.swift'))) {
-          continue;
-        }
-        final originalBytes = await entity.readAsBytes();
-        var manifest = utf8.decode(originalBytes);
-        final createdDestinations =
-            <
-              String,
-              ({String source, SwiftPmBinaryArtifactPublication publication})
-            >{};
-        final provenance = scanBinaryArtifactProvenance(
-          packageIdentity: packageIdentity,
-          manifestPath: entity.path,
-          manifest: manifest,
-        );
-        for (final candidate in provenance.reversed) {
-          final targetDirectory = Directory(
-            p.join(artifactsRoot, packageIdentity, candidate.target.name),
-          );
-          if (!targetDirectory.existsSync()) continue;
-          final archives = targetDirectory
-              .listSync(followLinks: false)
-              .whereType<File>()
-              .where((file) => file.path.toLowerCase().endsWith('.zip'))
-              .toList();
-          final verified = <SwiftPmBinaryArtifactEntry>[];
-          for (final archive in archives) {
-            try {
-              verified.add(
-                await preparer.prepareDownloadedArchive(
-                  target: candidate.target,
-                  archive: archive,
-                ),
-              );
-            } on FlutterBuildError catch (error) {
-              if (error.isSecurityFailure) rethrow;
-            }
+    final packageRoots = <Directory>[
+      if (vendor.existsSync()) vendor,
+      if (checkouts.existsSync()) checkouts,
+    ];
+    for (final packageRoot in packageRoots) {
+      await for (final package in packageRoot.list(followLinks: false)) {
+        if (package is! Directory) continue;
+        final packageIdentity =
+            packageIdentities[p.normalize(package.path)] ??
+            p.basename(package.path).toLowerCase();
+
+        await for (final entity in package.list(followLinks: false)) {
+          if (entity is! File) continue;
+          final fileName = p.basename(entity.path);
+          if (fileName != 'Package.swift' &&
+              !(fileName.startsWith('Package@') &&
+                  fileName.endsWith('.swift'))) {
+            continue;
           }
-          if (verified.length != 1) continue;
-          final relative = p.join(
-            'xcross-artifacts',
-            candidate.target.checksum.toLowerCase(),
-            candidate.target.name,
-            p.basename(verified.single.artifactPath),
+          final originalBytes = await entity.readAsBytes();
+          var manifest = utf8.decode(originalBytes);
+          final createdDestinations =
+              <
+                String,
+                ({String source, SwiftPmBinaryArtifactPublication publication})
+              >{};
+          final provenance = scanBinaryArtifactProvenance(
+            packageIdentity: packageIdentity,
+            manifestPath: entity.path,
+            manifest: manifest,
           );
-          final destination = p.join(package.path, relative);
-          final fallbackDestination = _binaryArtifactFallbackPath(
-            binaryArtifactFallback,
-            candidate.target.checksum,
-            candidate.target.name,
-            p.basename(verified.single.artifactPath),
-          );
-          final existed =
-              FileSystemEntity.typeSync(destination, followLinks: false) !=
-              FileSystemEntityType.notFound;
-          SwiftPmBinaryArtifactPublication? publication;
-          if (existed && packageLocalArtifactJunctionCapability) {
-            if (await preparer.validatesBinaryArtifactDestination(
-              source: verified.single.artifactPath,
-              destination: destination,
-              alias: true,
-            )) {
-              publication = SwiftPmBinaryArtifactPublication.reused;
-            }
-          } else if (await preparer.validatesMaterializedBinaryArtifact(
-            source: verified.single.artifactPath,
-            destination: fallbackDestination,
-          )) {
-            publication = SwiftPmBinaryArtifactPublication.reused;
-          } else {
-            publication = await recoverFinalBinaryArtifact(
-              provenance: candidate,
-              preparedArtifactPath: verified.single.artifactPath,
-              binaryArtifactStore: binaryArtifactStore,
-              destination: destination,
-              materializedDestination: fallbackDestination,
-              attemptState: attemptState,
-              packageLocalArtifactJunctionCapability:
-                  packageLocalArtifactJunctionCapability,
-              createAlias: createAlias,
-              materialize: materialize,
-              windows: windows,
+          for (final candidate in provenance.reversed) {
+            final targetDirectory = Directory(
+              p.join(artifactsRoot, packageIdentity, candidate.target.name),
             );
-          }
-          if (publication == null) continue;
-          final usedAlias =
-              packageLocalArtifactJunctionCapability &&
-              await preparer.validatesBinaryArtifactDestination(
+            if (!targetDirectory.existsSync()) continue;
+            final archives = targetDirectory
+                .listSync(followLinks: false)
+                .whereType<File>()
+                .where((file) => file.path.toLowerCase().endsWith('.zip'))
+                .toList();
+            final verified = <SwiftPmBinaryArtifactEntry>[];
+            for (final archive in archives) {
+              try {
+                verified.add(
+                  await preparer.prepareDownloadedArchive(
+                    target: candidate.target,
+                    archive: archive,
+                  ),
+                );
+              } on FlutterBuildError catch (error) {
+                if (error.isSecurityFailure) rethrow;
+              }
+            }
+            if (verified.isEmpty) {
+              final extracted = targetDirectory
+                  .listSync(followLinks: false)
+                  .whereType<Directory>()
+                  .where(
+                    (directory) =>
+                        directory.path.toLowerCase().endsWith('.xcframework'),
+                  )
+                  .toList();
+              if (extracted.length == 1) {
+                final staging = await Directory(
+                  binaryArtifactStore,
+                ).createTemp('.extracted-');
+                try {
+                  final artifactName = p.basename(extracted.single.path);
+                  await _copyResolvedArtifactTree(
+                    extracted.single.path,
+                    p.join(staging.path, artifactName),
+                    includeTopLevel: (name) =>
+                        name == 'Info.plist' || name == 'ios-arm64',
+                  );
+
+                  verified.add(
+                    await SwiftPmBinaryArtifactStore(
+                      binaryArtifactStore,
+                    ).publishTarget(
+                      checksum: candidate.target.checksum,
+                      targetName: candidate.target.name,
+                      stagingRoot: staging,
+                      artifactDirectoryName: artifactName,
+                      metadata: const {'source': 'swiftpm-extracted-artifact'},
+                    ),
+                  );
+                } finally {
+                  if (staging.existsSync()) {
+                    await staging.delete(recursive: true);
+                  }
+                }
+              }
+            }
+            if (verified.length != 1) continue;
+            final relative = p.join(
+              '.xa',
+              candidate.target.checksum.toLowerCase().substring(0, 16),
+              p.basename(verified.single.artifactPath),
+            );
+
+            final destination = p.join(package.path, relative);
+            final fallbackDestination = destination;
+
+            final existed =
+                FileSystemEntity.typeSync(destination, followLinks: false) !=
+                FileSystemEntityType.notFound;
+            SwiftPmBinaryArtifactPublication? publication;
+            if (existed && packageLocalArtifactJunctionCapability) {
+              if (await preparer.validatesBinaryArtifactDestination(
                 source: verified.single.artifactPath,
                 destination: destination,
                 alias: true,
-              );
-          final publishedDestination = usedAlias
-              ? destination
-              : fallbackDestination;
-          if (publication == SwiftPmBinaryArtifactPublication.published()) {
-            createdDestinations[publishedDestination] = (
-              source: verified.single.artifactPath,
-              publication: publication,
-            );
-          }
-          manifest = SwiftPmBinaryTargetManifest.rewriteToLocalPaths(manifest, {
-            candidate.target: usedAlias
-                ? relative
-                : _swiftPath(fallbackDestination),
-          });
-          changed = true;
-        }
-        if (!_sameBytes(originalBytes, utf8.encode(manifest))) {
-          try {
-            await write(entity.path, utf8.encode(manifest));
-          } on Object {
-            for (final created
-                in createdDestinations.entries.toList().reversed) {
-              if (removeDestination != null) {
-                await remove(created.key);
-              } else if (packageLocalArtifactJunctionCapability &&
-                  p.isWithin(package.path, created.key)) {
-                await preparer.removeBinaryArtifactAlias(created.key);
-              } else {
-                await preparer.removeMaterializedBinaryArtifact(
-                  source: created.value.source,
-                  destination: created.key,
-                  publication: created.value.publication,
-                );
+              )) {
+                publication = SwiftPmBinaryArtifactPublication.reused;
               }
+            } else if (await preparer.validatesMaterializedBinaryArtifact(
+              source: verified.single.artifactPath,
+              destination: fallbackDestination,
+            )) {
+              publication = SwiftPmBinaryArtifactPublication.reused;
+            } else {
+              publication = await recoverFinalBinaryArtifact(
+                provenance: candidate,
+                preparedArtifactPath: verified.single.artifactPath,
+                binaryArtifactStore: binaryArtifactStore,
+                destination: destination,
+                materializedDestination: fallbackDestination,
+                attemptState: attemptState,
+                packageLocalArtifactJunctionCapability:
+                    packageLocalArtifactJunctionCapability,
+                createAlias: createAlias,
+                materialize: materialize,
+                windows: windows,
+              );
             }
-            rethrow;
+            if (publication == null) continue;
+            final usedAlias =
+                packageLocalArtifactJunctionCapability &&
+                await preparer.validatesBinaryArtifactDestination(
+                  source: verified.single.artifactPath,
+                  destination: destination,
+                  alias: true,
+                );
+            final publishedDestination = usedAlias
+                ? destination
+                : fallbackDestination;
+            if (publication == SwiftPmBinaryArtifactPublication.published()) {
+              createdDestinations[publishedDestination] = (
+                source: verified.single.artifactPath,
+                publication: publication,
+              );
+            }
+            manifest = SwiftPmBinaryTargetManifest.rewriteToLocalPaths(
+              manifest,
+              {candidate.target: relative},
+            );
+
+            changed = true;
+          }
+          if (!_sameBytes(originalBytes, utf8.encode(manifest))) {
+            try {
+              await _clearPlaceholderAttributes(entity.path);
+              await write(entity.path, utf8.encode(manifest));
+            } on Object {
+              for (final created
+                  in createdDestinations.entries.toList().reversed) {
+                if (removeDestination != null) {
+                  await remove(created.key);
+                } else if (packageLocalArtifactJunctionCapability &&
+                    p.isWithin(package.path, created.key)) {
+                  await preparer.removeBinaryArtifactAlias(created.key);
+                } else {
+                  await preparer.removeMaterializedBinaryArtifact(
+                    source: created.value.source,
+                    destination: created.key,
+                    publication: created.value.publication,
+                  );
+                }
+              }
+              rethrow;
+            }
           }
         }
       }
@@ -4368,7 +4418,54 @@ $diagnosticsStart$registrations$diagnosticsEnd}
     return true;
   }
 
+  static Future<void> _copyResolvedArtifactTree(
+    String source,
+    String destination, {
+    String? artifactRoot,
+    bool Function(String name)? includeTopLevel,
+  }) async {
+    final root = artifactRoot ?? p.normalize(p.absolute(source));
+    await Directory(destination).create(recursive: true);
+    await for (final entity in Directory(source).list(followLinks: false)) {
+      final name = p.basename(entity.path);
+      if (artifactRoot == null &&
+          includeTopLevel != null &&
+          !includeTopLevel(name)) {
+        continue;
+      }
+      final target = p.join(destination, name);
+
+      final resolved = p.normalize(
+        p.absolute(
+          entity is Link ? entity.resolveSymbolicLinksSync() : entity.path,
+        ),
+      );
+      if (!p.equals(root, resolved) && !p.isWithin(root, resolved)) {
+        throw FlutterBuildError(
+          'SwiftPM binary artifact link escapes its artifact root',
+          isSecurityFailure: true,
+        );
+      }
+      if (Directory(resolved).existsSync()) {
+        await _copyResolvedArtifactTree(
+          resolved,
+          target,
+          artifactRoot: root,
+          includeTopLevel: includeTopLevel,
+        );
+      } else if (File(resolved).existsSync()) {
+        await File(resolved).copy(target);
+      } else {
+        throw FlutterBuildError(
+          'SwiftPM binary artifact contains an unresolved link',
+          isSecurityFailure: true,
+        );
+      }
+    }
+  }
+
   /// Mirrors [source] into [destination], resolving links to their
+
   /// targets, rewriting only differing files, and pruning entries the
   /// source no longer has. [preserve] names top-level entries the caller
   /// owns; [excludedSourcePath] guards against copying a destination that
@@ -4508,13 +4605,6 @@ $diagnosticsStart$registrations$diagnosticsEnd}
 
     await Link(alias).create(p.relative(target, from: p.dirname(alias)));
   }
-
-  static String _binaryArtifactFallbackPath(
-    String fallback,
-    String checksum,
-    String target,
-    String artifact,
-  ) => p.join(fallback, checksum.toLowerCase(), target, artifact);
 
   static String _jsonPath(String path) => path.replaceAll(r'\', '/');
 
