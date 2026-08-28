@@ -89,7 +89,7 @@ final class SwiftPmGateEvidence {
             root: root,
             toolchainIdentity: toolchainIdentity,
             sdkIdentity: sdkIdentity,
-          ).timeout(const Duration(minutes: 2), onTimeout: () => false);
+          ).timeout(const Duration(minutes: 10), onTimeout: () => false);
           if (!passed) return false;
           final binding =
               runtime ??
