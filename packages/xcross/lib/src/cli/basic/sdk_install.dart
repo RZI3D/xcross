@@ -452,7 +452,7 @@ abstract final class SdkInstall {
     run,
   ) async {
     final file = File(File(path).resolveSymbolicLinksSync());
-    final result = await run(file.path, const ['--version']);
+    final result = await run(path, const ['--version']);
     if (result.exitCode != 0) {
       throw StateError('$name --version failed: ${result.stderr.trim()}');
     }

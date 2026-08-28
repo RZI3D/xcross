@@ -235,6 +235,45 @@ void main() {
       await temp.delete(recursive: true);
     }
   });
+  test(
+    'toolchain identity invokes a driver through its located name',
+    () async {
+      final temp = await Directory.systemTemp.createTemp('xcross-driver-name-');
+      try {
+        final driver = File(p.join(temp.path, 'swift-driver'))
+          ..writeAsStringSync('driver');
+        final swift = Link(p.join(temp.path, 'swift'))..createSync(driver.path);
+        final swiftc = Link(p.join(temp.path, 'swiftc'))
+          ..createSync(driver.path);
+        final other = File(p.join(temp.path, 'tool'))
+          ..writeAsStringSync('tool');
+        final invoked = <String>[];
+
+        final identity = await SdkInstall.swiftPmBuildToolchainIdentity(
+          cCompilerPath: other.path,
+          cxxCompilerPath: other.path,
+          linkerPath: other.path,
+          librarianPath: other.path,
+          windows: false,
+          locateTool: (name) async =>
+              name == 'swift' ? swift.path : swiftc.path,
+          runProcess: (executable, arguments) async {
+            invoked.add(executable);
+            return const CapturedProcess(0, 'Swift version 6.3\n', '');
+          },
+        );
+
+        expect(invoked, [swift.path, swiftc.path]);
+        expect(
+          (identity['swift']! as Map<String, Object>)['path'],
+          driver.resolveSymbolicLinksSync(),
+        );
+      } finally {
+        await temp.delete(recursive: true);
+      }
+    },
+  );
+
   test('replacing each non-driver tool invalidates gate evidence', () async {
     final temp = await Directory.systemTemp.createTemp('xcross-gate-tools-');
     try {
