@@ -143,6 +143,33 @@ void main() {
     );
   });
 
+  test('Windows resolves xcross as the tool forwarder', () async {
+    expect(
+      await resolveNativeAssetToolForwarder(
+        r'C:\bundle\xcross.exe',
+        windows: true,
+        findInstalled: () async => fail('must not search'),
+      ),
+      r'C:\bundle\xcross.exe',
+    );
+    expect(
+      await resolveNativeAssetToolForwarder(
+        r'C:\flutter\bin\cache\dart-sdk\bin\dart.exe',
+        windows: true,
+        findInstalled: () async => r'C:\installed\xcross.exe',
+      ),
+      r'C:\installed\xcross.exe',
+    );
+    expect(
+      await resolveNativeAssetToolForwarder(
+        r'C:\flutter\bin\cache\dart-sdk\bin\dartaotruntime',
+        windows: true,
+        findInstalled: () async => null,
+      ),
+      isNull,
+    );
+  });
+
   test('Apple tool shims expose configured tools including xcrun', () async {
     if (Platform.isWindows) return;
     final tmp = await Directory.systemTemp.createTemp('apple_shims_test-');

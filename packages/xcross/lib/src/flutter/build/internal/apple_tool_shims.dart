@@ -77,6 +77,16 @@ Future<String> resolveXcrun() async {
 Future<String> resolveHostCompiler(String clang, {bool? windows}) async =>
     (windows ?? Platform.isWindows) ? clang : ProcessRunner.locateTool('cc');
 
+Future<String?> resolveNativeAssetToolForwarder(
+  String executable, {
+  bool? windows,
+  Future<String?> Function()? findInstalled,
+}) async {
+  if (!(windows ?? Platform.isWindows)) return executable;
+  if (p.basename(executable).toLowerCase() == 'xcross.exe') return executable;
+  return (findInstalled ?? () => ProcessRunner.which('xcross.exe'))();
+}
+
 Future<String> _locateArchiver(String clang) async {
   final besideClang = p.join(
     p.dirname(clang),

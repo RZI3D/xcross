@@ -77,7 +77,9 @@ final class IosNativeAssetsBuilder {
       await installAppleToolShims(
         shims.path,
         tools,
-        toolForwarderExecutable: Platform.resolvedExecutable,
+        toolForwarderExecutable: await resolveNativeAssetToolForwarder(
+          Platform.resolvedExecutable,
+        ),
       );
       await _runFlutterAssemble(output, shims.path, tools.iosSdk);
     } finally {
