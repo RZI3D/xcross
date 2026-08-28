@@ -665,8 +665,9 @@ abstract final class GeneratedPluginsPackage {
     bool? windows,
   }) async {
     if (!(windows ?? Platform.isWindows)) return;
-    final root = Directory(packageRoot);
+    final root = Directory(_ioPath(packageRoot));
     if (!root.existsSync()) return;
+
     final store = SwiftPmBinaryArtifactStore(binaryArtifactStore);
     final preparer = SwiftPmBinaryArtifactPreparer(store: store);
     final runPrepare = prepare ?? preparer.prepare;
@@ -718,15 +719,16 @@ abstract final class GeneratedPluginsPackage {
               attempt: 0,
             );
             final artifact = result.entry.artifactPath;
+            final relative = p.join(
+              '.xa',
+              target.checksum.toLowerCase().substring(0, 16),
+              p.basename(artifact),
+            );
+
             var aliased = false;
             if (packageLocalArtifactJunctionCapability) {
-              final relative = p.join(
-                'xcross-artifacts',
-                target.checksum.toLowerCase(),
-                target.name,
-                p.basename(artifact),
-              );
               final alias = p.join(manifestFile.parent.path, relative);
+
               await Directory(p.dirname(alias)).create(recursive: true);
               try {
                 final existed =
@@ -762,16 +764,12 @@ abstract final class GeneratedPluginsPackage {
               }
             }
             if (!aliased) {
-              final destination = _binaryArtifactFallbackPath(
-                binaryArtifactFallback,
-                target.checksum,
-                target.name,
-                p.basename(artifact),
-              );
+              final destination = p.join(manifestFile.parent.path, relative);
               final publication = await copy(
                 source: artifact,
                 destination: destination,
               );
+
               if (publication == SwiftPmBinaryArtifactPublication.published()) {
                 createdDestination = destination;
                 createdDestinations[destination] = (
@@ -779,7 +777,7 @@ abstract final class GeneratedPluginsPackage {
                   publication: publication,
                 );
               }
-              localPaths[target] = _swiftPath(destination);
+              localPaths[target] = relative;
             }
           } on FlutterBuildError catch (error) {
             if (error.isSecurityFailure) rethrow;
@@ -4051,6 +4049,12 @@ let package = Package(
       ], environment: environment);
       if (head.exitCode == 0 &&
           head.stdout.trim().toLowerCase() == ref.toLowerCase()) {
+        await ProcessRunner.runChecked(
+          git,
+          ['-C', destination, 'reset', '--hard', 'HEAD'],
+          environment: environment,
+          label: 'git reset vendored package',
+        );
         return;
       }
     }
@@ -4293,7 +4297,7 @@ $diagnosticsStart$registrations$diagnosticsEnd}
   }
 
   static int _directoryBytes(String path) {
-    final directory = Directory(path);
+    final directory = Directory(_ioPath(path));
     if (!directory.existsSync()) return 0;
     var bytes = 0;
     for (final entity in directory.listSync(
@@ -4303,6 +4307,16 @@ $diagnosticsStart$registrations$diagnosticsEnd}
       if (entity is File) bytes += entity.lengthSync();
     }
     return bytes;
+  }
+
+  static String _ioPath(String path) {
+    if (!Platform.isWindows) return path;
+    final absolute = p.windows.normalize(p.windows.absolute(path));
+    if (absolute.startsWith(r'\\?\')) return absolute;
+    if (absolute.startsWith(r'\\')) {
+      return '${r'\\?\UNC\'}${absolute.substring(2)}';
+    }
+    return '${r'\\?\'}$absolute';
   }
 
   static void _traceBinaryOperation({

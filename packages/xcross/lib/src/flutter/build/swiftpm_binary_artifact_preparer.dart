@@ -340,9 +340,8 @@ final class SwiftPmBinaryArtifactPreparer {
     }
     final parent = Directory(p.dirname(destination));
     await parent.create(recursive: true);
-    final temporary = await parent.createTemp(
-      '.${p.basename(destination)}.xcross-copy-',
-    );
+    final temporary = await parent.createTemp('.x-');
+
     var cleanupTemporary = true;
     try {
       final start =
@@ -350,8 +349,9 @@ final class SwiftPmBinaryArtifactPreparer {
           (executable, arguments) async =>
               _IoBinaryCopyProcess(await Process.start(executable, arguments));
       final process = await start('robocopy', [
-        source,
-        temporary.path,
+        _processPath(source),
+        _processPath(temporary.path),
+
         '/E',
         '/R:0',
         '/W:0',
@@ -532,8 +532,10 @@ final class SwiftPmBinaryArtifactPreparer {
             FileSystemEntityType.directory) {
       return false;
     }
-    final sourceRoot = Directory(source);
-    final destinationRoot = Directory(destination);
+    final sourcePath = _ioPath(source);
+    final destinationPath = _ioPath(destination);
+    final sourceRoot = Directory(sourcePath);
+    final destinationRoot = Directory(destinationPath);
     final sourceEntities = sourceRoot.listSync(
       recursive: true,
       followLinks: false,
@@ -545,10 +547,11 @@ final class SwiftPmBinaryArtifactPreparer {
     if (sourceEntities.length != destinationEntities.length) return false;
     final destinationByPath = {
       for (final entity in destinationEntities)
-        _pathKey(p.relative(entity.path, from: destination)): entity,
+        _pathKey(p.relative(entity.path, from: destinationPath)): entity,
     };
     for (final entity in sourceEntities) {
-      final relative = _pathKey(p.relative(entity.path, from: source));
+      final relative = _pathKey(p.relative(entity.path, from: sourcePath));
+
       final other = destinationByPath[relative];
       final type = FileSystemEntity.typeSync(entity.path, followLinks: false);
       if (other == null ||
@@ -564,6 +567,26 @@ final class SwiftPmBinaryArtifactPreparer {
       }
     }
     return true;
+  }
+
+  static String _processPath(String path) {
+    if (!Platform.isWindows) return path;
+    final normalized = p.windows.normalize(p.windows.absolute(path));
+    if (normalized.startsWith(r'\\?\UNC\')) {
+      return r'\\' + normalized.substring(8);
+    }
+    if (normalized.startsWith(r'\\?\')) return normalized.substring(4);
+    return normalized;
+  }
+
+  static String _ioPath(String path) {
+    if (!Platform.isWindows) return path;
+    final absolute = p.windows.normalize(p.windows.absolute(path));
+    if (absolute.startsWith(r'\\?\')) return absolute;
+    if (absolute.startsWith(r'\\')) {
+      return '${r'\\?\UNC\'}${absolute.substring(2)}';
+    }
+    return '${r'\\?\'}$absolute';
   }
 
   static bool _sameBytes(List<int> first, List<int> second) {

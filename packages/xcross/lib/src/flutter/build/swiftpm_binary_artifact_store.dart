@@ -298,7 +298,9 @@ final class SwiftPmBinaryArtifactStore {
     Directory destination,
   ) async {
     final names = <String>{};
-    await for (final entity in source.list(followLinks: false)) {
+    await for (final entity in _ioDirectory(
+      source.path,
+    ).list(followLinks: false)) {
       final name = p.basename(entity.path);
       if (!_isSafeComponent(name) || !names.add(name.toLowerCase())) {
         throw FlutterBuildError(
@@ -314,9 +316,9 @@ final class SwiftPmBinaryArtifactStore {
         );
       }
       if (entity is File) {
-        await entity.copy(target);
+        await entity.copy(_ioPath(target));
       } else if (entity is Directory) {
-        final child = await Directory(target).create();
+        final child = await _ioDirectory(target).create();
         await _copyDirectoryContents(entity, child);
       } else {
         throw FlutterBuildError(
@@ -327,10 +329,23 @@ final class SwiftPmBinaryArtifactStore {
   }
 
   static Future<bool> _containsLink(Directory root) async {
-    await for (final entity in root.list(recursive: true, followLinks: false)) {
+    await for (final entity in _ioDirectory(
+      root.path,
+    ).list(recursive: true, followLinks: false)) {
       if (await _isLinkOrReparsePoint(entity.path)) return true;
     }
     return false;
+  }
+
+  static Directory _ioDirectory(String path) => Directory(_ioPath(path));
+
+  static String _ioPath(String path) {
+    if (!Platform.isWindows || path.startsWith(r'\\?\')) return path;
+    final absolute = p.windows.normalize(p.windows.absolute(path));
+    if (absolute.startsWith(r'\\')) {
+      return '${r'\\?\UNC\'}${absolute.substring(2)}';
+    }
+    return '${r'\\?\'}$absolute';
   }
 
   static Future<bool> _isLinkOrReparsePoint(String path) async {
@@ -348,8 +363,12 @@ final class SwiftPmBinaryArtifactStore {
   }
 
   static Future<String> _treeDigest(Directory root) async {
-    final entries = root.listSync(recursive: true, followLinks: false)
-      ..sort((left, right) => left.path.compareTo(right.path));
+    final rootPath = _ioPath(root.path);
+    final entries = _ioDirectory(rootPath).listSync(
+      recursive: true,
+      followLinks: false,
+    )..sort((left, right) => left.path.compareTo(right.path));
+
     Digest? digest;
     final input = sha256.startChunkedConversion(
       ChunkedConversionSink.withCallback((digests) => digest = digests.single),
@@ -370,8 +389,9 @@ final class SwiftPmBinaryArtifactStore {
         );
       }
       final relative = p
-          .relative(entity.path, from: root.path)
+          .relative(entity.path, from: rootPath)
           .replaceAll(r'\', '/');
+
       if (!foldedPaths.add(relative.toLowerCase())) {
         throw FlutterBuildError(
           'SwiftPM binary artifact target tree contains an unsafe or case-fold-colliding path',

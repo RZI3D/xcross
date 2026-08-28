@@ -1335,18 +1335,24 @@ let package = Package(
           );
 
           final stable = p.join(
-            fallback,
-            firstChecksum,
-            'First',
+            packageRoot,
+            '.xa',
+            firstChecksum.substring(0, 16),
             'First.xcframework',
           );
-          expect(manifestFile.readAsStringSync(), contains(swiftPath(stable)));
-          final packageLocal = Directory(
-            p.join(packageRoot, 'xcross-artifacts'),
+          expect(
+            manifestFile.readAsStringSync(),
+            contains(
+              p
+                  .join(
+                    '.xa',
+                    firstChecksum.substring(0, 16),
+                    'First.xcframework',
+                  )
+                  .replaceAll(r'\', r'\\'),
+            ),
           );
-          if (packageLocal.existsSync()) {
-            await packageLocal.delete(recursive: true);
-          }
+
           expect(Directory(stable).existsSync(), isTrue);
         }
 
@@ -1385,8 +1391,8 @@ let package = Package(
               windows: true,
             );
 
-        expect(recovery, SwiftPmBinaryArtifactPublication.reused);
-        expect(materializations, 1);
+        expect(recovery, SwiftPmBinaryArtifactPublication.published());
+        expect(materializations, 3);
       },
     );
 
@@ -1416,16 +1422,31 @@ let package = Package(
         );
 
         expect(
-          copiedTo,
-          p.join(
-            tmp.path,
-            'fallback',
-            firstChecksum,
-            'First',
-            'First.xcframework',
+          p.windows.normalize(copiedTo!),
+          endsWith(
+            p.windows.normalize(
+              p.join(
+                packageRoot,
+                '.xa',
+                firstChecksum.substring(0, 16),
+                'First.xcframework',
+              ),
+            ),
           ),
         );
-        expect(manifestFile.readAsStringSync(), contains(swiftPath(copiedTo!)));
+
+        expect(
+          manifestFile.readAsStringSync(),
+          contains(
+            p
+                .join(
+                  '.xa',
+                  firstChecksum.substring(0, 16),
+                  'First.xcframework',
+                )
+                .replaceAll(r'\', r'\\'),
+          ),
+        );
       },
     );
 
