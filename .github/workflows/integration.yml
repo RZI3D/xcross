@@ -290,7 +290,9 @@ jobs:
             packages/xcross/test/flutter/build/swiftpm_binary_artifact_preparer_test.dart `
             --name $name --reporter expanded 2>&1 | Tee-Object -Variable lines |
             Out-String)
-          if ($LASTEXITCODE -ne 0) { throw 'package-local junction gate failed' }
+          if ($LASTEXITCODE -ne 0) {
+            throw "package-local junction gate failed:`n$output"
+          }
           if ($output -match '(?im)\bskip(?:ped)?\b' -or $output -notmatch [regex]::Escape($name)) {
             throw "package-local junction gate did not execute:`n$output"
           }
@@ -307,7 +309,9 @@ jobs:
             packages/xcross/test/flutter/build/swiftpm_binary_artifact_preparer_test.dart `
             --name $name --reporter expanded 2>&1 | Tee-Object -Variable lines |
             Out-String)
-          if ($LASTEXITCODE -ne 0) { throw 'SwiftPM artifact junction gate failed' }
+          if ($LASTEXITCODE -ne 0) {
+            throw "SwiftPM artifact junction gate failed:`n$output"
+          }
           if ($output -match '(?im)\bskip(?:ped)?\b' -or $output -notmatch [regex]::Escape($name)) {
             throw "SwiftPM artifact junction gate did not execute:`n$output"
           }
