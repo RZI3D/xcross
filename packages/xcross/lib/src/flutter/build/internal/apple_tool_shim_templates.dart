@@ -55,7 +55,7 @@ String renderPowerShellCompilerShim({
   required String deploymentTarget,
 }) =>
     '''
-\$Arguments = \$args
+\$Arguments = @(\$args | ForEach-Object { \$_.TrimEnd("`r") })
 \$isAppleTarget = \$false; \$hasTarget = \$false; \$hasSysroot = \$false; \$hasDeployment = \$false
 \$hasFuseLd = \$false; \$hasLdPath = \$false
 for (\$i = 0; \$i -lt \$Arguments.Count; \$i++) {

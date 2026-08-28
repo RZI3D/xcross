@@ -109,6 +109,21 @@ void main() {
     }
   });
 
+  test('Windows compiler shim strips carriage returns from arguments', () {
+    final shim = renderPowerShellCompilerShim(
+      iosSdk: r'C:\SDK',
+      clang: r'C:\LLVM\clang.exe',
+      hostCompiler: r'C:\LLVM\clang.exe',
+      linker: r'C:\LLVM\ld64.lld.exe',
+      deploymentTarget: '13.0',
+    );
+
+    expect(
+      shim,
+      contains(r'$Arguments = @($args | ForEach-Object { $_.TrimEnd('),
+    );
+  });
+
   test('Windows uses the resolved clang as its host C compiler', () async {
     expect(
       await resolveHostCompiler(
