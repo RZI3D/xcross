@@ -75,6 +75,7 @@ if (!\$hasSysroot) { \$defaults += @('-isysroot', ${powerShellQuote(iosSdk)}) }
 if (!\$hasDeployment) { \$defaults += '-miphoneos-version-min=$deploymentTarget' }
 if (!\$hasFuseLd) { \$defaults += '-fuse-ld=lld' }
 if (!\$hasLdPath) { \$defaults += ${powerShellQuote('--ld-path=$linker')} }
+\$defaults += @('-Wl,-arch,arm64', '-Wl,-platform_version,ios,$deploymentTarget,26.5')
 & ${powerShellQuote(clang)} @(\$defaults + \$Arguments)
 exit \$LASTEXITCODE
 ''';

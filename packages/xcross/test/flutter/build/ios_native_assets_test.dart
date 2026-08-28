@@ -122,6 +122,10 @@ void main() {
       shim,
       contains(r'$Arguments = @($args | ForEach-Object { $_.TrimEnd('),
     );
+    expect(
+      shim,
+      contains("'-Wl,-arch,arm64', '-Wl,-platform_version,ios,13.0,26.5'"),
+    );
   });
 
   test('Windows uses the resolved clang as its host C compiler', () async {
