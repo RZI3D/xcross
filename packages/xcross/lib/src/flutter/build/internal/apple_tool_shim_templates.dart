@@ -75,7 +75,7 @@ if (!\$hasSysroot) { \$defaults += @('-isysroot', ${powerShellQuote(iosSdk)}) }
 if (!\$hasDeployment) { \$defaults += '-miphoneos-version-min=$deploymentTarget' }
 if (!\$hasFuseLd) { \$defaults += '-fuse-ld=lld' }
 if (!\$hasLdPath) { \$defaults += ${powerShellQuote('--ld-path=$linker')} }
-\$defaults += @('-Xlinker', '-arch', '-Xlinker', 'arm64', '-Xlinker', '-platform_version', '-Xlinker', 'ios', '-Xlinker', '$deploymentTarget', '-Xlinker', '26.5')
+\$defaults += @('-Wl,-arch,arm64', '-Wl,-platform_version,ios,$deploymentTarget,26.5')
 \$compiler = ${powerShellQuote(clang)}
 \$compilerArguments = @(\$defaults + \$Arguments)
 & \$compiler @compilerArguments
