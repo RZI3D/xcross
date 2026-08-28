@@ -43,6 +43,9 @@ final class FlutterPacker {
   final String projectRoot;
   final String bundleId;
   final FlutterBuildOptions options;
+  final bool swiftPmArtifactJunctionCapability;
+  final bool packageLocalArtifactJunctionCapability;
+  final ArtifactJunctionCapabilityResolver? artifactJunctionCapabilityResolver;
 
   /// App name read from `pubspec.yaml` `name:` key.
   final String appName;
@@ -51,6 +54,9 @@ final class FlutterPacker {
     required this.projectRoot,
     required this.bundleId,
     required this.options,
+    this.swiftPmArtifactJunctionCapability = false,
+    this.packageLocalArtifactJunctionCapability = false,
+    this.artifactJunctionCapabilityResolver,
   }) : appName = PubspecInfo.loadSync(projectRoot).name,
        _versions = IosBundleVersions.resolve(
          projectRoot,
@@ -257,6 +263,12 @@ final class FlutterPacker {
     final xcframework = IosEngineCache(
       flutterRoot: flutterRoot,
     ).flutterXcframework;
+    final capabilities =
+        await artifactJunctionCapabilityResolver?.call() ??
+        (
+          swiftPmArtifact: swiftPmArtifactJunctionCapability,
+          packageLocalArtifact: packageLocalArtifactJunctionCapability,
+        );
 
     final workspace = SwiftPmWorkspace.forProject(projectRoot);
     return GeneratedPluginsPackage.build(
@@ -266,6 +278,8 @@ final class FlutterPacker {
       flutterXcframework: xcframework,
       deploymentTarget: deploymentTarget,
       verbose: verbose,
+      swiftPmArtifactJunctionCapability: capabilities.swiftPmArtifact,
+      packageLocalArtifactJunctionCapability: capabilities.packageLocalArtifact,
     );
   }
 

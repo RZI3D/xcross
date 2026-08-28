@@ -39,7 +39,7 @@ jobs:
 
       - name: Update example submodule
         shell: bash
-        run: git submodule update --init --remote
+        run: git submodule update --init --checkout examples
 
       - name: Use JDK 21 on Linux
         if: runner.os == 'Linux'
@@ -249,6 +249,71 @@ jobs:
       - name: Restore cached Darwin SDK
         uses: ./.github/actions/setup-darwin-sdk
 
+      - name: Preflight Windows SwiftPM junction gates
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $env:XCROSS_CACHE_DIR = "$env:RUNNER_TEMP\xcross-cache"
+          "XCROSS_CACHE_DIR=$env:XCROSS_CACHE_DIR" |
+            Out-File $env:GITHUB_ENV -Encoding utf8 -Append
+          if ([string]::IsNullOrWhiteSpace($env:XCROSS_SWIFT_SDKS_PATH) -or
+              -not (Test-Path $env:XCROSS_SWIFT_SDKS_PATH -PathType Container)) {
+            throw 'XCROSS_SWIFT_SDKS_PATH is missing or is not a directory'
+          }
+          foreach ($tool in @(
+            'swift',
+            'swift-package',
+            'swift-build',
+            'swiftc',
+            'clang',
+            'clang++',
+            'ld64.lld'
+          )) {
+            if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) {
+              throw "Required junction gate tool is unavailable: $tool"
+            }
+          }
+          $sdks = (& swift sdk list --swift-sdks-path $env:XCROSS_SWIFT_SDKS_PATH |
+            Out-String)
+          if ($LASTEXITCODE -ne 0 -or $sdks -notmatch 'xcross-darwin') {
+            throw "Required xcross-darwin Swift SDK is unavailable:`n$sdks"
+          }
+
+      - name: Gate package-local SwiftPM junctions on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $name = 'package-local junction survives repeated resolve and cross-build'
+          $output = (dart test `
+            packages/xcross/test/flutter/build/swiftpm_binary_artifact_preparer_test.dart `
+            --name $name --reporter expanded 2>&1 | Tee-Object -Variable lines |
+            Out-String)
+          if ($LASTEXITCODE -ne 0) { throw 'package-local junction gate failed' }
+          if ($output -match '(?im)\bskip(?:ped)?\b' -or $output -notmatch [regex]::Escape($name)) {
+            throw "package-local junction gate did not execute:`n$output"
+          }
+          dart run packages/xcross/tool/swiftpm_gate_evidence.dart `
+            record packageLocalArtifact
+
+      - name: Gate SwiftPM artifact junctions on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $name = 'SwiftPM artifact junction survives repeated resolve and cross-build'
+          $output = (dart test `
+            packages/xcross/test/flutter/build/swiftpm_binary_artifact_preparer_test.dart `
+            --name $name --reporter expanded 2>&1 | Tee-Object -Variable lines |
+            Out-String)
+          if ($LASTEXITCODE -ne 0) { throw 'SwiftPM artifact junction gate failed' }
+          if ($output -match '(?im)\bskip(?:ped)?\b' -or $output -notmatch [regex]::Escape($name)) {
+            throw "SwiftPM artifact junction gate did not execute:`n$output"
+          }
+          dart run packages/xcross/tool/swiftpm_gate_evidence.dart `
+            record swiftPmArtifact
+
       - name: Restore cached Compose toolchains
         uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
         with:
@@ -316,6 +381,85 @@ jobs:
             }
           done
 
+      - name: Prove deterministic SwiftPM binary warm reuse on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $fixtureRoot = "$env:RUNNER_TEMP\swiftpm-binary-fixture"
+          $sample = "$env:RUNNER_TEMP\swiftpm-binary-sample"
+          dart run packages/xcross/tool/swiftpm_binary_fixture.dart `
+            $fixtureRoot http://127.0.0.1:8123/BinaryFixture.zip
+          $serve = Start-Process python -ArgumentList @(
+            '-m', 'http.server', '8123', '--bind', '127.0.0.1',
+            '--directory', $fixtureRoot
+          ) -PassThru -WindowStyle Hidden
+          try {
+            flutter create --platforms=ios --org com.example.xcrossci `
+              --project-name swiftpm_binary_sample $sample
+            Set-Location $sample
+            $plugin = (Resolve-Path `
+              "$fixtureRoot\binary_fixture_plugin").Path.Replace('\', '/')
+            flutter pub add -- ('binary_fixture_plugin@{path: ' + $plugin + '}')
+            $xcross = "$env:RUNNER_TEMP\xcross-bundle\bin\xcross.exe"
+
+            $firstWatch = [Diagnostics.Stopwatch]::StartNew()
+            & $xcross flutter build --verbose *>&1 |
+              Tee-Object "$env:RUNNER_TEMP\first-build.log"
+            $firstWatch.Stop()
+            if ($LASTEXITCODE -ne 0) { throw 'cold binary fixture build failed' }
+
+            $fingerprints = @(Get-ChildItem `
+              "$env:XCROSS_CACHE_DIR\swiftpm" -Recurse -File `
+              -Filter '.xcross-build-fingerprint')
+            if ($fingerprints.Count -ne 1) {
+              throw "Expected one generated SwiftPM aggregate fingerprint, found $($fingerprints.Count)"
+            }
+            Remove-Item $fingerprints[0].FullName -Force
+
+            $secondWatch = [Diagnostics.Stopwatch]::StartNew()
+            & $xcross flutter build --verbose *>&1 |
+              Tee-Object "$env:RUNNER_TEMP\second-build.log"
+            $secondWatch.Stop()
+            if ($LASTEXITCODE -ne 0) { throw 'warm binary fixture build failed' }
+
+            $first = Get-Content "$env:RUNNER_TEMP\first-build.log" -Raw
+            if ($first -notmatch 'binary target=BinaryFixture operation=download ') {
+              throw 'cold build did not download the deterministic binary artifact'
+            }
+            if ($first -match 'binary target=BinaryFixture operation=(reuse|copy) ') {
+              throw 'cold build reused or copied the deterministic binary artifact'
+            }
+            $second = Get-Content "$env:RUNNER_TEMP\second-build.log" -Raw
+            if ($second -notmatch 'binary target=BinaryFixture operation=reuse ') {
+              throw 'missing binary artifact reuse trace after forced preparation'
+            }
+            if ($second -match 'binary target=BinaryFixture operation=(download|extract|copy) ') {
+              throw 'warm build repeated binary artifact work'
+            }
+            $store = Join-Path $env:XCROSS_CACHE_DIR `
+              'swiftpm\binary-artifacts-v1'
+            $storeBytes = (Get-ChildItem $store -File -Recurse |
+              Measure-Object Length -Sum).Sum
+            function BinaryPhaseMilliseconds([string] $log) {
+              $sum = 0
+              [regex]::Matches($log, 'binary target=BinaryFixture .*?elapsed_ms=(\d+)') |
+                ForEach-Object { $sum += [int64]$_.Groups[1].Value }
+              return $sum
+            }
+            Write-Host "binary fixture cold_phase_ms=$(BinaryPhaseMilliseconds $first)"
+            Write-Host "binary fixture warm_phase_ms=$(BinaryPhaseMilliseconds $second)"
+            Write-Host "binary fixture cold_build_ms=$($firstWatch.ElapsedMilliseconds)"
+            Write-Host "binary fixture warm_build_ms=$($secondWatch.ElapsedMilliseconds)"
+            Write-Host "binary fixture store_bytes=$storeBytes"
+          } finally {
+            if ($serve -and -not $serve.HasExited) {
+              Stop-Process -Id $serve.Id -Force
+              Wait-Process -Id $serve.Id -ErrorAction SilentlyContinue
+            }
+            Set-Location $env:GITHUB_WORKSPACE
+          }
+
       - name: Build examples on Windows
         if: runner.os == 'Windows'
         shell: pwsh
@@ -324,7 +468,15 @@ jobs:
           $xcross = "$env:RUNNER_TEMP\xcross-bundle\bin\xcross.exe"
           & $xcross compose setup
           if ($LASTEXITCODE -ne 0) { throw 'xcross compose setup failed' }
+          $firebase = "$env:GITHUB_WORKSPACE\examples\firebase_example"
+          if (-not (Test-Path (Join-Path $firebase 'pubspec.yaml') -PathType Leaf)) {
+            throw 'Pinned examples revision lacks required firebase_example'
+          }
+          Set-Location $firebase
+          & $xcross flutter build
+          if ($LASTEXITCODE -ne 0) { throw 'firebase_example build failed' }
           Get-ChildItem "$env:GITHUB_WORKSPACE\examples" -Directory |
+            Where-Object Name -ne 'firebase_example' |
             ForEach-Object {
               $command = if (Test-Path (Join-Path $_ 'pubspec.yaml')) {
                 'flutter'

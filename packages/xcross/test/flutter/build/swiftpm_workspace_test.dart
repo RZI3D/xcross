@@ -51,7 +51,16 @@ void main() {
       environment: {'XCROSS_CACHE_DIR': cache},
     );
 
+    expect(workspace.cacheRoot, cache);
     expect(p.isWithin(cache, workspace.root), isTrue);
+    expect(
+      workspace.binaryArtifactStore,
+      p.join(cache, 'swiftpm', 'binary-artifacts-v1'),
+    );
+    expect(
+      workspace.binaryArtifactFallback,
+      p.join(workspace.root, 'binary-artifacts'),
+    );
     expect(workspace.packages, p.join(workspace.root, 'plugins'));
     expect(workspace.scratch, p.join(workspace.root, 'scratch'));
     expect(workspace.vendor, p.join(workspace.root, 'vendor'));
@@ -65,10 +74,7 @@ void main() {
       windows: true,
     );
 
-    expect(
-      p.isWithin(p.join(localAppData, 'xcross'), workspace.root),
-      isTrue,
-    );
+    expect(p.isWithin(p.join(localAppData, 'xcross'), workspace.root), isTrue);
   });
 
   test('uses XDG_CACHE_HOME on POSIX', () {

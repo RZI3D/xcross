@@ -188,5 +188,16 @@ void main() {
       final results = XcrossCli.buildRunner().argParser.parse(['-v']);
       expect(results.flag('verbose'), isTrue);
     });
+
+    test('verbose is accepted after the flutter build command', () {
+      final results = XcrossCli.buildRunner().argParser.parse([
+        'flutter',
+        'build',
+        '--verbose',
+      ]);
+      expect(results.flag('verbose'), isTrue);
+      expect(results.command!.name, 'flutter');
+      expect(results.command!.command!.name, 'build');
+    });
   });
 }

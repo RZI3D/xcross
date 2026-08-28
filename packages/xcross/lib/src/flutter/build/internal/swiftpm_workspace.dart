@@ -5,10 +5,15 @@ import 'package:crypto/crypto.dart';
 import 'package:path/path.dart' as p;
 
 final class SwiftPmWorkspace {
-  const SwiftPmWorkspace._(this.root);
+  const SwiftPmWorkspace._({required this.cacheRoot, required this.root});
 
+  final String cacheRoot;
   final String root;
 
+  String get binaryArtifactStore =>
+      p.join(cacheRoot, 'swiftpm', 'binary-artifacts-v1');
+  String get binaryArtifactFallback => p.join(root, 'binary-artifacts');
+  String get gateEvidence => p.join(cacheRoot, 'swiftpm', 'gate-evidence-v2');
   String get packages => p.join(root, 'plugins');
   String get scratch => p.join(root, 'scratch');
   String get vendor => p.join(root, 'vendor');
@@ -28,7 +33,10 @@ final class SwiftPmWorkspace {
         .convert(utf8.encode(canonical))
         .toString()
         .substring(0, 16);
-    return SwiftPmWorkspace._(p.join(base, 'swiftpm', key));
+    return SwiftPmWorkspace._(
+      cacheRoot: base,
+      root: p.join(base, 'swiftpm', key),
+    );
   }
 
   static String _defaultCacheRoot(
