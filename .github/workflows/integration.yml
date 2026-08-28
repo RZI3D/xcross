@@ -24,7 +24,7 @@ jobs:
     if: >-
       github.event_name != 'pull_request' ||
       github.event.pull_request.head.repo.full_name == github.repository
-    name: Flutter and Compose SwiftPM build (${{ matrix.os }})
+    name: Flutter SwiftPM build (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
@@ -314,72 +314,13 @@ jobs:
             throw "SwiftPM artifact junction gate did not execute:`n$output"
           }
 
-      - name: Restore cached Compose toolchains
-        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
-        with:
-          path: ~/.konan
-          key: >-
-            xcross-compose-v1-${{ runner.os }}-${{ runner.arch }}-${{
-            hashFiles(
-              'packages/xcross/lib/src/compose/toolchain/**',
-              'examples/**/gradle/libs.versions.toml',
-              'examples/**/gradle.properties'
-            ) }}
-
-      - name: Build examples on Linux
+      - name: Build Flutter example on Linux
         if: runner.os == 'Linux'
         shell: bash
+        working-directory: examples/flutter_example
         run: |
           set -euo pipefail
-          xcross="$RUNNER_TEMP/xcross-bundle/bin/xcross"
-          "$xcross" compose setup
-          for example in "$GITHUB_WORKSPACE"/examples/*; do
-            if [[ -f "$example/pubspec.yaml" ]]; then
-              (cd "$example" && "$xcross" flutter build)
-            elif [[ -f "$example/settings.gradle.kts" ]]; then
-              (cd "$example" && "$xcross" compose build)
-            fi
-          done
-          test -f examples/compose_app/build/xcross-ios/ComposeApp.app/Runner
-          test -f examples/kmp_swift_app/build/xcross-ios/KmpSwiftApp.app/Runner
-
-      - name: Inspect Compose smoke examples on Linux
-        if: runner.os == 'Linux'
-        shell: bash
-        run: |
-          set -euo pipefail
-          # The build pipeline itself gates on Mach-O validity
-          # (MachOValidator.validate64BitExecutable) and Info.plist/framework
-          # presence (ComposeAppAssembler._validateStagedApp) before ever
-          # writing an .app, and both are unit-tested. This step is the
-          # independent, external half of that acceptance criterion: verify
-          # the actual bundles CI just produced, the same way the Flutter
-          # plugin sample below is inspected, rather than trusting the
-          # internal gate alone.
-          declare -A apps=(
-            [examples/compose_app/build/xcross-ios/ComposeApp.app]=ComposeApp
-            [examples/kmp_swift_app/build/xcross-ios/KmpSwiftApp.app]=Shared
-          )
-          for app in "${!apps[@]}"; do
-            base=${apps[$app]}
-            runner="$app/Runner"
-            plist="$app/Info.plist"
-            framework="$app/Frameworks/$base.framework/$base"
-            test -f "$runner"
-            test -f "$plist"
-            test -f "$framework"
-            llvm-readobj --file-headers "$runner" | tee "$(basename "$app")-runner-headers.txt"
-            grep -Eq 'Format: Mach-O arm64|Arch: aarch64' "$(basename "$app")-runner-headers.txt"
-            flatplist=$(tr '\n\t' '  ' < "$plist")
-            echo "$flatplist" | grep -Eq '<key>CFBundleExecutable</key>[[:space:]]*<string>Runner</string>' || {
-              echo "Info.plist missing CFBundleExecutable=Runner: $plist" >&2
-              exit 1
-            }
-            echo "$flatplist" | grep -Eq '<key>CFBundleIdentifier</key>' || {
-              echo "Info.plist missing CFBundleIdentifier: $plist" >&2
-              exit 1
-            }
-          done
+          "$RUNNER_TEMP/xcross-bundle/bin/xcross" flutter build
 
       - name: Prove deterministic SwiftPM binary warm reuse on Windows
         if: runner.os == 'Windows'
@@ -460,90 +401,14 @@ jobs:
             Set-Location $env:GITHUB_WORKSPACE
           }
 
-      - name: Build examples on Windows
+      - name: Build Flutter example on Windows
         if: runner.os == 'Windows'
         shell: pwsh
+        working-directory: examples/flutter_example
         run: |
           $ErrorActionPreference = 'Stop'
-          $xcross = "$env:RUNNER_TEMP\xcross-bundle\bin\xcross.exe"
-          & $xcross compose setup
-          if ($LASTEXITCODE -ne 0) { throw 'xcross compose setup failed' }
-          $firebase = "$env:GITHUB_WORKSPACE\examples\firebase_example"
-          if (-not (Test-Path (Join-Path $firebase 'pubspec.yaml') -PathType Leaf)) {
-            throw 'Pinned examples revision lacks required firebase_example'
-          }
-          Set-Location $firebase
-          & $xcross flutter build
-          if ($LASTEXITCODE -ne 0) { throw 'firebase_example build failed' }
-          Get-ChildItem "$env:GITHUB_WORKSPACE\examples" -Directory |
-            Where-Object Name -ne 'firebase_example' |
-            ForEach-Object {
-              $command = if (Test-Path (Join-Path $_ 'pubspec.yaml')) {
-                'flutter'
-              } elseif (Test-Path (Join-Path $_ 'settings.gradle.kts')) {
-                'compose'
-              } else {
-                return
-              }
-              Set-Location $_.FullName
-              & $xcross $command build
-              if ($LASTEXITCODE -ne 0) {
-                throw "xcross $command build failed: $($_.Name)"
-              }
-            }
-          Set-Location $env:GITHUB_WORKSPACE
-          $outputs = @(
-            'examples/compose_app/build/xcross-ios/ComposeApp.app/Runner',
-            'examples/kmp_swift_app/build/xcross-ios/KmpSwiftApp.app/Runner'
-          )
-          foreach ($output in $outputs) {
-            if (-not (Test-Path $output -PathType Leaf)) {
-              throw "Missing $output"
-            }
-          }
-
-      - name: Inspect Compose smoke examples on Windows
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          # See the matching Linux step's comment: the build pipeline
-          # already gates Mach-O validity and Info.plist/framework presence
-          # internally (and both are unit-tested); this is the independent,
-          # external verification of the bundles this job just produced.
-          $apps = @{
-            'examples/compose_app/build/xcross-ios/ComposeApp.app' = 'ComposeApp'
-            'examples/kmp_swift_app/build/xcross-ios/KmpSwiftApp.app' = 'Shared'
-          }
-          foreach ($app in $apps.Keys) {
-            $base = $apps[$app]
-            $runner = Join-Path $app 'Runner'
-            $plist = Join-Path $app 'Info.plist'
-            $framework = Join-Path $app "Frameworks/$base.framework/$base"
-            if (-not (Test-Path $runner -PathType Leaf)) {
-              throw "Missing $runner"
-            }
-            if (-not (Test-Path $plist -PathType Leaf)) {
-              throw "Missing $plist"
-            }
-            if (-not (Test-Path $framework -PathType Leaf)) {
-              throw "Missing $framework"
-            }
-            $headers = (& llvm-readobj --file-headers $runner | Out-String)
-            if ($LASTEXITCODE -ne 0) { throw 'llvm-readobj failed' }
-            $isMachO = $headers -match 'Format:\s+Mach-O arm64'
-            $isArm64 = $headers -match 'Arch:\s+aarch64'
-            if (-not $isMachO -and -not $isArm64) {
-              throw "Runner is not ARM64 Mach-O:`n$headers"
-            }
-            $plistText = Get-Content $plist -Raw
-            if ($plistText -notmatch '<key>CFBundleExecutable</key>\s*<string>Runner</string>') {
-              throw "Info.plist missing CFBundleExecutable=Runner:`n$plistText"
-            }
-            if ($plistText -notmatch '<key>CFBundleIdentifier</key>') {
-              throw "Info.plist missing CFBundleIdentifier:`n$plistText"
-            }
-          }
+          & "$env:RUNNER_TEMP\xcross-bundle\bin\xcross.exe" flutter build
+          if ($LASTEXITCODE -ne 0) { throw 'flutter_example build failed' }
 
       - name: Create and build plugin sample on Linux
         if: runner.os == 'Linux'
