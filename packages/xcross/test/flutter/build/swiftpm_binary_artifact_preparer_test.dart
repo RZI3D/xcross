@@ -51,6 +51,13 @@ void main() {
     ).readAsStringSync();
     expect(manifest, contains('checksum: "${first.checksum}"'));
     expect(manifest, contains('.binaryTarget'));
+    final decoded = ZipDecoder().decodeBytes(first.archive.readAsBytesSync());
+    final binary = decoded.files.singleWhere(
+      (entry) => entry.name.endsWith('/BinaryFixture'),
+    );
+    final bytes = binary.content as List<int>;
+    expect(bytes, hasLength(greaterThan(32)));
+    expect(utf8.decode(bytes.take(8).toList()), '!<arch>\n');
   });
 
   test('selects metadata device slice and excludes simulator slice', () async {

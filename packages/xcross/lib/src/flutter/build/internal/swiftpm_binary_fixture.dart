@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -173,7 +174,27 @@ let package = Package(name: "Gate", products: [.library(name: "Gate", targets: [
 
   static Uint8List _emptyMachO() {
     final bytes = Uint8List(32);
-    ByteData.sublistView(bytes).setUint32(0, 0xfeedfacf, Endian.little);
-    return bytes;
+    final data = ByteData.sublistView(bytes);
+    data
+      ..setUint32(0, 0xfeedfacf, Endian.little)
+      ..setUint32(4, 0x0100000c, Endian.little)
+      ..setUint32(12, 1, Endian.little);
+    final name = utf8.encode('fixture.o/');
+    final header = Uint8List.fromList([
+      ...utf8.encode('!<arch>\n'),
+      ...name,
+      ...List<int>.filled(16 - name.length, 0x20),
+      ...utf8.encode('0'.padRight(12)),
+      ...utf8.encode('0'.padRight(6)),
+      ...utf8.encode('0'.padRight(6)),
+      ...utf8.encode('100644'.padRight(8)),
+      ...utf8.encode('${bytes.length}'.padRight(10)),
+      0x60,
+      0x0a,
+      ...bytes,
+    ]);
+    return header.length.isEven
+        ? header
+        : Uint8List.fromList([...header, 0x0a]);
   }
 }
