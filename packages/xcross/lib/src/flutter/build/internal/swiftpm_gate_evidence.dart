@@ -339,7 +339,6 @@ Future<bool> probeSwiftPmGate({
 }) async {
   if (!(windows ?? Platform.isWindows)) return false;
   Directory? probeRoot;
-  HttpServer? server;
   var stage = 'validating toolchain';
   try {
     final identity = jsonDecode(toolchainIdentity);
@@ -386,22 +385,14 @@ Future<bool> probeSwiftPmGate({
       stage = 'creating package-local junction';
       if (!await _createJunction(junction, fixture.path, run)) return false;
     } else {
-      final archive = SwiftPmBinaryFixture.archiveXcframework(
+      SwiftPmBinaryFixture.archiveXcframework(
         framework: fixture,
-        output: p.join(probeRoot.path, 'GateFixture.zip'),
+        output: p.join(package.path, 'GateFixture.zip'),
       );
-      server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
-      server.listen((request) async {
-        request.response.add(await archive.readAsBytes());
-        await request.response.close();
-      });
       SwiftPmBinaryFixture.writeGatePackage(
         root: package.path,
         targetName: 'GateFixture',
-        url: Uri.parse(
-          'http://${server.address.host}:${server.port}/GateFixture.zip',
-        ),
-        checksum: sha256.convert(archive.readAsBytesSync()).toString(),
+        path: 'GateFixture.zip',
       );
     }
 
@@ -492,7 +483,6 @@ Future<bool> probeSwiftPmGate({
     stderr.writeln(stackTrace);
     return false;
   } finally {
-    await server?.close(force: true);
     if (probeRoot != null && probeRoot.existsSync()) {
       await probeRoot.delete(recursive: true);
       final parent = probeRoot.parent;
