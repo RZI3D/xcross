@@ -296,8 +296,6 @@ jobs:
           if ($output -match '(?im)\bskip(?:ped)?\b' -or $output -notmatch [regex]::Escape($name)) {
             throw "package-local junction gate did not execute:`n$output"
           }
-          dart run packages/xcross/tool/swiftpm_gate_evidence.dart `
-            record packageLocalArtifact
 
       - name: Gate SwiftPM artifact junctions on Windows
         if: runner.os == 'Windows'
@@ -315,8 +313,6 @@ jobs:
           if ($output -match '(?im)\bskip(?:ped)?\b' -or $output -notmatch [regex]::Escape($name)) {
             throw "SwiftPM artifact junction gate did not execute:`n$output"
           }
-          dart run packages/xcross/tool/swiftpm_gate_evidence.dart `
-            record swiftPmArtifact
 
       - name: Restore cached Compose toolchains
         uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3

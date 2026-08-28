@@ -693,22 +693,16 @@ void main() {
   group('Windows alias feasibility gates', () {
     Future<void> expectProductionProbe(SwiftPmGateMode mode) async {
       final sdk = DarwinSdk.current()!;
-      final cacheRoot = Platform.environment['XCROSS_CACHE_DIR']!;
-      final toolchainIdentity = jsonEncode(
-        await GeneratedPluginsPackage.resolveBuildToolchainIdentity(sdk),
-      );
-      final sdkIdentity = jsonEncode(
-        await SdkInstall.sdkBuildIdentity(sdk.swiftSdkPath),
-      );
       expect(
-        await SwiftPmGateEvidence(
-          p.join(cacheRoot, 'swiftpm', 'gate-evidence-v2'),
-        ).verifies(
+        await probeSwiftPmGate(
           mode: mode,
-          platformIdentity:
-              '${Platform.operatingSystem}-${Platform.operatingSystemVersion}',
-          toolchainIdentity: toolchainIdentity,
-          sdkIdentity: sdkIdentity,
+          root: temp.path,
+          toolchainIdentity: jsonEncode(
+            await GeneratedPluginsPackage.resolveBuildToolchainIdentity(sdk),
+          ),
+          sdkIdentity: jsonEncode(
+            await SdkInstall.sdkBuildIdentity(sdk.swiftSdkPath),
+          ),
         ),
         isTrue,
       );
