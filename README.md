@@ -121,7 +121,10 @@ repository:
 
 ```nix
 {
-  inputs.xcross.url = "github:arxdeus/xcross";
+  inputs = {
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    xcross.url = "github:arxdeus/xcross";
+  };
 
   outputs = { nixpkgs, xcross, ... }:
     let
