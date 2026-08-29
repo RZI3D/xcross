@@ -86,7 +86,6 @@ jobs:
         run: |
           nix develop --command bash -euo pipefail -c '
             printf "XCROSS_NIX_PATH=%s\n" "$PATH" >> "$GITHUB_ENV"
-            printf "FLUTTER_ROOT=%s\n" "$FLUTTER_ROOT" >> "$GITHUB_ENV"
           '
 
       - name: Restore cached Darwin SDK
