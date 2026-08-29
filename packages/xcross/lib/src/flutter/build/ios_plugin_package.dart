@@ -140,6 +140,8 @@ abstract final class GeneratedPluginsPackage {
     required String flutterXcframework,
     required IosDeploymentTarget deploymentTarget,
     bool verbose = false,
+    String? toolchainIdentity,
+    String? sdkIdentity,
     bool swiftPmArtifactJunctionCapability = false,
     bool packageLocalArtifactJunctionCapability = false,
     ArtifactJunctionCapabilityResolver? artifactJunctionCapabilityResolver,
@@ -180,6 +182,8 @@ abstract final class GeneratedPluginsPackage {
           flutterXcframework: flutterXcframework,
           deploymentTarget: deploymentTarget,
           verbose: verbose,
+          toolchainIdentity: toolchainIdentity,
+          sdkIdentity: sdkIdentity,
         );
         final fingerprintFile = File(
           p.join(outputDir, '.xcross-build-fingerprint'),

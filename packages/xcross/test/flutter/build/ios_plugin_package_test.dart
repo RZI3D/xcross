@@ -3460,6 +3460,8 @@ let package = Package(
           flutterXcframework: flutter.path,
           deploymentTarget: IosDeploymentTarget.fallback,
           swiftPmArtifactJunctionCapability: true,
+          toolchainIdentity: 'test-toolchain',
+          sdkIdentity: 'test-sdk',
           evaluateDependencyRefs:
               (
                 _, {

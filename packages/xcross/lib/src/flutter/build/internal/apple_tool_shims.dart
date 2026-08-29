@@ -84,7 +84,9 @@ Future<String?> resolveNativeAssetToolForwarder(
   Future<String?> Function()? findInstalled,
 }) async {
   if (!(windows ?? Platform.isWindows)) return executable;
-  if (p.basename(executable).toLowerCase() == 'xcross.exe') return executable;
+  if (p.windows.basename(executable).toLowerCase() == 'xcross.exe') {
+    return executable;
+  }
   return (findInstalled ?? () => ProcessRunner.which('xcross.exe'))();
 }
 
