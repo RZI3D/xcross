@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:apple_developer_kit/apple_developer_kit.dart';
@@ -64,7 +65,36 @@ Future<int?> runPreparedToolAlias(
   if (name == 'dsymutil' && !File(target).existsSync()) {
     return 0;
   }
-  return invoke(target, arguments);
+  final prefix = File('$path.args');
+  final forwarded = prefix.existsSync() && _isAppleCompilerInvocation(arguments)
+      ? [
+          ...(jsonDecode(prefix.readAsStringSync()) as List).cast<String>(),
+          ...arguments,
+        ]
+      : arguments;
+  return invoke(target, forwarded);
+}
+
+bool _isAppleCompilerInvocation(List<String> arguments) {
+  for (var index = 0; index < arguments.length; index++) {
+    final argument = arguments[index];
+    if (argument == '-arch' ||
+        argument.startsWith('-arch=') ||
+        argument.startsWith('-miphoneos-version-min=') ||
+        argument.startsWith('-mios-simulator-version-min=')) {
+      return true;
+    }
+    if ((argument == '-target' || argument == '--target') &&
+        index + 1 < arguments.length &&
+        arguments[index + 1].contains('-apple-')) {
+      return true;
+    }
+    if ((argument.startsWith('-target=') || argument.startsWith('--target=')) &&
+        argument.contains('-apple-')) {
+      return true;
+    }
+  }
+  return false;
 }
 
 Future<int> runPlutilAlias(List<String> arguments) async {

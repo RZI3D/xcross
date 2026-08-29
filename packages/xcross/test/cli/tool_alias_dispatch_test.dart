@@ -34,21 +34,33 @@ void main() {
     final temp = Directory.systemTemp.createTempSync('xcross_tool_alias_');
     addTearDown(() => temp.deleteSync(recursive: true));
     final alias = File(p.join(temp.path, 'cc.exe'))..writeAsStringSync('alias');
-    File('${alias.path}.path').writeAsStringSync(r'C:\shims\clang.bat');
+    File('${alias.path}.path').writeAsStringSync(r'C:\LLVM\clang.exe');
+    File(
+      '${alias.path}.args',
+    ).writeAsStringSync(r'["-isysroot","C:\\SDK","-Wl,-arch,arm64"]');
 
     String? executable;
+    List<String>? forwarded;
     final code = await runPreparedToolAlias(
-      ['--version'],
+      ['--target=aarch64-apple-ios', '--version'],
       executablePath: alias.path,
       environment: const {},
-      run: (target, _) async {
+      run: (target, arguments) async {
         executable = target;
+        forwarded = arguments;
         return 0;
       },
     );
 
     expect(code, 0);
-    expect(executable, r'C:\shims\clang.bat');
+    expect(executable, r'C:\LLVM\clang.exe');
+    expect(forwarded, [
+      '-isysroot',
+      r'C:\SDK',
+      '-Wl,-arch,arm64',
+      '--target=aarch64-apple-ios',
+      '--version',
+    ]);
   });
 
   test('plutil replaces MinimumOSVersion for Flutter assemble', () async {

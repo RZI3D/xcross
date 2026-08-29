@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:cli_kit/cli_kit.dart';
@@ -163,13 +164,26 @@ Future<void> _installWindowsToolShims(
 }) async {
   if (toolForwarderExecutable != null) {
     for (final entry in {
-      'cc': compilerShim,
+      'cc': config.clang,
       'ar': config.archiver,
       'ld': config.linker,
     }.entries) {
       final executable = p.join(directory, '${entry.key}.exe');
       await File(toolForwarderExecutable).copy(executable);
       await File('$executable.path').writeAsString(entry.value);
+      if (entry.key == 'cc') {
+        await File('$executable.args').writeAsString(
+          jsonEncode([
+            '-isysroot',
+            config.iosSdk,
+            '-miphoneos-version-min=${config.deploymentTarget}',
+            '-fuse-ld=lld',
+            '--ld-path=${config.linker}',
+            '-Wl,-arch,arm64',
+            '-Wl,-platform_version,ios,${config.deploymentTarget},26.5',
+          ]),
+        );
+      }
     }
     await File(config.xcrun).copy(p.join(directory, 'xcrun.exe'));
     await File(toolForwarderExecutable).copy(p.join(directory, 'plutil.exe'));
