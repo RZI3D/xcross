@@ -55,6 +55,7 @@ jobs:
           nix build .#xcross --print-build-logs
           nix run . -- --help | grep -F "Usage: xcross"
           nix run . -- --version | grep -F "xcross 1.3.2"
+          result/bin/xcrun 2>&1 | grep -F "xcrun: no Darwin SDK installed"
 
       - name: Probe development tools
         run: |
@@ -64,6 +65,7 @@ jobs:
             done
             xcross --help | grep -F "Usage: xcross"
             xcross --version | grep -F "xcross 1.3.2"
+            xcrun 2>&1 | grep -F "xcrun: no Darwin SDK installed"
           '
 
       - name: Verify Dart workspace

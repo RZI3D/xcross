@@ -107,9 +107,8 @@
             test -x ${xcross}/bin/xcross
             test -x ${xcross}/bin/xcrun
             test -d ${xcross}/lib/xcross/lib
-            ${xcross}/bin/xcross --help | grep -F "Usage: xcross" >/dev/null
-            ${xcross}/bin/xcross --version | grep -F "xcross ${version}" >/dev/null
-            ${xcross}/bin/xcrun 2>&1 | grep -F "xcrun: no Darwin SDK installed" >/dev/null
+            cmp ${releaseFor system}/bin/xcross ${xcross}/lib/xcross/bin/xcross
+            cmp ${releaseFor system}/bin/xcrun ${xcross}/lib/xcross/bin/xcrun
             touch "$out"
           '';
         in {
