@@ -323,10 +323,8 @@ Future<bool> _isJunction(String path) async {
     path,
   ], timeout: const Duration(seconds: 5));
   return result.exitCode == 0 &&
-      RegExp(
-        r'Reparse Tag Value\s*:\s*0xa0000003',
-        caseSensitive: false,
-      ).hasMatch('${result.stdout}');
+      RegExp('0xa0000003', caseSensitive: false).hasMatch('${result.stdout}');
+
 }
 
 Future<bool> probeSwiftPmGate({

@@ -23,7 +23,7 @@ typedef StartBinaryCopy =
     );
 
 bool isWindowsMountPointReparseOutput(String output) => RegExp(
-  r'Reparse\s+Tag\s+Value\s*:\s*0x0*a0000003\b',
+  r'0x0*a0000003\b',
   caseSensitive: false,
 ).hasMatch(output);
 
@@ -226,10 +226,12 @@ final class SwiftPmBinaryArtifactPreparer {
   Future<bool> _isAliasTo(String alias, String target) async {
     final type = FileSystemEntity.typeSync(alias, followLinks: false);
     if (Platform.isWindows) {
-      if (type != FileSystemEntityType.directory ||
-          !await _isWindowsMountPoint(alias)) {
+      if (type != FileSystemEntityType.directory &&
+          type != FileSystemEntityType.link) {
         return false;
       }
+      if (!await _isWindowsMountPoint(alias)) return false;
+
     } else if (type != FileSystemEntityType.link) {
       return false;
     }

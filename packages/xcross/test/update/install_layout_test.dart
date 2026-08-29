@@ -11,7 +11,7 @@ void main() {
   late Directory prefix;
 
   setUp(() {
-    prefix = Directory.systemTemp.createTempSync('xcross-layout-');
+    prefix = Directory.systemTemp.createTempSync('install-layout-test-');
     Directory(p.join(prefix.path, 'bin')).createSync();
     Directory(p.join(prefix.path, 'lib')).createSync();
     File(p.join(prefix.path, 'bin', _exeName())).writeAsStringSync('binary');
@@ -20,7 +20,13 @@ void main() {
     ).writeAsStringSync('lib');
   });
 
-  tearDown(() => prefix.deleteSync(recursive: true));
+  tearDown(() {
+    try {
+      prefix.deleteSync(recursive: true);
+    } on PathNotFoundException {
+      if (prefix.existsSync()) rethrow;
+    }
+  });
 
   test('derives lib/ as the sibling of bin/', () {
     final layout = InstallLayout.forExecutable(

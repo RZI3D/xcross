@@ -410,9 +410,14 @@ abstract final class ProcessRunner {
       for (final candidateName in names) {
         final candidate = p.join(dir, candidateName);
         // A directory can be both on PATH and a known install location.
-        if (!seen.add(onWindows ? candidate.toLowerCase() : candidate)) {
+        final absoluteCandidate = p.normalize(File(candidate).absolute.path);
+        final candidateKey = Platform.isWindows || onWindows
+            ? absoluteCandidate.toLowerCase()
+            : absoluteCandidate;
+        if (!seen.add(candidateKey)) {
           continue;
         }
+
         if (File(candidate).existsSync() &&
             (accept == null || accept(candidate))) {
           found.add(candidate);

@@ -24,6 +24,14 @@ String _flutterSrc(String relative) => File.fromUri(
 String _read(String relative) =>
     File('${_flutterSrc(relative)}/${p.basename(relative)}').readAsStringSync();
 
+Future<void> _deleteTemp(Directory directory) async {
+  try {
+    await directory.delete(recursive: true);
+  } on PathNotFoundException {
+    if (directory.existsSync()) rethrow;
+  }
+}
+
 void main() {
   test('Windows no longer rejects native iOS plugins', () {
     final source = _read('build/flutter_packer.dart');
@@ -154,7 +162,7 @@ void main() {
         isTrue,
       );
     } finally {
-      await temp.delete(recursive: true);
+      await _deleteTemp(temp);
     }
   });
 
@@ -193,7 +201,7 @@ void main() {
         isFalse,
       );
     } finally {
-      await temp.delete(recursive: true);
+      await _deleteTemp(temp);
     }
   });
 
@@ -232,7 +240,7 @@ void main() {
       }
       expect(calls, 2);
     } finally {
-      await temp.delete(recursive: true);
+      await _deleteTemp(temp);
     }
   });
   test(
@@ -269,7 +277,7 @@ void main() {
           driver.resolveSymbolicLinksSync(),
         );
       } finally {
-        await temp.delete(recursive: true);
+        await _deleteTemp(temp);
       }
     },
   );
@@ -319,7 +327,7 @@ void main() {
         tools[name]!.writeAsStringSync('first-$name');
       }
     } finally {
-      await temp.delete(recursive: true);
+      await _deleteTemp(temp);
     }
   });
 
@@ -354,7 +362,7 @@ void main() {
       }
       expect(calls, 1);
     } finally {
-      await temp.delete(recursive: true);
+      await _deleteTemp(temp);
     }
   });
 
@@ -419,7 +427,7 @@ void main() {
       );
       expect(calls, 3);
     } finally {
-      await temp.delete(recursive: true);
+      await _deleteTemp(temp);
     }
   });
 
@@ -451,7 +459,7 @@ void main() {
         'dependency',
       );
     } finally {
-      await tmp.delete(recursive: true);
+      await _deleteTemp(tmp);
     }
   });
 
@@ -484,7 +492,7 @@ void main() {
         'plist',
       );
     } finally {
-      await tmp.delete(recursive: true);
+      await _deleteTemp(tmp);
     }
   });
   test('uses xcross build, temp, and DevFS names', () {
