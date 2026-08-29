@@ -74,6 +74,7 @@ jobs:
           }
           EOF
           sed -i "s/__SYSTEM__/$SYSTEM/" flake.nix
+          git add --intent-to-add flake.nix
           nix flake lock
 
       - name: Export consumer environment
