@@ -267,6 +267,18 @@ void main() {
       expect(failure, contains('does not support linking for platform iOS'));
     });
 
+    test('rejects a linker without ARM64 Mach-O support', () async {
+      final failure = await DarwinSdk.probeIosSupport(
+        p.join(tmp.path, 'unsupported-arch-ld64.lld'),
+        runProcess: (executable, arguments) async => const CapturedProcess(
+          1,
+          '',
+          'ld64.lld: error: missing or unsupported -arch arm64',
+        ),
+      );
+      expect(failure, contains('missing or unsupported -arch arm64'));
+    });
+
     test('rejects a linker that dies without saying anything', () async {
       final failure = await DarwinSdk.probeIosSupport(
         p.join(tmp.path, 'crashing-ld64.lld'),

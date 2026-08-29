@@ -13,6 +13,9 @@ env:
   SWIFT_VERSION: 6.3.3
   SWIFT_WINDOWS_SHA256: >-
     235626548F249CD516D3D4D90EEE980DCCAD46F3822DAC1F8E3119B0FEDE94B7
+  LLVM_VERSION: 22.1.8
+  LLVM_WINDOWS_SHA256: >-
+    16E5709785FEF73C854646241C4A92C5CD574318D1B33C63330DD7721903E55C
 
 concurrency:
   group: integration-${{ github.ref }}
@@ -135,9 +138,26 @@ jobs:
             throw "Swift installer failed: $($process.ExitCode)"
           }
 
-          $llvmBin = "${env:ProgramFiles}\LLVM\bin"
+          $llvmInstaller = "$env:RUNNER_TEMP\llvm-installer.exe"
+          $llvmRoot = "$env:RUNNER_TEMP\llvm-$env:LLVM_VERSION"
+          $llvmUrl = "https://github.com/llvm/llvm-project/releases/download/" +
+            "llvmorg-$env:LLVM_VERSION/LLVM-$env:LLVM_VERSION-win64.exe"
+          Invoke-WebRequest $llvmUrl -OutFile $llvmInstaller
+          $llvmHash = (Get-FileHash $llvmInstaller -Algorithm SHA256).Hash
+          if ($llvmHash -ne $env:LLVM_WINDOWS_SHA256) {
+            throw "LLVM installer checksum mismatch: $llvmHash"
+          }
+          $llvmProcess = Start-Process `
+            $llvmInstaller `
+            -ArgumentList '/S', "/D=$llvmRoot" `
+            -PassThru `
+            -Wait
+          if ($llvmProcess.ExitCode -ne 0) {
+            throw "LLVM installer failed: $($llvmProcess.ExitCode)"
+          }
+          $llvmBin = "$llvmRoot\bin"
           if (-not (Test-Path "$llvmBin\ld64.lld.exe")) {
-            throw "Hosted-runner LLVM missing ld64.lld.exe at $llvmBin"
+            throw "Pinned LLVM missing ld64.lld.exe at $llvmBin"
           }
           $swiftRoot = "$env:LOCALAPPDATA\Programs\Swift"
           # The installer registers its Runtimes, Toolchains, and Tools

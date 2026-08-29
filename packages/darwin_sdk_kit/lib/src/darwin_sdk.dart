@@ -308,12 +308,13 @@ final class DarwinSdk {
     }
 
     final output = '${result.stdout}\n${result.stderr}';
-    if (_unsupportedPlatform.hasMatch(output)) {
+    final unsupported = _unsupportedIosLink.firstMatch(output);
+    if (unsupported != null) {
       return _rememberIosSupport(
         linker,
         output
             .split('\n')
-            .firstWhere(_unsupportedPlatform.hasMatch)
+            .firstWhere(_unsupportedIosLink.hasMatch)
             .trim()
             .replaceFirst(RegExp('^.*?: *'), ''),
       );
@@ -449,8 +450,9 @@ final class DarwinSdk {
   /// Probe verdicts by linker path; the empty string means "usable".
   static final Map<String, String> _iosSupport = {};
 
-  static final RegExp _unsupportedPlatform = RegExp(
-    'does not support linking for platform|unknown platform',
+  static final RegExp _unsupportedIosLink = RegExp(
+    'does not support linking for platform|unknown platform|'
+    'missing or unsupported -arch',
     caseSensitive: false,
   );
 
