@@ -92,8 +92,8 @@ jobs:
         working-directory: ${{ runner.temp }}/xcross-consumer
         run: |
           nix develop --command bash -euo pipefail -c '
-            test "$SWIFT_EXEC" = "$SWIFT_EXEC_MANIFEST"
             test "$(readlink -f "$SWIFT_EXEC")" = "$(readlink -f "$(command -v swiftc)")"
+            test -x "$SWIFT_EXEC_MANIFEST"
             package="$(mktemp -d)"
             swift package init --package-path "$package" --type empty
             swift package describe --package-path "$package" --type json >/dev/null

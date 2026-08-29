@@ -45,9 +45,11 @@
         let
           pkgs = pkgsFor system;
           swiftCompiler = "${pkgs.swiftPackages.swift-unwrapped}/bin/swiftc";
+          swiftManifestCompiler = "${pkgs.swiftPackages.swift}/bin/swiftc";
           runtimeDeps = with pkgs; [
             flutter
             swiftPackages.swift-unwrapped
+            swiftPackages.swift
             swiftPackages.swiftpm
             llvmPackages.clang-unwrapped
             llvmPackages.llvm
@@ -82,7 +84,7 @@
                 makeWrapper "$out/lib/xcross/bin/$executable" "$out/bin/$executable" \
                   --prefix PATH : ${pkgs.lib.makeBinPath runtimeDeps} \
                   --set SWIFT_EXEC ${swiftCompiler} \
-                  --set SWIFT_EXEC_MANIFEST ${swiftCompiler}
+                  --set SWIFT_EXEC_MANIFEST ${swiftManifestCompiler}
                 cmp "$src/bin/$executable" "$out/lib/xcross/bin/$executable"
               done
               runHook postInstall
@@ -107,7 +109,7 @@
           ]);
           flutterShellHook = ''
             export SWIFT_EXEC=${swiftCompiler}
-            export SWIFT_EXEC_MANIFEST=${swiftCompiler}
+            export SWIFT_EXEC_MANIFEST=${swiftManifestCompiler}
             export FLUTTER_ROOT="''${XDG_CACHE_HOME:-$HOME/.cache}/xcross/flutter-${pkgs.flutter.version}"
             if [ ! -x "$FLUTTER_ROOT/bin/flutter" ]; then
               rm -rf "$FLUTTER_ROOT"
