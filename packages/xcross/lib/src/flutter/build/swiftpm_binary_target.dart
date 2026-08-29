@@ -18,70 +18,45 @@ final class SwiftPmRemoteBinaryTarget {
 
 abstract final class SwiftPmBinaryTargetManifest {
   static final _checksumPattern = RegExp(r'^[0-9a-fA-F]{64}$');
-  static const _callName = '.binaryTarget';
 
   static List<SwiftPmRemoteBinaryTarget> discover(String source) {
-    final code = _swiftCodeMask(source);
     final targets = <SwiftPmRemoteBinaryTarget>[];
+    final parser = _SwiftManifestParser(source);
 
-    for (var start = 0; start < source.length; start++) {
-      if (!code[start] || !source.startsWith(_callName, start)) continue;
-      final nameEnd = start + _callName.length;
-      if (!_isCodeRange(code, start, nameEnd)) continue;
-      if (nameEnd < source.length &&
-          _isIdentifier(source.codeUnitAt(nameEnd))) {
-        continue;
-      }
-
-      var opening = nameEnd;
-      while (opening < source.length &&
-          _isWhitespace(source.codeUnitAt(opening))) {
-        opening++;
-      }
-      if (opening == source.length ||
-          source[opening] != '(' ||
-          !code[opening]) {
-        continue;
-      }
-      final closing = _matchingParenthesis(source, code, opening);
-      if (closing == null) continue;
-
-      final arguments = _directLiteralArguments(
-        source,
-        code,
-        opening + 1,
-        closing,
-      );
-      final name = arguments['name'];
-      final urlText = arguments['url'];
-      final checksum = arguments['checksum'];
+    for (final declaration in parser.binaryTargetDeclarations()) {
+      final name = declaration.name;
+      final urlText = declaration.url;
+      final checksum = declaration.checksum;
       final url = urlText == null ? null : Uri.tryParse(urlText);
-      final eligibleScheme = url?.scheme == 'https' || url?.scheme == 'http';
-      final eligibleUrl =
-          url != null &&
-          eligibleScheme &&
-          url.hasAuthority &&
-          url.host.isNotEmpty &&
-          url.userInfo.isEmpty &&
-          url.path.toLowerCase().endsWith('.zip');
-      if (name != null &&
-          url != null &&
-          checksum != null &&
-          eligibleUrl &&
-          _checksumPattern.hasMatch(checksum)) {
-        targets.add(
-          SwiftPmRemoteBinaryTarget(
-            name: name,
-            url: url,
-            checksum: checksum,
-            start: start,
-            end: closing + 1,
-          ),
-        );
+
+      if (name == null ||
+          checksum == null ||
+          url == null ||
+          !_isRemoteZipUrl(url) ||
+          !_checksumPattern.hasMatch(checksum)) {
+        continue;
       }
-      start = closing;
+
+      targets.add(
+        SwiftPmRemoteBinaryTarget(
+          name: name,
+          url: url,
+          checksum: checksum,
+          start: declaration.start,
+          end: declaration.end,
+        ),
+      );
     }
     return targets;
+  }
+
+  static bool _isRemoteZipUrl(Uri url) {
+    final isWebUrl = url.scheme == 'https' || url.scheme == 'http';
+    return isWebUrl &&
+        url.hasAuthority &&
+        url.host.isNotEmpty &&
+        url.userInfo.isEmpty &&
+        url.path.toLowerCase().endsWith('.zip');
   }
 
   static String rewriteToLocalPaths(
@@ -120,227 +95,335 @@ abstract final class SwiftPmBinaryTargetManifest {
   }
 }
 
-Map<String, String> _directLiteralArguments(
-  String source,
-  List<bool> code,
-  int start,
-  int end,
-) {
-  final arguments = <String, String>{};
-  var segmentStart = start;
-  var round = 0;
-  var square = 0;
-  var curly = 0;
+final class _BinaryTargetDeclaration {
+  const _BinaryTargetDeclaration({
+    required this.name,
+    required this.url,
+    required this.checksum,
+    required this.start,
+    required this.end,
+  });
 
-  void parseSegment(int segmentEnd) {
-    var cursor = segmentStart;
-    while (cursor < segmentEnd && _isWhitespace(source.codeUnitAt(cursor))) {
-      cursor++;
-    }
-    final labelStart = cursor;
-    while (cursor < segmentEnd && _isIdentifier(source.codeUnitAt(cursor))) {
-      cursor++;
-    }
-    final label = source.substring(labelStart, cursor);
-    if (label != 'name' && label != 'url' && label != 'checksum') return;
-    while (cursor < segmentEnd && _isWhitespace(source.codeUnitAt(cursor))) {
-      cursor++;
-    }
-    if (cursor == segmentEnd || source[cursor] != ':') return;
-    cursor++;
-    while (cursor < segmentEnd && _isWhitespace(source.codeUnitAt(cursor))) {
-      cursor++;
-    }
-    final literal = _parseStringLiteral(source, cursor, segmentEnd);
-    if (literal != null) arguments[label] = literal;
-  }
-
-  for (var index = start; index < end; index++) {
-    if (!code[index]) continue;
-    switch (source[index]) {
-      case '(':
-        round++;
-      case ')':
-        round--;
-      case '[':
-        square++;
-      case ']':
-        square--;
-      case '{':
-        curly++;
-      case '}':
-        curly--;
-      case ',' when round == 0 && square == 0 && curly == 0:
-        parseSegment(index);
-        segmentStart = index + 1;
-    }
-  }
-  parseSegment(end);
-  return arguments;
+  final String? name;
+  final String? url;
+  final String? checksum;
+  final int start;
+  final int end;
 }
 
-String? _parseStringLiteral(String source, int start, int segmentEnd) {
-  var hashes = 0;
-  while (start + hashes < segmentEnd && source[start + hashes] == '#') {
-    hashes++;
+final class _SwiftManifestParser {
+  _SwiftManifestParser(this.source) : _code = _buildCodeMask(source);
+
+  static const _binaryTargetCall = '.binaryTarget';
+  static const _recognizedArguments = {'name', 'url', 'checksum'};
+
+  final String source;
+  final List<bool> _code;
+
+  List<_BinaryTargetDeclaration> binaryTargetDeclarations() {
+    final declarations = <_BinaryTargetDeclaration>[];
+
+    for (var callStart = 0; callStart < source.length; callStart++) {
+      final openingParenthesis = _binaryTargetOpeningAt(callStart);
+      if (openingParenthesis == null) continue;
+
+      final closingParenthesis = _matchingParenthesis(openingParenthesis);
+      if (closingParenthesis == null) continue;
+
+      final arguments = _directStringArguments(
+        openingParenthesis + 1,
+        closingParenthesis,
+      );
+      declarations.add(
+        _BinaryTargetDeclaration(
+          name: arguments['name'],
+          url: arguments['url'],
+          checksum: arguments['checksum'],
+          start: callStart,
+          end: closingParenthesis + 1,
+        ),
+      );
+      callStart = closingParenthesis;
+    }
+    return declarations;
   }
-  final quote = start + hashes;
-  if (quote >= segmentEnd || source[quote] != '"') return null;
-  final multiline = source.startsWith('"""', quote);
-  final openingLength = multiline ? 3 : 1;
-  final closing = '${multiline ? '"""' : '"'}${'#' * hashes}';
-  final contentStart = quote + openingLength;
-  var contentEnd = segmentEnd;
-  while (contentEnd > contentStart &&
-      _isWhitespace(source.codeUnitAt(contentEnd - 1))) {
-    contentEnd--;
-  }
-  if (!source.substring(start, contentEnd).endsWith(closing)) return null;
-  final valueEnd = contentEnd - closing.length;
-  if (valueEnd < contentStart) return null;
-  var value = source.substring(contentStart, valueEnd);
-  final rawEscape = '\\${'#' * hashes}';
-  final interpolation = '$rawEscape(';
-  if (value.contains(interpolation) ||
-      hashes > 0 && value.contains(rawEscape)) {
-    return null;
-  }
-  if (multiline) {
-    final closingLineStart = source.lastIndexOf('\n', valueEnd - 1) + 1;
-    if (source.substring(closingLineStart, valueEnd).trim().isEmpty &&
-        closingLineStart != valueEnd) {
+
+  int? _binaryTargetOpeningAt(int callStart) {
+    if (!_code[callStart] || !source.startsWith(_binaryTargetCall, callStart)) {
       return null;
     }
-    if (value.startsWith('\r\n')) {
-      value = value.substring(2);
-    } else if (value.startsWith('\n')) {
-      value = value.substring(1);
+
+    final callNameEnd = callStart + _binaryTargetCall.length;
+    if (!_isCodeRange(callStart, callNameEnd) ||
+        callNameEnd < source.length &&
+            _isIdentifier(source.codeUnitAt(callNameEnd))) {
+      return null;
     }
-    if (value.endsWith('\r\n')) {
-      value = value.substring(0, value.length - 2);
-    } else if (value.endsWith('\n')) {
-      value = value.substring(0, value.length - 1);
+
+    final openingParenthesis = _skipWhitespace(callNameEnd, source.length);
+    if (openingParenthesis == source.length ||
+        source[openingParenthesis] != '(' ||
+        !_code[openingParenthesis]) {
+      return null;
+    }
+    return openingParenthesis;
+  }
+
+  Map<String, String> _directStringArguments(int start, int end) {
+    final arguments = <String, String>{};
+    var argumentStart = start;
+    var parenthesisDepth = 0;
+    var bracketDepth = 0;
+    var braceDepth = 0;
+
+    void parseArgumentEndingAt(int argumentEnd) {
+      final argument = _directStringArgument(argumentStart, argumentEnd);
+      if (argument != null) arguments[argument.label] = argument.value;
+    }
+
+    for (var index = start; index < end; index++) {
+      if (!_code[index]) continue;
+      switch (source[index]) {
+        case '(':
+          parenthesisDepth++;
+        case ')':
+          parenthesisDepth--;
+        case '[':
+          bracketDepth++;
+        case ']':
+          bracketDepth--;
+        case '{':
+          braceDepth++;
+        case '}':
+          braceDepth--;
+        case ','
+            when parenthesisDepth == 0 && bracketDepth == 0 && braceDepth == 0:
+          parseArgumentEndingAt(index);
+          argumentStart = index + 1;
+      }
+    }
+    parseArgumentEndingAt(end);
+    return arguments;
+  }
+
+  ({String label, String value})? _directStringArgument(int start, int end) {
+    final labelStart = _skipWhitespace(start, end);
+    var cursor = labelStart;
+    while (cursor < end && _isIdentifier(source.codeUnitAt(cursor))) {
+      cursor++;
+    }
+
+    final label = source.substring(labelStart, cursor);
+    if (!_recognizedArguments.contains(label)) return null;
+
+    cursor = _skipWhitespace(cursor, end);
+    if (cursor == end || source[cursor] != ':') return null;
+
+    final valueStart = _skipWhitespace(cursor + 1, end);
+    final value = _parseStringLiteral(valueStart, end);
+    return value == null ? null : (label: label, value: value);
+  }
+
+  String? _parseStringLiteral(int start, int argumentEnd) {
+    var hashCount = 0;
+    while (start + hashCount < argumentEnd &&
+        source[start + hashCount] == '#') {
+      hashCount++;
+    }
+
+    final openingQuote = start + hashCount;
+    if (openingQuote >= argumentEnd || source[openingQuote] != '"') {
+      return null;
+    }
+
+    final isMultiline = source.startsWith('"""', openingQuote);
+    final openingLength = isMultiline ? 3 : 1;
+    final closingDelimiter = '${isMultiline ? '"""' : '"'}${'#' * hashCount}';
+    final contentStart = openingQuote + openingLength;
+    final contentEnd = _skipTrailingWhitespace(contentStart, argumentEnd);
+    if (!source.substring(start, contentEnd).endsWith(closingDelimiter)) {
+      return null;
+    }
+
+    final valueEnd = contentEnd - closingDelimiter.length;
+    if (valueEnd < contentStart) return null;
+
+    var value = source.substring(contentStart, valueEnd);
+    final rawEscape = '\\${'#' * hashCount}';
+    if (value.contains('$rawEscape(') ||
+        hashCount > 0 && value.contains(rawEscape)) {
+      return null;
+    }
+
+    if (isMultiline) {
+      final closingLineStart = source.lastIndexOf('\n', valueEnd - 1) + 1;
+      final closingIndent = source.substring(closingLineStart, valueEnd);
+      if (closingIndent.trim().isEmpty && closingLineStart != valueEnd) {
+        return null;
+      }
+      value = _removeMultilineBoundaryNewlines(value);
+    }
+
+    if (hashCount > 0) return value;
+    try {
+      return jsonDecode('"${value.replaceAll(r'\/', '/')}"') as String;
+    } on FormatException {
+      return null;
     }
   }
-  if (hashes > 0) return value;
-  try {
-    return jsonDecode('"${value.replaceAll(r'\/', '/')}"') as String;
-  } on FormatException {
+
+  String _removeMultilineBoundaryNewlines(String value) {
+    var result = value;
+    if (result.startsWith('\r\n')) {
+      result = result.substring(2);
+    } else if (result.startsWith('\n')) {
+      result = result.substring(1);
+    }
+    if (result.endsWith('\r\n')) {
+      result = result.substring(0, result.length - 2);
+    } else if (result.endsWith('\n')) {
+      result = result.substring(0, result.length - 1);
+    }
+    return result;
+  }
+
+  int? _matchingParenthesis(int openingParenthesis) {
+    var depth = 0;
+    for (var index = openingParenthesis; index < source.length; index++) {
+      if (!_code[index]) continue;
+      if (source[index] == '(') depth++;
+      if (source[index] == ')' && --depth == 0) return index;
+    }
     return null;
   }
-}
 
-List<bool> _swiftCodeMask(String source) {
-  final code = List<bool>.filled(source.length, true);
-  var index = 0;
-  while (index < source.length) {
-    if (source.startsWith('//', index)) {
-      final start = index;
-      index += 2;
-      while (index < source.length && source[index] != '\n') {
-        index++;
-      }
-      _mask(code, start, index);
-      continue;
+  int _skipWhitespace(int start, int end) {
+    var cursor = start;
+    while (cursor < end && _isWhitespace(source.codeUnitAt(cursor))) {
+      cursor++;
     }
-    if (source.startsWith('/*', index)) {
-      final start = index;
-      var depth = 1;
-      index += 2;
-      while (index < source.length && depth > 0) {
-        if (source.startsWith('/*', index)) {
-          depth++;
-          index += 2;
-        } else if (source.startsWith('*/', index)) {
-          depth--;
-          index += 2;
-        } else {
+    return cursor;
+  }
+
+  int _skipTrailingWhitespace(int start, int end) {
+    var cursor = end;
+    while (cursor > start && _isWhitespace(source.codeUnitAt(cursor - 1))) {
+      cursor--;
+    }
+    return cursor;
+  }
+
+  bool _isCodeRange(int start, int end) {
+    for (var index = start; index < end; index++) {
+      if (!_code[index]) return false;
+    }
+    return true;
+  }
+
+  static List<bool> _buildCodeMask(String source) {
+    final code = List<bool>.filled(source.length, true);
+    var index = 0;
+    while (index < source.length) {
+      if (source.startsWith('//', index)) {
+        final commentStart = index;
+        index += 2;
+        while (index < source.length && source[index] != '\n') {
           index++;
         }
+        _mask(code, commentStart, index);
+        continue;
       }
-      _mask(code, start, index);
-      continue;
-    }
-
-    var hashes = 0;
-    while (index + hashes < source.length && source[index + hashes] == '#') {
-      hashes++;
-    }
-    final quote = index + hashes;
-    if (quote < source.length && source[quote] == '"') {
-      final start = index;
-      final multiline = source.startsWith('"""', quote);
-      final quoteCount = multiline ? 3 : 1;
-      index = quote + quoteCount;
-      final closing = '${multiline ? '"""' : '"'}${'#' * hashes}';
-      while (index < source.length) {
-        if (source.startsWith(closing, index) &&
-            (hashes == 0
-                ? !_isEscaped(source, index)
-                : !_isRawEscapedDelimiter(source, index, hashes))) {
-          index += closing.length;
-          break;
+      if (source.startsWith('/*', index)) {
+        final commentStart = index;
+        var depth = 1;
+        index += 2;
+        while (index < source.length && depth > 0) {
+          if (source.startsWith('/*', index)) {
+            depth++;
+            index += 2;
+          } else if (source.startsWith('*/', index)) {
+            depth--;
+            index += 2;
+          } else {
+            index++;
+          }
         }
-        index++;
+        _mask(code, commentStart, index);
+        continue;
       }
-      _mask(code, start, index);
-      continue;
+
+      final hashCount = _rawStringHashCount(source, index);
+      final openingQuote = index + hashCount;
+      if (openingQuote < source.length && source[openingQuote] == '"') {
+        final stringStart = index;
+        final isMultiline = source.startsWith('"""', openingQuote);
+        final openingLength = isMultiline ? 3 : 1;
+        final closingDelimiter =
+            '${isMultiline ? '"""' : '"'}${'#' * hashCount}';
+        index = openingQuote + openingLength;
+        while (index < source.length) {
+          final isClosingDelimiter =
+              source.startsWith(closingDelimiter, index) &&
+              (hashCount == 0
+                  ? !_isEscaped(source, index)
+                  : !_isRawEscapedDelimiter(source, index, hashCount));
+          if (isClosingDelimiter) {
+            index += closingDelimiter.length;
+            break;
+          }
+          index++;
+        }
+        _mask(code, stringStart, index);
+        continue;
+      }
+      index++;
     }
-    index++;
+    return code;
   }
-  return code;
-}
 
-int? _matchingParenthesis(String source, List<bool> code, int opening) {
-  var depth = 0;
-  for (var index = opening; index < source.length; index++) {
-    if (!code[index]) continue;
-    if (source[index] == '(') depth++;
-    if (source[index] == ')' && --depth == 0) return index;
+  static int _rawStringHashCount(String source, int start) {
+    var hashCount = 0;
+    while (start + hashCount < source.length &&
+        source[start + hashCount] == '#') {
+      hashCount++;
+    }
+    return hashCount;
   }
-  return null;
-}
 
-bool _isCodeRange(List<bool> code, int start, int end) {
-  for (var index = start; index < end; index++) {
-    if (!code[index]) return false;
+  static bool _isRawEscapedDelimiter(String source, int index, int hashCount) {
+    final escapeStart = index - hashCount - 1;
+    return escapeStart >= 0 &&
+        source[escapeStart] == r'\' &&
+        source.substring(escapeStart + 1, index) == '#' * hashCount;
   }
-  return true;
-}
 
-bool _isRawEscapedDelimiter(String source, int index, int hashes) {
-  final escapeStart = index - hashes - 1;
-  return escapeStart >= 0 &&
-      source[escapeStart] == r'\' &&
-      source.substring(escapeStart + 1, index) == '#' * hashes;
-}
-
-bool _isEscaped(String source, int index) {
-  var slashes = 0;
-  for (
-    var cursor = index - 1;
-    cursor >= 0 && source[cursor] == r'\';
-    cursor--
-  ) {
-    slashes++;
+  static bool _isEscaped(String source, int index) {
+    var slashCount = 0;
+    for (
+      var cursor = index - 1;
+      cursor >= 0 && source[cursor] == r'\';
+      cursor--
+    ) {
+      slashCount++;
+    }
+    return slashCount.isOdd;
   }
-  return slashes.isOdd;
-}
 
-bool _isIdentifier(int character) =>
-    character >= 48 && character <= 57 ||
-    character >= 65 && character <= 90 ||
-    character >= 97 && character <= 122 ||
-    character == 95;
+  static bool _isIdentifier(int character) =>
+      character >= 48 && character <= 57 ||
+      character >= 65 && character <= 90 ||
+      character >= 97 && character <= 122 ||
+      character == 95;
 
-bool _isWhitespace(int character) =>
-    character == 0x20 ||
-    character == 0x09 ||
-    character == 0x0a ||
-    character == 0x0d;
+  static bool _isWhitespace(int character) =>
+      character == 0x20 ||
+      character == 0x09 ||
+      character == 0x0a ||
+      character == 0x0d;
 
-void _mask(List<bool> code, int start, int end) {
-  for (var index = start; index < end; index++) {
-    code[index] = false;
+  static void _mask(List<bool> code, int start, int end) {
+    for (var index = start; index < end; index++) {
+      code[index] = false;
+    }
   }
 }
