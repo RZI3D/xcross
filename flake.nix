@@ -18,6 +18,7 @@
   outputs = inputs@{ nixpkgs, ... }:
     let
       version = "1.3.2";
+      swiftVersion = "6.3.3";
       systems = [ "x86_64-linux" "aarch64-linux" ];
       forAllSystems = nixpkgs.lib.genAttrs systems;
       releaseFor = system:
@@ -44,20 +45,46 @@
       outputsFor = system:
         let
           pkgs = pkgsFor system;
-          swiftCompiler = "${pkgs.swiftPackages.swift-unwrapped}/bin/swiftc";
-          swiftManifestCompiler = "${pkgs.swiftPackages.swift}/bin/swiftc";
-          swiftRuntimeLibraryPath = pkgs.lib.makeLibraryPath (with pkgs.swiftPackages; [
-            Dispatch
-            Foundation
-          ]);
+          swiftToolchainSource = {
+            x86_64-linux = {
+              url = "https://download.swift.org/swift-${swiftVersion}-release/ubuntu2404/swift-${swiftVersion}-RELEASE/swift-${swiftVersion}-RELEASE-ubuntu24.04.tar.gz";
+              hash = "sha256-2oJypf3czWWxUp7Q5S4EUm4urdQjfVjWIg7+uXPGzRk=";
+            };
+            aarch64-linux = {
+              url = "https://download.swift.org/swift-${swiftVersion}-release/ubuntu2404-aarch64/swift-${swiftVersion}-RELEASE/swift-${swiftVersion}-RELEASE-ubuntu24.04-aarch64.tar.gz";
+              hash = "sha256-RxJjlUKWU/p2jTcGVYduwbaPapXHiE9eTxeXABQcm38=";
+            };
+          }.${system};
+          swiftToolchain = pkgs.stdenv.mkDerivation {
+            pname = "swift-toolchain";
+            version = swiftVersion;
+            src = pkgs.fetchurl { inherit (swiftToolchainSource) url hash; };
+            nativeBuildInputs = [ pkgs.autoPatchelfHook ];
+            buildInputs = with pkgs; [
+              stdenv.cc.cc.lib
+              zlib
+              ncurses
+              libxml2_13
+              libedit
+              curl
+              libuuid
+              python312
+              sqlite
+            ];
+            dontConfigure = true;
+            dontBuild = true;
+            autoPatchelfIgnoreMissingDeps = [ "libedit.so.2" ];
+            installPhase = ''
+              runHook preInstall
+              mkdir -p "$out"
+              cp -r usr/* "$out/"
+              runHook postInstall
+            '';
+          };
+          swiftCompiler = "${swiftToolchain}/bin/swiftc";
           runtimeDeps = with pkgs; [
             flutter
-            swiftPackages.swift-unwrapped
-            swiftPackages.swift
-            swiftPackages.swiftpm
-            llvmPackages.clang-unwrapped
-            llvmPackages.llvm
-            llvmPackages.lld
+            swiftToolchain
             python313
             python313Packages.pymobiledevice3
             usbmuxd
@@ -88,8 +115,7 @@
                 makeWrapper "$out/lib/xcross/bin/$executable" "$out/bin/$executable" \
                   --prefix PATH : ${pkgs.lib.makeBinPath runtimeDeps} \
                   --set SWIFT_EXEC ${swiftCompiler} \
-                  --set SWIFT_EXEC_MANIFEST ${swiftManifestCompiler} \
-                  --prefix LD_LIBRARY_PATH : ${swiftRuntimeLibraryPath}
+                  --set SWIFT_EXEC_MANIFEST ${swiftCompiler}
                 cmp "$src/bin/$executable" "$out/lib/xcross/bin/$executable"
               done
               runHook postInstall
@@ -114,8 +140,7 @@
           ]);
           flutterShellHook = ''
             export SWIFT_EXEC=${swiftCompiler}
-            export SWIFT_EXEC_MANIFEST=${swiftManifestCompiler}
-            export LD_LIBRARY_PATH=${swiftRuntimeLibraryPath}''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
+            export SWIFT_EXEC_MANIFEST=${swiftCompiler}
             export FLUTTER_ROOT="''${XDG_CACHE_HOME:-$HOME/.cache}/xcross/flutter-${pkgs.flutter.version}"
             if [ ! -x "$FLUTTER_ROOT/bin/flutter" ]; then
               rm -rf "$FLUTTER_ROOT"
