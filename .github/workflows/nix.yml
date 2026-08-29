@@ -97,7 +97,8 @@ jobs:
             package="$(mktemp -d)"
             printf "print(\"swift smoke\")\n" > "$package/smoke.swift"
             swiftc "$package/smoke.swift" -o "$package/smoke"
-            "$package/smoke"
+            ldd "$package/smoke"
+            LD_DEBUG=libs "$package/smoke"
             swift package init --package-path "$package" --type empty
             swift package describe -v --package-path "$package" --type json
           '
