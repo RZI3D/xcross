@@ -59,21 +59,9 @@
             pname = "swift-toolchain";
             version = swiftVersion;
             src = pkgs.fetchurl { inherit (swiftToolchainSource) url hash; };
-            nativeBuildInputs = [ pkgs.autoPatchelfHook ];
-            buildInputs = with pkgs; [
-              stdenv.cc.cc.lib
-              zlib
-              ncurses
-              libxml2_13
-              libedit
-              curl
-              libuuid
-              python312
-              sqlite
-            ];
             dontConfigure = true;
             dontBuild = true;
-            autoPatchelfIgnoreMissingDeps = [ "libedit.so.2" ];
+            dontFixup = true;
             installPhase = ''
               runHook preInstall
               mkdir -p "$out"
@@ -81,7 +69,6 @@
               runHook postInstall
             '';
           };
-          swiftRuntimeLibraryPath = "${swiftToolchain}/lib/swift/linux";
           runtimeDeps = with pkgs; [
             flutter
             swiftToolchain
@@ -113,8 +100,7 @@
 
               for executable in xcross xcrun; do
                 makeWrapper "$out/lib/xcross/bin/$executable" "$out/bin/$executable" \
-                  --prefix PATH : ${pkgs.lib.makeBinPath runtimeDeps} \
-                  --prefix LD_LIBRARY_PATH : ${swiftRuntimeLibraryPath}
+                  --prefix PATH : ${pkgs.lib.makeBinPath runtimeDeps}
                 cmp "$src/bin/$executable" "$out/lib/xcross/bin/$executable"
               done
               runHook postInstall
@@ -138,7 +124,6 @@
             xz
           ]);
           flutterShellHook = ''
-            export LD_LIBRARY_PATH=${swiftRuntimeLibraryPath}''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
             export FLUTTER_ROOT="''${XDG_CACHE_HOME:-$HOME/.cache}/xcross/flutter-${pkgs.flutter.version}"
             if [ ! -x "$FLUTTER_ROOT/bin/flutter" ]; then
               rm -rf "$FLUTTER_ROOT"
