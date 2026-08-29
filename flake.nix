@@ -46,7 +46,7 @@
           pkgs = pkgsFor system;
           runtimeDeps = with pkgs; [
             flutter
-            swift
+            swiftPackages.swift-unwrapped
             llvmPackages.clang-unwrapped
             llvmPackages.llvm
             llvmPackages.lld
