@@ -1,19 +1,23 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:archive/archive.dart';
 import 'package:cli_kit/cli_kit.dart';
 import 'package:crypto/crypto.dart';
 import 'package:darwin_sdk_kit/darwin_sdk_kit.dart';
 import 'package:meta/meta.dart';
 import 'package:path/path.dart' as p;
+import 'package:propertylistserialization/propertylistserialization.dart';
 import 'package:xcross/src/cli/basic/sdk_install.dart';
+import 'package:xcross/src/flutter/build/internal/swiftpm_workspace.dart';
 import 'package:xcross/src/flutter/build/ios_deployment_target.dart';
 import 'package:xcross/src/flutter/build/ios_linker_compatibility.dart';
 import 'package:xcross/src/flutter/build/ios_plugins.dart';
 import 'package:xcross/src/flutter/build/macho_dylib_rewriter.dart';
 import 'package:xcross/src/flutter/build/preview_macro_stub_source.dart';
 import 'package:xcross/src/flutter/build/swift_package_host_patches.dart';
+import 'package:xcross/src/flutter/build/swiftpm_binary_artifact_preparer.dart';
+import 'package:xcross/src/flutter/build/swiftpm_binary_artifact_store.dart';
+import 'package:xcross/src/flutter/build/swiftpm_binary_target.dart';
 import 'package:xcross/src/flutter/constants.dart';
 import 'package:xcross/src/flutter/errors.dart';
 
@@ -29,6 +33,61 @@ const String _flutterFrameworkPackageName = 'FlutterFramework';
 const String _pluginsProductName = 'FlutterPluginsGenerated';
 
 /// Result of building the aggregate Flutter-plugins Swift package.
+typedef SwiftPmDependencyRefEvaluator =
+    Future<Map<String, String>> Function(
+      String packageDirectory, {
+      required String? scratchPath,
+      required String? binaryArtifactStore,
+      required String? binaryArtifactFallback,
+      required bool swiftPmArtifactJunctionCapability,
+      required bool packageLocalArtifactJunctionCapability,
+      required List<SwiftPmPackageDependency> dependencies,
+    });
+
+typedef PrepareSwiftPmBinaryArtifact =
+    Future<SwiftPmPreparedBinaryArtifact> Function(
+      SwiftPmRemoteBinaryTarget target,
+    );
+typedef CreateSwiftPmBinaryAlias =
+    Future<void> Function({required String alias, required String target});
+typedef MaterializeSwiftPmBinaryArtifact =
+    Future<SwiftPmBinaryArtifactPublication> Function({
+      required String source,
+      required String destination,
+    });
+
+final class SwiftPmPackageDependency {
+  const SwiftPmPackageDependency({
+    required this.name,
+    required this.url,
+    required this.identity,
+    required this.match,
+  });
+
+  final String? name;
+  final String url;
+  final String identity;
+  final String match;
+}
+
+final class SwiftPmBinaryArtifactProvenance {
+  const SwiftPmBinaryArtifactProvenance({
+    required this.packageIdentity,
+    required this.target,
+    required this.manifestPath,
+  });
+
+  final String packageIdentity;
+  final SwiftPmRemoteBinaryTarget target;
+  final String manifestPath;
+}
+
+final class SwiftPmBinaryAttemptState {
+  final Set<String> bootstrapRecovered = {};
+  final Set<String> finalRecovered = {};
+  final Set<String> copied = {};
+}
+
 final class GeneratedPluginsBuildResult {
   /// Creates a result wrapping the built dylib paths.
   const GeneratedPluginsBuildResult({
@@ -62,6 +121,9 @@ final class GeneratedPluginsBuildResult {
 /// *dynamic* library, so its produced dylibs can be embedded under
 /// `Frameworks` and Runner can link only the aggregate instead of hand-deriving
 /// Swift-runtime autolink flags for a static library.
+typedef ArtifactJunctionCapabilityResolver =
+    Future<({bool swiftPmArtifact, bool packageLocalArtifact})> Function();
+
 abstract final class GeneratedPluginsPackage {
   /// Builds the aggregate dylib for the subset of [plugins] that use Swift
   /// Package Manager. Returns null if there is nothing to build.
@@ -69,31 +131,70 @@ abstract final class GeneratedPluginsPackage {
   /// [projectRoot]        — Flutter project root (logging context only).
   /// [flutterXcframework] — Path to the real `Flutter.xcframework` (from
   ///                         `IosEngineCache.flutterXcframework`).
-  /// [outputDir]           — Stable directory to synthesize the wrapper
-  ///                         packages and run `swift build` in. Not deleted
-  ///                         between calls, so SwiftPM's `.build` cache
-  ///                         persists; only the generated `.swift` files are
-  ///                         overwritten each call.
+  /// [workspace] owns the stable generated-package, scratch, and vendored
+  /// dependency directories reused between builds.
   static Future<GeneratedPluginsBuildResult?> build({
     required String projectRoot,
+    required SwiftPmWorkspace workspace,
     required List<IosPlugin> plugins,
     required String flutterXcframework,
-    required String outputDir,
     required IosDeploymentTarget deploymentTarget,
     bool verbose = false,
+    bool swiftPmArtifactJunctionCapability = false,
+    bool packageLocalArtifactJunctionCapability = false,
+    ArtifactJunctionCapabilityResolver? artifactJunctionCapabilityResolver,
+    SwiftPmDependencyRefEvaluator? evaluateDependencyRefs,
+    Future<void> Function(
+      String git,
+      String url,
+      String ref,
+      String destination,
+    )?
+    clonePackage,
   }) =>
       Log.logStep('Building Flutter plugins (Swift Package Manager)', () async {
+        final outputDir = workspace.packages;
         final spmPlugins = plugins
             .where((plugin) => plugin.usesSwiftPackageManager)
             .toList();
         if (spmPlugins.isEmpty) return null;
+        final capabilities =
+            await artifactJunctionCapabilityResolver?.call() ??
+            (
+              swiftPmArtifact: swiftPmArtifactJunctionCapability,
+              packageLocalArtifact: packageLocalArtifactJunctionCapability,
+            );
 
         Log.logTrace(
           'projectRoot=$projectRoot '
           'spmPlugins=${[for (final plugin in spmPlugins) plugin.name]}',
         );
 
+        final targetDebugDir = p.join(
+          workspace.scratch,
+          'arm64-apple-ios',
+          'debug',
+        );
+        final fingerprint = await incrementalBuildFingerprint(
+          plugins: spmPlugins,
+          flutterXcframework: flutterXcframework,
+          deploymentTarget: deploymentTarget,
+          verbose: verbose,
+        );
+        final fingerprintFile = File(
+          p.join(outputDir, '.xcross-build-fingerprint'),
+        );
+        if (fingerprintFile.existsSync() &&
+            await fingerprintFile.readAsString() == fingerprint &&
+            File(
+              p.join(targetDebugDir, 'lib$_pluginsProductName.dylib'),
+            ).existsSync()) {
+          Log.logTrace('reusing unchanged SwiftPM plugin build');
+          return discoverAndRewriteDylibs(targetDebugDir);
+        }
+
         final interopProductsByPlugin = <String, Set<String>>{};
+
         for (final plugin in spmPlugins) {
           final manifest = await File(
             p.join(plugin.swiftPackageDir, 'Package.swift'),
@@ -111,20 +212,34 @@ abstract final class GeneratedPluginsPackage {
           outputDir: outputDir,
           plugins: spmPlugins,
           flutterXcframework: flutterXcframework,
-          copyPluginPackages: interopProductsByPlugin.keys.toSet(),
+          copyFlutterXcframework: true,
+          vendorDir: workspace.vendor,
+          copyPluginPackages: spmPlugins.map((plugin) => plugin.name).toSet(),
           deploymentTarget: deploymentTarget,
           verbose: verbose,
+          scratchPath: workspace.scratch,
+          binaryArtifactStore: workspace.binaryArtifactStore,
+          binaryArtifactFallback: workspace.binaryArtifactFallback,
+          swiftPmArtifactJunctionCapability: capabilities.swiftPmArtifact,
+          packageLocalArtifactJunctionCapability:
+              capabilities.packageLocalArtifact,
+          evaluateDependencyRefs: evaluateDependencyRefs,
+          clonePackage: clonePackage,
         );
 
         final pluginsDir = p.join(outputDir, 'Plugins');
-        final scratchPath = Platform.isWindows
-            ? p.join(projectRoot, 'build', '.xcross-spm-v2')
-            : p.join(pluginsDir, '.build');
+        final scratchPath = workspace.scratch;
+        final stagedFlutterXcframework = p.join(
+          outputDir,
+          'Packages',
+          _flutterFrameworkPackageName,
+          'Flutter.xcframework',
+        );
         await _runSwiftBuild(
-          outputDir: outputDir,
+          workspace: workspace,
           pluginsDir: pluginsDir,
           scratchPath: scratchPath,
-          flutterXcframework: flutterXcframework,
+          flutterXcframework: stagedFlutterXcframework,
           interopTargetCandidates: interopTargetCandidates,
           interopConsumers: {
             for (final plugin in spmPlugins)
@@ -137,23 +252,113 @@ abstract final class GeneratedPluginsPackage {
                   p.basename(plugin.swiftPackageDir),
                 ): products,
           },
+          swiftPmArtifactJunctionCapability: capabilities.swiftPmArtifact,
+          packageLocalArtifactJunctionCapability:
+              capabilities.packageLocalArtifact,
         );
 
-        return discoverAndRewriteDylibs(
-          p.join(scratchPath, 'arm64-apple-ios', 'debug'),
-        );
+        final result = await discoverAndRewriteDylibs(targetDebugDir);
+        await _writeStable(fingerprintFile.path, fingerprint);
+        return result;
       });
 
+  @visibleForTesting
+  static Future<String> incrementalBuildFingerprint({
+    required List<IosPlugin> plugins,
+    required String flutterXcframework,
+    required IosDeploymentTarget deploymentTarget,
+    required bool verbose,
+    String? toolchainIdentity,
+    String? sdkIdentity,
+  }) async {
+    Digest? result;
+    final input = sha256.startChunkedConversion(
+      ChunkedConversionSink.withCallback((digests) => result = digests.single),
+    );
+
+    void add(String value) {
+      input.add(utf8.encode(value));
+      input.add(const [0]);
+    }
+
+    add('xcross-swiftpm-build-v2');
+    add(deploymentTarget.version);
+    add(verbose.toString());
+    final sdk = DarwinSdk.current();
+    if (toolchainIdentity == null && sdk == null) {
+      throw FlutterBuildError(
+        'Darwin Swift SDK not found. Run '
+        '`xcross sdk install <Xcode.xip>` first.',
+      );
+    }
+    final resolvedToolchainIdentity =
+        toolchainIdentity ??
+        jsonEncode(await resolveBuildToolchainIdentity(sdk!));
+    add(resolvedToolchainIdentity);
+    final resolvedSdkIdentity =
+        sdkIdentity ??
+        (sdk == null
+            ? ''
+            : jsonEncode(await SdkInstall.sdkBuildIdentity(sdk.swiftSdkPath)));
+    add(resolvedSdkIdentity);
+
+    Future<void> addTree(String root) async {
+      final directory = Directory(root);
+      if (!directory.existsSync()) {
+        add('missing:$root');
+        return;
+      }
+      final files = <File>[];
+      await for (final entity in directory.list(recursive: true)) {
+        if (entity is File) files.add(entity);
+      }
+      files.sort((a, b) => a.path.compareTo(b.path));
+      for (final file in files) {
+        add(p.relative(file.path, from: root).replaceAll(r'\', '/'));
+        input.add(await file.readAsBytes());
+        input.add(const [0]);
+      }
+    }
+
+    for (final plugin
+        in plugins.toList()..sort((a, b) => a.name.compareTo(b.name))) {
+      add(plugin.name);
+      add(plugin.platformDirectoryName);
+      await addTree(plugin.swiftPackageDir);
+    }
+    final frameworkFiles = <File>[];
+    await for (final entity in Directory(
+      flutterXcframework,
+    ).list(recursive: true)) {
+      if (entity is File) frameworkFiles.add(entity);
+    }
+    frameworkFiles.sort((a, b) => a.path.compareTo(b.path));
+    for (final file in frameworkFiles) {
+      final stat = file.statSync();
+      add(
+        p.relative(file.path, from: flutterXcframework).replaceAll(r'\', '/'),
+      );
+      add(stat.size.toString());
+      add(stat.modified.microsecondsSinceEpoch.toString());
+    }
+    input.close();
+    return result!.toString();
+  }
+
   /// Cross-compiles the synthesized packages in [pluginsDir] with
+
   /// `swift build --swift-sdk arm64-apple-ios`.
   static Future<void> _runSwiftBuild({
-    required String outputDir,
+    required SwiftPmWorkspace workspace,
     required String pluginsDir,
     required String scratchPath,
     required String flutterXcframework,
     required Set<String> interopTargetCandidates,
     required Map<String, Set<String>> interopConsumers,
+    bool swiftPmArtifactJunctionCapability = false,
+    bool packageLocalArtifactJunctionCapability = false,
   }) async {
+    final outputDir = workspace.packages;
     final sdk = DarwinSdk.current();
     if (sdk == null) {
       throw FlutterBuildError(
@@ -169,6 +374,13 @@ abstract final class GeneratedPluginsPackage {
       throw FlutterBuildError(SdkInstall.mismatchGuidance(mismatch));
     }
     final swift = await ProcessRunner.locateTool('swift');
+    final swiftPackage = Platform.isWindows
+        ? await ProcessRunner.locateTool('swift-package')
+        : swift;
+    final swiftBuild = Platform.isWindows
+        ? await ProcessRunner.locateTool('swift-build')
+        : swift;
+
     // Real `Flutter.framework` (not our FlutterFramework binary-target
     // wrapper). Our own aggregate target resolves `import Flutter` via
     // that wrapper's declared package dependency, but individual
@@ -210,12 +422,17 @@ abstract final class GeneratedPluginsPackage {
     final environment = swiftProcessEnvironment(windows: windows);
     if (windows) {
       await _resolveWindowsDependencies(
-        swift: swift,
+        swift: swiftPackage,
         pluginsDir: pluginsDir,
         scratchPath: scratchPath,
         swiftSdksPath: swiftSdksPath,
         toolsetPath: toolsetPath,
-        outputDir: outputDir,
+        vendorDir: workspace.vendor,
+        binaryArtifactStore: workspace.binaryArtifactStore,
+        binaryArtifactFallback: workspace.binaryArtifactFallback,
+        swiftPmArtifactJunctionCapability: swiftPmArtifactJunctionCapability,
+        packageLocalArtifactJunctionCapability:
+            packageLocalArtifactJunctionCapability,
         environment: environment,
       );
     }
@@ -237,8 +454,10 @@ abstract final class GeneratedPluginsPackage {
         ),
         ...selection,
       ];
+
+      if (windows) arguments.removeAt(0);
       Future<void> invoke() => ProcessRunner.runChecked(
-        swift,
+        swiftBuild,
         arguments,
         environment: environment,
         inheritStdio: windows && Log.isVerbose,
@@ -260,6 +479,13 @@ abstract final class GeneratedPluginsPackage {
         );
         if (!repaired) rethrow;
         await invoke();
+      }
+      if (windows) {
+        await repairWindowsGeneratedBuildFiles(
+          scratchPath,
+          targetBuildDir,
+          windows: true,
+        );
       }
     }
 
@@ -289,7 +515,10 @@ abstract final class GeneratedPluginsPackage {
     if (!root.existsSync()) return false;
     var changed = false;
     for (final json in [
-      File(p.join(targetBuildDir, 'description.json')),
+      ...root
+          .listSync(recursive: true, followLinks: false)
+          .whereType<File>()
+          .where((file) => p.extension(file.path) == '.json'),
       File(
         p.join(
           scratchPath,
@@ -301,20 +530,26 @@ abstract final class GeneratedPluginsPackage {
     ]) {
       if (!json.existsSync()) continue;
       final original = await json.readAsString();
-      final normalized = original.replaceAll(r'\\?\C:\?\C:\', r'C:\');
+      final normalized = original.replaceAll(r'\\\\?\\C:\\?\\C:\\', r'C:\\');
       if (normalized != original) {
         await json.writeAsString(normalized);
         changed = true;
       }
     }
-    for (final buildDir in root.listSync(followLinks: false)) {
-      if (buildDir is! Directory || !buildDir.path.endsWith('.build')) continue;
-      final accessor = File(
-        p.join(buildDir.path, 'DerivedSources', 'resource_bundle_accessor.m'),
-      );
-      if (!accessor.existsSync()) continue;
+    for (final accessor
+        in root
+            .listSync(recursive: true, followLinks: false)
+            .whereType<File>()
+            .where(
+              (file) => p.basename(file.path) == 'resource_bundle_accessor.m',
+            )) {
       final original = await accessor.readAsString();
-      final normalized = original.replaceAll(r'\', '/');
+      final normalized = original
+          .replaceAll(r'\', '/')
+          .replaceAll(
+            '#import <Foundation/Foundation.h>',
+            '#include <Foundation/Foundation.h>',
+          );
       if (normalized != original) {
         await accessor.writeAsString(normalized);
         changed = true;
@@ -354,7 +589,11 @@ abstract final class GeneratedPluginsPackage {
     required String scratchPath,
     required String swiftSdksPath,
     required String toolsetPath,
-    required String outputDir,
+    required String vendorDir,
+    required String binaryArtifactStore,
+    required String binaryArtifactFallback,
+    required bool swiftPmArtifactJunctionCapability,
+    required bool packageLocalArtifactJunctionCapability,
     required Map<String, String>? environment,
   }) async {
     Future<void> resolve() => ProcessRunner.runChecked(
@@ -364,20 +603,521 @@ abstract final class GeneratedPluginsPackage {
         scratchPath: scratchPath,
         swiftSdksPath: swiftSdksPath,
         toolsetPath: toolsetPath,
-      ),
+      ).skip(1).toList(),
       environment: environment,
       inheritStdio: Log.isVerbose,
       label: 'swift package resolve',
     );
+    final attemptState = SwiftPmBinaryAttemptState();
+    final packageIdentities = await _packageIdentitiesByDirectory(pluginsDir);
+    Future<bool> recover() => stageExtractedBinaryArtifacts(
+      scratchPath: scratchPath,
+      vendorDir: vendorDir,
+      packageIdentities: packageIdentities,
+      binaryArtifactStore: binaryArtifactStore,
+      binaryArtifactFallback: binaryArtifactFallback,
+      attemptState: attemptState,
+      packageLocalArtifactJunctionCapability:
+          packageLocalArtifactJunctionCapability,
+      windows: true,
+    );
+    await resolveWindowsDependencies(
+      resolve: resolve,
+      recoverBootstrap: recover,
+      materialize: () => materializeCheckoutSymlinks(scratchPath),
+      normalize: () => normalizeResolvedPackageManifests(scratchPath),
+      recoverFinal: recover,
+    );
+  }
+
+  @visibleForTesting
+  static Future<void> resolveWindowsDependencies({
+    required Future<void> Function() resolve,
+    required Future<bool> Function() recoverBootstrap,
+    required Future<bool> Function() materialize,
+    required Future<bool> Function() normalize,
+    required Future<bool> Function() recoverFinal,
+  }) async {
+    await resolveWithFinalBinaryRecovery(
+      resolve: resolve,
+      recover: recoverBootstrap,
+    );
+    final changed = await materialize() | await normalize();
+    if (changed) {
+      await resolveWithFinalBinaryRecovery(
+        resolve: resolve,
+        recover: recoverFinal,
+      );
+    }
+  }
+
+  @visibleForTesting
+  static Future<void> prepareSupportedBinaryArtifacts({
+    required String packageRoot,
+    required String binaryArtifactStore,
+    required String binaryArtifactFallback,
+    required bool packageLocalArtifactJunctionCapability,
+    PrepareSwiftPmBinaryArtifact? prepare,
+    CreateSwiftPmBinaryAlias? createAlias,
+    MaterializeSwiftPmBinaryArtifact? materialize,
+    Future<void> Function(String alias)? removeAlias,
+    Future<void> Function(String path, List<int> bytes)? writeManifest,
+    bool? windows,
+  }) async {
+    if (!(windows ?? Platform.isWindows)) return;
+    final root = Directory(_ioPath(packageRoot));
+    if (!root.existsSync()) return;
+
+    final store = SwiftPmBinaryArtifactStore(binaryArtifactStore);
+    final preparer = SwiftPmBinaryArtifactPreparer(store: store);
+    final runPrepare = prepare ?? preparer.prepare;
+    final create = createAlias ?? preparer.createBinaryArtifactJunction;
+    final copy = materialize ?? preparer.materializeBinaryArtifact;
+    final remove = removeAlias ?? preparer.removeBinaryArtifactAlias;
+    final write = writeManifest ?? _writeAtomic;
+    final manifests = root
+        .listSync(recursive: true, followLinks: false)
+        .whereType<File>()
+        .where((file) {
+          final name = p.basename(file.path);
+          return name == 'Package.swift' ||
+              (name.startsWith('Package@') && name.endsWith('.swift'));
+        });
+    for (final manifestFile in manifests) {
+      final original = await manifestFile.readAsString();
+      final targets = SwiftPmBinaryTargetManifest.discover(original);
+      if (targets.isEmpty) continue;
+      final createdDestinations =
+          <
+            String,
+            ({String source, SwiftPmBinaryArtifactPublication? publication})
+          >{};
+      final localPaths = <SwiftPmRemoteBinaryTarget, String>{};
+      try {
+        for (final target in targets) {
+          String? createdDestination;
+          try {
+            final started = Stopwatch()..start();
+            final reused = await store.findCompleteTarget(
+              target.checksum,
+              target.name,
+            );
+            final hadArchive = File(
+              store.archivePath(target.checksum),
+            ).existsSync();
+            final result = await runPrepare(target);
+            _traceBinaryOperation(
+              target: target.name,
+              operation: reused != null
+                  ? 'reuse'
+                  : hadArchive
+                  ? 'extract'
+                  : 'download',
+              archiveBytes: _fileBytes(store.archivePath(target.checksum)),
+              extractedBytes: _directoryBytes(result.entry.artifactPath),
+              elapsedMilliseconds: started.elapsedMilliseconds,
+              attempt: 0,
+            );
+            final artifact = result.entry.artifactPath;
+            final relative = p.join(
+              '.xa',
+              target.checksum.toLowerCase().substring(0, 16),
+              p.basename(artifact),
+            );
+
+            var aliased = false;
+            if (packageLocalArtifactJunctionCapability) {
+              final alias = p.join(manifestFile.parent.path, relative);
+
+              await Directory(p.dirname(alias)).create(recursive: true);
+              try {
+                final existed =
+                    FileSystemEntity.typeSync(alias, followLinks: false) !=
+                    FileSystemEntityType.notFound;
+                if (existed) {
+                  if (!await preparer.validatesBinaryArtifactDestination(
+                    source: artifact,
+                    destination: alias,
+                    alias: true,
+                  )) {
+                    throw FileSystemException(
+                      'SwiftPM binary artifact alias already exists but is not managed for the expected artifact',
+                      alias,
+                    );
+                  }
+                } else {
+                  await create(alias: alias, target: artifact);
+                  createdDestination = alias;
+                  createdDestinations[alias] = (
+                    source: artifact,
+                    publication: null,
+                  );
+                }
+                localPaths[target] = relative;
+                aliased = true;
+              } on Object {
+                if (createdDestination == alias) {
+                  await remove(alias);
+                  createdDestinations.remove(alias);
+                  createdDestination = null;
+                }
+              }
+            }
+            if (!aliased) {
+              final destination = p.join(manifestFile.parent.path, relative);
+              final publication = await copy(
+                source: artifact,
+                destination: destination,
+              );
+
+              if (publication == SwiftPmBinaryArtifactPublication.published()) {
+                createdDestination = destination;
+                createdDestinations[destination] = (
+                  source: artifact,
+                  publication: publication,
+                );
+              }
+              localPaths[target] = relative;
+            }
+          } on FlutterBuildError catch (error) {
+            if (error.isSecurityFailure) rethrow;
+            localPaths.remove(target);
+            if (createdDestination != null) {
+              final created = createdDestinations.remove(createdDestination)!;
+              if (created.publication == null) {
+                await remove(createdDestination);
+              } else {
+                await preparer.removeMaterializedBinaryArtifact(
+                  source: created.source,
+                  destination: createdDestination,
+                  publication: created.publication!,
+                );
+              }
+            }
+          }
+        }
+        if (localPaths.isNotEmpty) {
+          final rewritten = SwiftPmBinaryTargetManifest.rewriteToLocalPaths(
+            original,
+            localPaths,
+          );
+          await write(manifestFile.path, utf8.encode(rewritten));
+        }
+      } on Object {
+        for (final created in createdDestinations.entries.toList().reversed) {
+          if (created.value.publication == null) {
+            await remove(created.key);
+          } else {
+            await preparer.removeMaterializedBinaryArtifact(
+              source: created.value.source,
+              destination: created.key,
+              publication: created.value.publication!,
+            );
+          }
+        }
+        rethrow;
+      }
+    }
+  }
+
+  @visibleForTesting
+  static Future<void> resolveWithFinalBinaryRecovery({
+    required Future<void> Function() resolve,
+    required Future<bool> Function() recover,
+  }) async {
     try {
       await resolve();
     } on Object {
-      if (!await repairWindowsBinaryArtifacts(scratchPath)) rethrow;
+      if (!await recover()) rethrow;
       await resolve();
     }
-    final materialized = await materializeCheckoutSymlinks(scratchPath);
-    final normalized = await normalizeResolvedPackageManifests(scratchPath);
-    if (materialized || normalized) await resolve();
+  }
+
+  @visibleForTesting
+  static Future<SwiftPmBinaryArtifactPublication?> recoverFinalBinaryArtifact({
+    required SwiftPmBinaryArtifactProvenance provenance,
+    required String preparedArtifactPath,
+    required String binaryArtifactStore,
+    required String destination,
+    required SwiftPmBinaryAttemptState attemptState,
+    required bool packageLocalArtifactJunctionCapability,
+    String? materializedDestination,
+    CreateSwiftPmBinaryAlias? createAlias,
+    MaterializeSwiftPmBinaryArtifact? materialize,
+    StartBinaryCopy? materializeStartProcess,
+    bool? windows,
+  }) async {
+    if (!(windows ?? Platform.isWindows)) return null;
+    final key = binaryArtifactAttemptKey(provenance, windows: windows);
+    if (attemptState.finalRecovered.contains(key)) return null;
+    attemptState.finalRecovered.add(key);
+    final preparer = SwiftPmBinaryArtifactPreparer(
+      store: SwiftPmBinaryArtifactStore(binaryArtifactStore),
+    );
+    final create = createAlias ?? preparer.createBinaryArtifactJunction;
+    final copy =
+        materialize ??
+        ({required source, required destination}) =>
+            preparer.materializeBinaryArtifact(
+              source: source,
+              destination: destination,
+              startProcess: materializeStartProcess,
+            );
+    if (packageLocalArtifactJunctionCapability) {
+      try {
+        final started = Stopwatch()..start();
+        await create(alias: destination, target: preparedArtifactPath);
+        _traceBinaryOperation(
+          target: provenance.target.name,
+          operation: 'recover',
+          extractedBytes: _directoryBytes(preparedArtifactPath),
+          elapsedMilliseconds: started.elapsedMilliseconds,
+          attempt: 1,
+        );
+        return SwiftPmBinaryArtifactPublication.published();
+      } on Object {
+        if (attemptState.copied.contains(key)) return null;
+      }
+    }
+    if (attemptState.copied.contains(key)) return null;
+    attemptState.copied.add(key);
+    final started = Stopwatch()..start();
+    final publication = await copy(
+      source: preparedArtifactPath,
+      destination: materializedDestination ?? destination,
+    );
+    _traceBinaryOperation(
+      target: provenance.target.name,
+      operation: 'copy',
+      extractedBytes: _directoryBytes(preparedArtifactPath),
+      elapsedMilliseconds: started.elapsedMilliseconds,
+      attempt: 1,
+    );
+    return publication;
+  }
+
+  @visibleForTesting
+  static Future<bool> stageExtractedBinaryArtifacts({
+    required String scratchPath,
+    required String vendorDir,
+    Map<String, String> packageIdentities = const {},
+    String? binaryArtifactStore,
+    String? binaryArtifactFallback,
+    SwiftPmBinaryAttemptState? attemptState,
+    bool packageLocalArtifactJunctionCapability = false,
+    CreateSwiftPmBinaryAlias? createAlias,
+    MaterializeSwiftPmBinaryArtifact? materialize,
+    Future<void> Function(String destination)? removeDestination,
+    Future<void> Function(String path, List<int> bytes)? writeManifest,
+    bool? windows,
+  }) async {
+    if (!(windows ?? Platform.isWindows)) return false;
+    if (binaryArtifactStore == null ||
+        binaryArtifactFallback == null ||
+        attemptState == null) {
+      return false;
+    }
+    final artifactsRoot = p.join(scratchPath, 'artifacts');
+    final artifacts = Directory(artifactsRoot);
+    final vendor = Directory(vendorDir);
+    final checkouts = Directory(p.join(scratchPath, 'checkouts'));
+    if (!artifacts.existsSync() ||
+        (!vendor.existsSync() && !checkouts.existsSync())) {
+      return false;
+    }
+    final preparer = SwiftPmBinaryArtifactPreparer(
+      store: SwiftPmBinaryArtifactStore(binaryArtifactStore),
+    );
+    var changed = false;
+    final remove = removeDestination ?? _deleteEntity;
+    final write = writeManifest ?? _writeAtomic;
+    final packageRoots = <Directory>[
+      if (vendor.existsSync()) vendor,
+      if (checkouts.existsSync()) checkouts,
+    ];
+    for (final packageRoot in packageRoots) {
+      await for (final package in packageRoot.list(followLinks: false)) {
+        if (package is! Directory) continue;
+        final packageIdentity =
+            packageIdentities[p.normalize(package.path)] ??
+            p.basename(package.path).toLowerCase();
+
+        await for (final entity in package.list(followLinks: false)) {
+          if (entity is! File) continue;
+          final fileName = p.basename(entity.path);
+          if (fileName != 'Package.swift' &&
+              !(fileName.startsWith('Package@') &&
+                  fileName.endsWith('.swift'))) {
+            continue;
+          }
+          final originalBytes = await entity.readAsBytes();
+          var manifest = utf8.decode(originalBytes);
+          final createdDestinations =
+              <
+                String,
+                ({String source, SwiftPmBinaryArtifactPublication publication})
+              >{};
+          final provenance = scanBinaryArtifactProvenance(
+            packageIdentity: packageIdentity,
+            manifestPath: entity.path,
+            manifest: manifest,
+          );
+          for (final candidate in provenance.reversed) {
+            final targetDirectory = Directory(
+              p.join(artifactsRoot, packageIdentity, candidate.target.name),
+            );
+            if (!targetDirectory.existsSync()) continue;
+            final archives = targetDirectory
+                .listSync(followLinks: false)
+                .whereType<File>()
+                .where((file) => file.path.toLowerCase().endsWith('.zip'))
+                .toList();
+            final verified = <SwiftPmBinaryArtifactEntry>[];
+            for (final archive in archives) {
+              try {
+                verified.add(
+                  await preparer.prepareDownloadedArchive(
+                    target: candidate.target,
+                    archive: archive,
+                  ),
+                );
+              } on FlutterBuildError catch (error) {
+                if (error.isSecurityFailure) rethrow;
+              }
+            }
+            if (verified.isEmpty) {
+              final extracted = targetDirectory
+                  .listSync(followLinks: false)
+                  .whereType<Directory>()
+                  .where(
+                    (directory) =>
+                        directory.path.toLowerCase().endsWith('.xcframework'),
+                  )
+                  .toList();
+              if (extracted.length == 1) {
+                final staging = await Directory(
+                  binaryArtifactStore,
+                ).createTemp('.extracted-');
+                try {
+                  final artifactName = p.basename(extracted.single.path);
+                  await _copyResolvedArtifactTree(
+                    extracted.single.path,
+                    p.join(staging.path, artifactName),
+                    includeTopLevel: (name) =>
+                        name == 'Info.plist' || name == 'ios-arm64',
+                  );
+
+                  verified.add(
+                    await SwiftPmBinaryArtifactStore(
+                      binaryArtifactStore,
+                    ).publishTarget(
+                      checksum: candidate.target.checksum,
+                      targetName: candidate.target.name,
+                      stagingRoot: staging,
+                      artifactDirectoryName: artifactName,
+                      metadata: const {'source': 'swiftpm-extracted-artifact'},
+                    ),
+                  );
+                } finally {
+                  if (staging.existsSync()) {
+                    await staging.delete(recursive: true);
+                  }
+                }
+              }
+            }
+            if (verified.length != 1) continue;
+            final relative = p.join(
+              '.xa',
+              candidate.target.checksum.toLowerCase().substring(0, 16),
+              p.basename(verified.single.artifactPath),
+            );
+
+            final destination = p.join(package.path, relative);
+            final fallbackDestination = destination;
+
+            final existed =
+                FileSystemEntity.typeSync(destination, followLinks: false) !=
+                FileSystemEntityType.notFound;
+            SwiftPmBinaryArtifactPublication? publication;
+            if (existed && packageLocalArtifactJunctionCapability) {
+              if (await preparer.validatesBinaryArtifactDestination(
+                source: verified.single.artifactPath,
+                destination: destination,
+                alias: true,
+              )) {
+                publication = SwiftPmBinaryArtifactPublication.reused;
+              }
+            } else if (await preparer.validatesMaterializedBinaryArtifact(
+              source: verified.single.artifactPath,
+              destination: fallbackDestination,
+            )) {
+              publication = SwiftPmBinaryArtifactPublication.reused;
+            } else {
+              publication = await recoverFinalBinaryArtifact(
+                provenance: candidate,
+                preparedArtifactPath: verified.single.artifactPath,
+                binaryArtifactStore: binaryArtifactStore,
+                destination: destination,
+                materializedDestination: fallbackDestination,
+                attemptState: attemptState,
+                packageLocalArtifactJunctionCapability:
+                    packageLocalArtifactJunctionCapability,
+                createAlias: createAlias,
+                materialize: materialize,
+                windows: windows,
+              );
+            }
+            if (publication == null) continue;
+            final usedAlias =
+                packageLocalArtifactJunctionCapability &&
+                await preparer.validatesBinaryArtifactDestination(
+                  source: verified.single.artifactPath,
+                  destination: destination,
+                  alias: true,
+                );
+            final publishedDestination = usedAlias
+                ? destination
+                : fallbackDestination;
+            if (publication == SwiftPmBinaryArtifactPublication.published()) {
+              createdDestinations[publishedDestination] = (
+                source: verified.single.artifactPath,
+                publication: publication,
+              );
+            }
+            manifest = SwiftPmBinaryTargetManifest.rewriteToLocalPaths(
+              manifest,
+              {candidate.target: relative},
+            );
+
+            changed = true;
+          }
+          if (!_sameBytes(originalBytes, utf8.encode(manifest))) {
+            try {
+              await _clearPlaceholderAttributes(entity.path);
+              await write(entity.path, utf8.encode(manifest));
+            } on Object {
+              for (final created
+                  in createdDestinations.entries.toList().reversed) {
+                if (removeDestination != null) {
+                  await remove(created.key);
+                } else if (packageLocalArtifactJunctionCapability &&
+                    p.isWithin(package.path, created.key)) {
+                  await preparer.removeBinaryArtifactAlias(created.key);
+                } else {
+                  await preparer.removeMaterializedBinaryArtifact(
+                    source: created.value.source,
+                    destination: created.key,
+                    publication: created.value.publication,
+                  );
+                }
+              }
+              rethrow;
+            }
+          }
+        }
+      }
+    }
+    return changed;
   }
 
   @visibleForTesting
@@ -421,16 +1161,11 @@ abstract final class GeneratedPluginsPackage {
   }) async {
     final repair = repairConsumers ?? () async {};
 
-    Future<bool> recoverMissingTargets([Object? failure]) async {
+    Future<bool> recoverMissingTargets() async {
       final targets = missingSwiftInteropTargets(
         targetBuildDir,
         candidates: interopTargetCandidates,
       );
-      if (failure != null &&
-          !(windows ?? Platform.isWindows) &&
-          !isMissingSwiftInteropHeaderFailure(failure, targets)) {
-        return false;
-      }
       for (final target in targets) {
         await buildTarget(target);
       }
@@ -447,8 +1182,8 @@ abstract final class GeneratedPluginsPackage {
     final before = swiftInteropSearchPaths(targetBuildDir).toSet();
     try {
       await build();
-    } on Object catch (error) {
-      if (await recoverMissingTargets(error)) {
+    } on Object {
+      if (await recoverMissingTargets()) {
         await build();
         return;
       }
@@ -461,18 +1196,6 @@ abstract final class GeneratedPluginsPackage {
       await repair();
       await build();
     }
-  }
-
-  @visibleForTesting
-  static bool isMissingSwiftInteropHeaderFailure(
-    Object error,
-    Iterable<String> targets,
-  ) {
-    final message = '$error';
-    return targets.any(
-      (target) =>
-          message.contains('$target-Swift.h') && message.contains('not found'),
-    );
   }
 
   @visibleForTesting
@@ -590,10 +1313,9 @@ abstract final class GeneratedPluginsPackage {
 
   /// Process-local settings for Windows SwiftPM dependency checkout and
   /// sentry-cocoa's source-build manifest lane.
-  @visibleForTesting
   static Map<String, String>? swiftProcessEnvironment({bool? windows}) {
     if (!(windows ?? Platform.isWindows)) return null;
-    return const {
+    return {
       'GIT_CONFIG_COUNT': '1',
       'GIT_CONFIG_KEY_0': 'core.symlinks',
       'GIT_CONFIG_VALUE_0': 'false',
@@ -603,7 +1325,6 @@ abstract final class GeneratedPluginsPackage {
 
   /// Resolves Windows dependencies before tracked symlink placeholders are
   /// materialized and automatic resolution is disabled for the build.
-  @visibleForTesting
   static List<String> swiftResolveArguments({
     required String pluginsDir,
     required String scratchPath,
@@ -743,7 +1464,6 @@ abstract final class GeneratedPluginsPackage {
 
   /// Arguments shared by Linux and Windows SwiftPM builds. SDK-owned compiler
   /// flags stay in SDK metadata; only package-specific flags belong here.
-  @visibleForTesting
   static List<String> swiftBuildArguments({
     required String pluginsDir,
     required String scratchPath,
@@ -899,6 +1619,15 @@ abstract final class GeneratedPluginsPackage {
     );
   }
 
+  static Future<Map<String, Object>> resolveBuildToolchainIdentity(
+    DarwinSdk sdk,
+  ) async => SdkInstall.swiftPmBuildToolchainIdentity(
+    cCompilerPath: await DarwinSdk.resolveDarwinClang(sdk),
+    cxxCompilerPath: await DarwinSdk.resolveDarwinClang(sdk, name: 'clang++'),
+    linkerPath: await DarwinSdk.resolveLd64Lld(sdk),
+    librarianPath: await resolveLibrarian(),
+  );
+
   /// LLVM's drop-in replacement for Apple's `libtool`.
   static const _libtool = 'llvm-libtool-darwin';
 
@@ -913,7 +1642,6 @@ abstract final class GeneratedPluginsPackage {
   /// `libtool`"), which no cross host has. Windows overrides the compilers and
   /// the linker on top; Linux passes its linker as a `swift build` flag
   /// instead.
-  @visibleForTesting
   static Future<String> writeToolset({
     required String outputDir,
     required String linkerPath,
@@ -921,6 +1649,7 @@ abstract final class GeneratedPluginsPackage {
     String? cxxCompilerPath,
     bool? windows,
     Future<String?> Function(String name)? locateTool,
+    String? librarianPath,
   }) async {
     final onWindows = windows ?? Platform.isWindows;
     final output = Directory(outputDir);
@@ -942,13 +1671,9 @@ abstract final class GeneratedPluginsPackage {
           : _jsonPath(File(path).resolveSymbolicLinksSync());
     }
 
-    final librarian = await _resolveLibrarian(onWindows, resolve);
-    if (librarian == null) {
-      throw FlutterBuildError(
-        'No Darwin-capable archiver found (${_librarians.join(' or ')}). '
-        'Install LLVM and retry.',
-      );
-    }
+    final librarian =
+        librarianPath ??
+        await resolveLibrarian(windows: onWindows, locateTool: locateTool);
     toolset['librarian'] = {'path': librarian};
 
     if (onWindows) {
@@ -966,7 +1691,10 @@ abstract final class GeneratedPluginsPackage {
         if (path == null) {
           throw FlutterBuildError('Could not find ${tool.value.$1}.');
         }
-        toolset[tool.key] = {'path': path};
+        toolset[tool.key] = {
+          'path': path,
+          'extraCLIOptions': [r'-fdebug-prefix-map=C:\=/'],
+        };
       }
       // The Swift toolchain's own ld64.lld refuses iOS, so take the linker
       // already vetted by DarwinSdk.resolveLd64Lld instead of PATH order.
@@ -987,6 +1715,30 @@ abstract final class GeneratedPluginsPackage {
   /// on PATH, else the copy sitting next to `llvm-ar` inside LLVM's own bin
   /// directory (Debian and Ubuntu only symlink a subset of LLVM into
   /// `/usr/bin`), else `llvm-ar` itself.
+  @visibleForTesting
+  static Future<String> resolveLibrarian({
+    bool? windows,
+    Future<String?> Function(String name)? locateTool,
+  }) async {
+    final onWindows = windows ?? Platform.isWindows;
+    final locate = locateTool ?? DarwinSdk.locateLlvmTool;
+    Future<String?> resolve(String name) async {
+      final path = await locate(
+        ProcessRunner.hostExecutableName(name, windows: onWindows),
+      );
+      return path == null
+          ? null
+          : _jsonPath(File(path).resolveSymbolicLinksSync());
+    }
+
+    final librarian = await _resolveLibrarian(onWindows, resolve);
+    if (librarian != null) return librarian;
+    throw FlutterBuildError(
+      'No Darwin-capable archiver found (${_librarians.join(' or ')}). '
+      'Install LLVM and retry.',
+    );
+  }
+
   static Future<String?> _resolveLibrarian(
     bool windows,
     Future<String?> Function(String name) resolve,
@@ -1021,15 +1773,27 @@ abstract final class GeneratedPluginsPackage {
     bool verbose = false,
     bool? copyFlutterXcframework,
     bool? vendorRemotePackages,
+    String? vendorDir,
     Set<String> copyPluginPackages = const {},
+    String? scratchPath,
+    String? binaryArtifactStore,
+    String? binaryArtifactFallback,
+    bool swiftPmArtifactJunctionCapability = false,
+    bool packageLocalArtifactJunctionCapability = false,
+    SwiftPmDependencyRefEvaluator? evaluateDependencyRefs,
+    Future<void> Function(
+      String git,
+      String url,
+      String ref,
+      String destination,
+    )?
+    clonePackage,
   }) async {
     final windows = Platform.isWindows;
     final packagesDir = p.join(outputDir, 'Packages');
     final frameworkDir = p.join(packagesDir, _flutterFrameworkPackageName);
     final pluginsDir = p.join(outputDir, 'Plugins');
-    final vendorDir = Platform.isWindows
-        ? p.join(p.dirname(p.dirname(outputDir)), '.xcross-vendor')
-        : p.join(outputDir, 'Vendor');
+    final resolvedVendorDir = vendorDir ?? p.join(outputDir, 'vendor');
     final shouldVendor = vendorRemotePackages ?? true;
 
     await Directory(packagesDir).create(recursive: true);
@@ -1045,17 +1809,41 @@ abstract final class GeneratedPluginsPackage {
     final pluginPackageDirs = <String, String>{};
     final vendorNormalizationCache = <String, Map<String, List<String>>>{};
     final dependencyEvaluationCache = <String, Future<Map<String, String>>>{};
+    final vendorCheckoutCache = <String, Future<void>>{};
+
     for (final plugin in plugins) {
       final packageAlias = p.join(packagesDir, plugin.name);
       pluginPackageDirs[plugin.name] = await _stagePluginPackage(
         alias: packageAlias,
         target: plugin.swiftPackageDir,
         platformDir: plugin.platformDirectoryName,
-        vendorDir: shouldVendor ? vendorDir : null,
+        vendorDir: shouldVendor ? resolvedVendorDir : null,
         packageTargets: pluginTargets,
         copySources: copyPluginPackages.contains(plugin.name),
         vendorNormalizationCache: vendorNormalizationCache,
         dependencyEvaluationCache: dependencyEvaluationCache,
+        vendorCheckoutCache: vendorCheckoutCache,
+        scratchPath: scratchPath,
+
+        binaryArtifactStore: binaryArtifactStore,
+        binaryArtifactFallback: binaryArtifactFallback,
+        swiftPmArtifactJunctionCapability: swiftPmArtifactJunctionCapability,
+        packageLocalArtifactJunctionCapability:
+            packageLocalArtifactJunctionCapability,
+        evaluateDependencyRefs: evaluateDependencyRefs,
+        clonePackage: clonePackage,
+      );
+    }
+    if (windows &&
+        shouldVendor &&
+        binaryArtifactStore != null &&
+        binaryArtifactFallback != null) {
+      await prepareSupportedBinaryArtifacts(
+        packageRoot: resolvedVendorDir,
+        binaryArtifactStore: binaryArtifactStore,
+        binaryArtifactFallback: binaryArtifactFallback,
+        packageLocalArtifactJunctionCapability:
+            packageLocalArtifactJunctionCapability,
       );
     }
     final packagesByDirectoryName = {
@@ -1112,6 +1900,21 @@ abstract final class GeneratedPluginsPackage {
     bool copySources = false,
     Map<String, Map<String, List<String>>>? vendorNormalizationCache,
     Map<String, Future<Map<String, String>>>? dependencyEvaluationCache,
+    Map<String, Future<void>>? vendorCheckoutCache,
+    String? scratchPath,
+
+    String? binaryArtifactStore,
+    String? binaryArtifactFallback,
+    bool swiftPmArtifactJunctionCapability = false,
+    bool packageLocalArtifactJunctionCapability = false,
+    SwiftPmDependencyRefEvaluator? evaluateDependencyRefs,
+    Future<void> Function(
+      String git,
+      String url,
+      String ref,
+      String destination,
+    )?
+    clonePackage,
   }) async {
     var stagedPackage = alias;
     final shouldCopySources = vendorDir != null || copySources;
@@ -1163,6 +1966,16 @@ abstract final class GeneratedPluginsPackage {
         fallbackSwiftModules: fallbackSwiftModules,
         normalizationCache: vendorNormalizationCache,
         evaluationCache: dependencyEvaluationCache,
+        checkoutCache: vendorCheckoutCache,
+        scratchPath: scratchPath,
+
+        binaryArtifactStore: binaryArtifactStore,
+        binaryArtifactFallback: binaryArtifactFallback,
+        swiftPmArtifactJunctionCapability: swiftPmArtifactJunctionCapability,
+        packageLocalArtifactJunctionCapability:
+            packageLocalArtifactJunctionCapability,
+        scopedDependencyRefEvaluator: evaluateDependencyRefs,
+        clonePackage: clonePackage,
       );
     }
 
@@ -1189,6 +2002,18 @@ abstract final class GeneratedPluginsPackage {
         fallbackSwiftModules: fallbackSwiftModules,
       );
     }
+    if (Platform.isWindows &&
+        binaryArtifactStore != null &&
+        binaryArtifactFallback != null) {
+      await prepareSupportedBinaryArtifacts(
+        packageRoot: stagedPackage,
+        binaryArtifactStore: binaryArtifactStore,
+        binaryArtifactFallback: binaryArtifactFallback,
+        packageLocalArtifactJunctionCapability:
+            packageLocalArtifactJunctionCapability,
+      );
+    }
+
     return stagedPackage;
   }
 
@@ -1703,15 +2528,48 @@ let package = Package(
     return code;
   }
 
+  static Future<Map<String, String>> _packageIdentitiesByDirectory(
+    String root,
+  ) async {
+    final identities = <String, String>{};
+    final pending = <String>[root];
+    final visited = <String>{};
+    while (pending.isNotEmpty) {
+      final directory = p.normalize(pending.removeLast());
+      if (!visited.add(directory)) continue;
+      final manifestFile = File(p.join(directory, 'Package.swift'));
+      if (!manifestFile.existsSync()) continue;
+      final manifest = await manifestFile.readAsString();
+      for (final call in _swiftCalls(manifest, '.package')) {
+        final path = _namedString(call.text, 'path');
+        if (path == null) continue;
+        final dependencyDirectory = p.normalize(
+          p.isAbsolute(path) ? path : p.join(directory, path),
+        );
+        final dependencyManifest = File(
+          p.join(dependencyDirectory, 'Package.swift'),
+        );
+        final identity =
+            _namedString(call.text, 'name') ??
+            (dependencyManifest.existsSync()
+                ? RegExp(r'Package\s*\(\s*name\s*:\s*"([^"]+)"')
+                      .firstMatch(await dependencyManifest.readAsString())
+                      ?.group(1)
+                : null);
+        if (identity != null) identities[dependencyDirectory] = identity;
+        pending.add(dependencyDirectory);
+      }
+    }
+    return identities;
+  }
+
   /// Parses remote `.package(url:)` entries out of a Swift manifest.
   ///
   /// Uses parenthesis balancing so nested forms like
   /// `.upToNextMajor(from: "1.0.0")` are not truncated at the inner `)`.
   @visibleForTesting
-  static List<({String? name, String url, String match})> parseUrlPackageDeps(
-    String manifest,
-  ) {
-    final deps = <({String? name, String url, String match})>[];
+  static List<SwiftPmPackageDependency> parseUrlPackageDeps(String manifest) {
+    final deps = <SwiftPmPackageDependency>[];
     var searchFrom = 0;
     final startPattern = RegExp(r'\.package\s*\(');
     while (true) {
@@ -1730,11 +2588,16 @@ let package = Package(
         continue;
       }
       final nameMatch = RegExp(r'name:\s*"(?<name>[^"]*)"').firstMatch(inner);
-      deps.add((
-        name: nameMatch?.namedGroup('name'),
-        url: urlMatch.namedGroup('url')!,
-        match: manifest.substring(start, close + 1),
-      ));
+      final name = nameMatch?.namedGroup('name');
+      final url = urlMatch.namedGroup('url')!;
+      deps.add(
+        SwiftPmPackageDependency(
+          name: name,
+          url: url,
+          identity: name ?? packageIdentityFromUrl(url),
+          match: manifest.substring(start, close + 1),
+        ),
+      );
       searchFrom = close + 1;
     }
     return deps;
@@ -1772,7 +2635,11 @@ let package = Package(
   @visibleForTesting
   static String vendorPackageDirName(String url, String ref) {
     final safeRef = ref.replaceAll(RegExp(r'[^\w.\-]+'), '_');
-    return '${packageIdentityFromUrl(url)}@$safeRef';
+    final identity = packageIdentityFromUrl(url);
+    if (identity == 'firebase-ios-sdk') {
+      return 'fb@${safeRef.length > 12 ? safeRef.substring(0, 12) : safeRef}';
+    }
+    return '$identity@$safeRef';
   }
 
   /// SwiftPM package identity implied by a git URL (last path segment, no
@@ -2420,24 +3287,287 @@ let package = Package(
         .toString();
   }
 
-  static Future<Map<String, String>> _evaluatedDependencyRefs(
+  @visibleForTesting
+  static List<SwiftPmBinaryArtifactProvenance> scanBinaryArtifactProvenance({
+    required String packageIdentity,
+    required String manifestPath,
+    required String manifest,
+  }) => [
+    for (final target in SwiftPmBinaryTargetManifest.discover(manifest))
+      SwiftPmBinaryArtifactProvenance(
+        packageIdentity: packageIdentity,
+        target: target,
+        manifestPath: manifestPath,
+      ),
+  ];
+
+  @visibleForTesting
+  static SwiftPmBinaryArtifactProvenance? matchBinaryArtifactProvenance({
+    required String artifactPath,
+    required String artifactsRoot,
+    required Iterable<SwiftPmBinaryArtifactProvenance> provenance,
+    bool? windows,
+  }) {
+    final relative = p.split(p.relative(artifactPath, from: artifactsRoot));
+    if (relative.length < 2 ||
+        _swiftPmComponent(relative.first, windows: windows) == 'extract') {
+      return null;
+    }
+    final identity = _swiftPmComponent(relative[0], windows: windows);
+    final target = _swiftPmComponent(relative[1], windows: windows);
+    final matches = provenance
+        .where(
+          (candidate) =>
+              _swiftPmComponent(candidate.packageIdentity, windows: windows) ==
+                  identity &&
+              _swiftPmComponent(candidate.target.name, windows: windows) ==
+                  target,
+        )
+        .toList();
+    return matches.length == 1 ? matches.single : null;
+  }
+
+  static String _swiftPmComponent(String value, {bool? windows}) =>
+      (windows ?? Platform.isWindows) ? value.toLowerCase() : value;
+
+  @visibleForTesting
+  static String binaryArtifactAttemptKey(
+    SwiftPmBinaryArtifactProvenance provenance, {
+    bool? windows,
+  }) => [
+    _swiftPmComponent(provenance.packageIdentity, windows: windows),
+    _swiftPmComponent(provenance.target.name, windows: windows),
+    provenance.target.checksum.toLowerCase(),
+  ].join('\u0000');
+
+  static Future<List<SwiftPmBinaryArtifactProvenance>>
+  _binaryArtifactProvenance(
     String packageDirectory,
-    Future<String> Function(String name) locateTool,
+    String scratchPath,
+    List<SwiftPmPackageDependency> dependencies,
   ) async {
-    final swift = await locateTool('swift');
+    final result = <SwiftPmBinaryArtifactProvenance>[];
+    final packageRoot = Directory(packageDirectory);
+    final checkoutRoot = p.join(scratchPath, 'checkouts');
+    final roots = <String, String?>{packageRoot.path: null};
+    for (final dependency in dependencies) {
+      roots[p.join(checkoutRoot, dependency.identity)] = dependency.identity;
+      roots[p.join(checkoutRoot, packageIdentityFromUrl(dependency.url))] =
+          dependency.identity;
+    }
+    for (final entry in roots.entries) {
+      final root = Directory(entry.key);
+      if (!root.existsSync()) continue;
+      await for (final entity in root.list(
+        recursive: true,
+        followLinks: false,
+      )) {
+        if (entity is! File) continue;
+        final name = p.basename(entity.path);
+        if (name != 'Package.swift' &&
+            !(name.startsWith('Package@') && name.endsWith('.swift'))) {
+          continue;
+        }
+        final manifest = await entity.readAsString();
+        final declaredName = RegExp(
+          r'Package\s*\(\s*name\s*:\s*"([^"]+)"',
+        ).firstMatch(manifest)?.group(1);
+        final identity = entry.value ?? declaredName;
+        if (identity == null) continue;
+        result.addAll(
+          scanBinaryArtifactProvenance(
+            packageIdentity: identity,
+            manifestPath: entity.path,
+            manifest: manifest,
+          ),
+        );
+      }
+    }
+    return result;
+  }
+
+  @visibleForTesting
+  static Future<bool> recoverBootstrapBinaryArtifacts({
+    required String scratchPath,
+    required String binaryArtifactStore,
+    required Iterable<SwiftPmBinaryArtifactProvenance> provenance,
+    required SwiftPmBinaryAttemptState attemptState,
+    bool swiftPmArtifactJunctionCapability = false,
+    bool? windows,
+  }) async {
+    if (!(windows ?? Platform.isWindows)) return false;
+    final artifactsRoot = p.join(scratchPath, 'artifacts');
+    final artifacts = Directory(artifactsRoot);
+    if (!artifacts.existsSync()) return false;
+    final preparer = SwiftPmBinaryArtifactPreparer(
+      store: SwiftPmBinaryArtifactStore(binaryArtifactStore),
+    );
+    final candidates =
+        <
+          String,
+          List<
+            ({Directory directory, SwiftPmBinaryArtifactProvenance provenance})
+          >
+        >{};
+    for (final package in artifacts.listSync(followLinks: false)) {
+      if (package is! Directory ||
+          _swiftPmComponent(p.basename(package.path), windows: windows) ==
+              'extract') {
+        continue;
+      }
+      for (final targetDirectory in package.listSync(followLinks: false)) {
+        if (targetDirectory is! Directory) continue;
+        final match = matchBinaryArtifactProvenance(
+          artifactPath: targetDirectory.path,
+          artifactsRoot: artifactsRoot,
+          provenance: provenance,
+          windows: windows,
+        );
+        if (match == null) continue;
+        final key = binaryArtifactAttemptKey(match, windows: windows);
+        (candidates[key] ??= []).add((
+          directory: targetDirectory,
+          provenance: match,
+        ));
+      }
+    }
+
+    var recovered = false;
+    for (final candidateList in candidates.values) {
+      if (candidateList.length != 1) continue;
+      final candidate = candidateList.single;
+      final key = binaryArtifactAttemptKey(
+        candidate.provenance,
+        windows: windows,
+      );
+      if (attemptState.bootstrapRecovered.contains(key)) continue;
+      final completeArtifacts = candidate.directory
+          .listSync(followLinks: false)
+          .whereType<Directory>()
+          .where(
+            (directory) =>
+                directory.path.toLowerCase().endsWith('.xcframework'),
+          );
+      var hasFinalArtifact = false;
+      for (final artifact in completeArtifacts) {
+        if (await hasCompleteSwiftPmArtifact(artifact)) {
+          hasFinalArtifact = true;
+          break;
+        }
+      }
+      if (hasFinalArtifact) continue;
+      final archives = candidate.directory
+          .listSync(followLinks: false)
+          .whereType<File>()
+          .where((file) => file.path.toLowerCase().endsWith('.zip'));
+      final verified = <SwiftPmPreparedBinaryArtifact>[];
+      for (final archive in archives) {
+        try {
+          verified.add(
+            SwiftPmPreparedBinaryArtifact(
+              target: candidate.provenance.target,
+              entry: await preparer.prepareDownloadedArchive(
+                target: candidate.provenance.target,
+                archive: archive,
+              ),
+            ),
+          );
+        } on FlutterBuildError catch (error) {
+          if (error.isSecurityFailure) rethrow;
+          continue;
+        } on Object {
+          continue;
+        }
+      }
+      if (verified.length != 1) continue;
+      final prepared = verified.single;
+      final destination = p.join(
+        candidate.directory.path,
+        p.basename(prepared.entry.artifactPath),
+      );
+      if (swiftPmArtifactJunctionCapability) {
+        try {
+          await preparer.createBinaryArtifactJunction(
+            alias: destination,
+            target: prepared.entry.artifactPath,
+          );
+        } on FileSystemException {
+          if (attemptState.copied.contains(key)) continue;
+          attemptState.copied.add(key);
+          await preparer.materializeBinaryArtifact(
+            source: prepared.entry.artifactPath,
+            destination: destination,
+          );
+        }
+      } else {
+        if (attemptState.copied.contains(key)) continue;
+        attemptState.copied.add(key);
+        await preparer.materializeBinaryArtifact(
+          source: prepared.entry.artifactPath,
+          destination: destination,
+        );
+      }
+      attemptState.bootstrapRecovered.add(key);
+      recovered = true;
+    }
+    return recovered;
+  }
+
+  @visibleForTesting
+  static Future<bool> hasCompleteSwiftPmArtifact(Directory artifact) async {
+    final info = File(p.join(artifact.path, 'Info.plist'));
+    if (!info.existsSync()) return false;
+    try {
+      final value = PropertyListSerialization.propertyListWithString(
+        await info.readAsString(),
+      );
+      if (value is! Map) return false;
+      final libraries = value['AvailableLibraries'];
+      if (libraries is! List) return false;
+      for (final value in libraries) {
+        if (value is! Map || value['SupportedPlatform'] != 'ios') continue;
+        final architectures = value['SupportedArchitectures'];
+        final identifier = value['LibraryIdentifier'];
+        final libraryPath = value['LibraryPath'];
+        if (architectures is! List ||
+            !architectures.contains('arm64') ||
+            identifier is! String ||
+            identifier.isEmpty ||
+            libraryPath is! String ||
+            libraryPath.isEmpty) {
+          continue;
+        }
+        if (FileSystemEntity.typeSync(
+              p.join(artifact.path, identifier, libraryPath),
+            ) !=
+            FileSystemEntityType.notFound) {
+          return true;
+        }
+      }
+    } on Object {
+      return false;
+    }
+    return false;
+  }
+
+  @visibleForTesting
+  static Future<Map<String, String>> evaluateDependencyRefsWithRecovery(
+    String packageDirectory, {
+    required Future<void> Function(String packageDirectory) resolve,
+    required Future<bool> Function(
+      String packageDirectory,
+      SwiftPmBinaryAttemptState attemptState,
+    )
+    recover,
+    required SwiftPmBinaryAttemptState attemptState,
+  }) async {
     final resolvedFile = File(p.join(packageDirectory, 'Package.resolved'));
     if (resolvedFile.existsSync()) await resolvedFile.delete();
-    final result = await ProcessRunner.run(swift, [
-      'package',
-      '--package-path',
-      packageDirectory,
-      'resolve',
-    ]);
-    if (result.exitCode != 0) {
-      throw FlutterBuildError(
-        'Cannot resolve SwiftPM dependencies in $packageDirectory:\n'
-        '${result.stderr.trim()}',
-      );
+    try {
+      await resolve(packageDirectory);
+    } on Object {
+      if (!await recover(packageDirectory, attemptState)) rethrow;
+      await resolve(packageDirectory);
     }
     try {
       return dependencyRefsFromPackageResolved(
@@ -2446,6 +3576,73 @@ let package = Package(
     } on Object catch (error) {
       throw FlutterBuildError('Cannot read ${resolvedFile.path}: $error');
     }
+  }
+
+  static Future<Map<String, String>> _evaluatedDependencyRefs(
+    String packageDirectory,
+    Future<String> Function(String name) locateTool, {
+    Future<void> Function(String packageDirectory)? resolve,
+    Future<bool> Function(
+      String packageDirectory,
+      SwiftPmBinaryAttemptState attemptState,
+    )?
+    recover,
+    SwiftPmBinaryAttemptState? attemptState,
+    String? scratchPath,
+    String? binaryArtifactStore,
+    String? binaryArtifactFallback,
+    bool swiftPmArtifactJunctionCapability = false,
+    List<SwiftPmPackageDependency> dependencies = const [],
+  }) async {
+    final swift = await locateTool(
+      Platform.isWindows ? 'swift-package' : 'swift',
+    );
+    final runResolve =
+        resolve ??
+        (directory) async {
+          final result = await ProcessRunner.run(swift, [
+            if (!Platform.isWindows) 'package',
+            '--package-path',
+            directory,
+            'resolve',
+          ]);
+          if (result.exitCode != 0) {
+            throw FlutterBuildError(
+              'Cannot resolve SwiftPM dependencies in $directory:\n'
+              '${result.stderr.trim()}',
+            );
+          }
+        };
+    final canRecover =
+        recover != null ||
+        (Platform.isWindows &&
+            scratchPath != null &&
+            binaryArtifactStore != null &&
+            binaryArtifactFallback != null);
+    final scannedProvenance = recover == null && canRecover
+        ? await _binaryArtifactProvenance(
+            packageDirectory,
+            scratchPath!,
+            dependencies,
+          )
+        : null;
+    return evaluateDependencyRefsWithRecovery(
+      packageDirectory,
+      resolve: runResolve,
+      recover:
+          recover ??
+          (_, state) => canRecover
+              ? recoverBootstrapBinaryArtifacts(
+                  scratchPath: scratchPath!,
+                  binaryArtifactStore: binaryArtifactStore!,
+                  provenance: scannedProvenance!,
+                  attemptState: state,
+                  swiftPmArtifactJunctionCapability:
+                      swiftPmArtifactJunctionCapability,
+                )
+              : Future<bool>.value(false),
+      attemptState: attemptState ?? SwiftPmBinaryAttemptState(),
+    );
   }
 
   /// Clones each `.package(url:)` dependency under [vendorDir], normalizes its
@@ -2459,6 +3656,7 @@ let package = Package(
     Future<String> Function(String name)? locateTool,
     Future<Map<String, String>> Function(String packageDirectory)?
     evaluateDependencyRefs,
+    SwiftPmDependencyRefEvaluator? scopedDependencyRefEvaluator,
     Future<void> Function(
       String git,
       String url,
@@ -2468,25 +3666,69 @@ let package = Package(
     clonePackage,
     Map<String, Map<String, List<String>>>? normalizationCache,
     Map<String, Future<Map<String, String>>>? evaluationCache,
+    Map<String, Future<void>>? checkoutCache,
+    String? scratchPath,
+
+    String? binaryArtifactStore,
+    String? binaryArtifactFallback,
+    bool swiftPmArtifactJunctionCapability = false,
+    bool packageLocalArtifactJunctionCapability = false,
   }) async {
     final deps = parseUrlPackageDeps(manifest);
     if (deps.isEmpty) return manifest;
 
     final locate = locateTool ?? ProcessRunner.locateTool;
     final evaluate =
-        evaluateDependencyRefs ??
-        (directory) => _evaluatedDependencyRefs(directory, locate);
+        scopedDependencyRefEvaluator ??
+        (
+          directory, {
+          required scratchPath,
+          required binaryArtifactStore,
+          required binaryArtifactFallback,
+          required swiftPmArtifactJunctionCapability,
+          required packageLocalArtifactJunctionCapability,
+          required dependencies,
+        }) => evaluateDependencyRefs != null
+            ? evaluateDependencyRefs(directory)
+            : _evaluatedDependencyRefs(
+                directory,
+                locate,
+                scratchPath: scratchPath,
+                binaryArtifactStore: binaryArtifactStore,
+                binaryArtifactFallback: binaryArtifactFallback,
+                swiftPmArtifactJunctionCapability:
+                    swiftPmArtifactJunctionCapability,
+                dependencies: dependencies,
+              );
     final evaluationKey = await _dependencyEvaluationKey(
       manifest,
       packageDirectory,
     );
     late final Map<String, String> evaluatedRefs;
     if (evaluationCache == null) {
-      evaluatedRefs = await evaluate(packageDirectory);
+      evaluatedRefs = await evaluate(
+        packageDirectory,
+        scratchPath: scratchPath,
+        binaryArtifactStore: binaryArtifactStore,
+        binaryArtifactFallback: binaryArtifactFallback,
+        swiftPmArtifactJunctionCapability: swiftPmArtifactJunctionCapability,
+        packageLocalArtifactJunctionCapability:
+            packageLocalArtifactJunctionCapability,
+        dependencies: deps,
+      );
     } else {
       final pending = evaluationCache.putIfAbsent(
         evaluationKey,
-        () => evaluate(packageDirectory),
+        () => evaluate(
+          packageDirectory,
+          scratchPath: scratchPath,
+          binaryArtifactStore: binaryArtifactStore,
+          binaryArtifactFallback: binaryArtifactFallback,
+          swiftPmArtifactJunctionCapability: swiftPmArtifactJunctionCapability,
+          packageLocalArtifactJunctionCapability:
+              packageLocalArtifactJunctionCapability,
+          dependencies: deps,
+        ),
       );
       try {
         evaluatedRefs = await pending;
@@ -2522,11 +3764,28 @@ let package = Package(
       final dirName = vendorPackageDirName(dep.url, ref);
       // Always set name: — without it SwiftPM uses the directory basename
       // (`pkg@1.2.3`), which breaks `.product(..., package: "pkg")`.
-      final identity = dep.name ?? packageIdentityFromUrl(dep.url);
+      final identity = dep.identity;
       if (seen.add(dirName)) {
         final destination = p.join(vendorDir, dirName);
-        await clone(git, dep.url, ref, destination);
+        if (checkoutCache == null) {
+          await clone(git, dep.url, ref, destination);
+        } else {
+          final key = p.normalize(destination);
+          final pending = checkoutCache.putIfAbsent(
+            key,
+            () => clone(git, dep.url, ref, destination),
+          );
+          try {
+            await pending;
+          } on Object {
+            if (identical(checkoutCache[key], pending)) {
+              final _ = checkoutCache.remove(key);
+            }
+            rethrow;
+          }
+        }
         final consumedProducts = _consumedProducts(manifest, identity);
+
         final cacheKey = [
           p.normalize(destination),
           ...(consumedProducts.toList()..sort()),
@@ -2564,136 +3823,6 @@ let package = Package(
 
   /// Replaces mode-120000 checkout placeholders produced by Git for Windows
   /// with hard links to files or copies of directory targets.
-  /// SwiftPM's Foundation ZIP extraction cannot move XCFrameworks containing
-  /// Unix framework symlinks on Windows (Cocoa I/O error 514). The extraction
-  /// itself is complete, so retain the device slice needed by this build and
-  /// let a second resolve validate it from the normal artifact location.
-  @visibleForTesting
-  static Future<bool> repairWindowsBinaryArtifacts(String scratchPath) async {
-    final artifactsRoot = p.join(scratchPath, 'artifacts');
-    final extractRoot = Directory(p.join(artifactsRoot, 'extract'));
-    if (!extractRoot.existsSync()) return false;
-    var repaired = false;
-    final archives = <File>[];
-    for (final package in Directory(
-      artifactsRoot,
-    ).listSync(followLinks: false)) {
-      if (package is! Directory || p.basename(package.path) == 'extract') {
-        continue;
-      }
-      for (final target in package.listSync(followLinks: false)) {
-        if (target is! Directory) continue;
-        archives.addAll(
-          target
-              .listSync(followLinks: false)
-              .whereType<File>()
-              .where((file) => file.path.endsWith('.zip')),
-        );
-      }
-    }
-    for (final archive in archives) {
-      final target = p.join(
-        p.dirname(archive.path),
-        p.basenameWithoutExtension(archive.path),
-      );
-      await _deleteEntity(target);
-      final zip = ZipDecoder().decodeBytes(await archive.readAsBytes());
-      for (final entry in zip.files) {
-        if (!entry.isFile || entry.isSymbolicLink) continue;
-        final segments = p.url.split(entry.name);
-        final slice = segments.indexOf('ios-arm64');
-        if (segments.last != 'Info.plist' && slice < 0) continue;
-        final output = p.joinAll([target, ...segments]);
-        await Directory(p.dirname(output)).create(recursive: true);
-        await File(output).writeAsBytes(entry.content as List<int>);
-      }
-      repaired = true;
-    }
-    final frameworks = <Directory>[];
-    for (final package in extractRoot.listSync(followLinks: false)) {
-      if (package is! Directory) continue;
-      for (final target in package.listSync(followLinks: false)) {
-        if (target is! Directory) continue;
-        for (final extraction in target.listSync(followLinks: false)) {
-          if (extraction is! Directory) continue;
-          for (final artifact in extraction.listSync(followLinks: false)) {
-            if (artifact is Directory &&
-                artifact.path.endsWith('.xcframework')) {
-              frameworks.add(artifact);
-            }
-          }
-        }
-      }
-    }
-    for (final entity in frameworks) {
-      final relative = p.relative(entity.path, from: extractRoot.path);
-      final parts = p.split(relative);
-      if (parts.length < 4) continue;
-      final deviceSlice = Directory(p.join(entity.path, 'ios-arm64'));
-      final info = File(p.join(entity.path, 'Info.plist'));
-      if (!deviceSlice.existsSync() || !info.existsSync()) continue;
-      final destination = p.join(
-        scratchPath,
-        'artifacts',
-        parts[0],
-        parts[1],
-        parts.last,
-      );
-      await _deleteEntity(destination);
-      await Directory(destination).create(recursive: true);
-      if (Platform.isWindows) {
-        final result = await Process.run('robocopy', [
-          deviceSlice.path,
-          p.join(destination, 'ios-arm64'),
-          '/E',
-          '/NFL',
-          '/NDL',
-          '/NJH',
-          '/NJS',
-          '/NP',
-        ]);
-        if (result.exitCode > 7) {
-          throw FileSystemException(
-            'Could not copy extracted binary artifact: ${result.stderr}',
-            deviceSlice.path,
-          );
-        }
-      } else {
-        await _syncDirectory(
-          deviceSlice.path,
-          p.join(destination, 'ios-arm64'),
-        );
-      }
-      final plist = await info.readAsString();
-      final identifier = plist.indexOf('<string>ios-arm64</string>');
-      final deviceStart = identifier < 0
-          ? -1
-          : plist.lastIndexOf('<dict>', identifier);
-      final deviceEnd = identifier < 0
-          ? -1
-          : plist.indexOf('</dict>', identifier);
-      if (deviceStart < 0 || deviceEnd < 0) continue;
-      final deviceLibrary = plist.substring(deviceStart, deviceEnd + 7);
-      await File(p.join(destination, 'Info.plist')).writeAsString('''
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>AvailableLibraries</key>
-  <array>
-$deviceLibrary
-  </array>
-  <key>CFBundlePackageType</key>
-  <string>XFWK</string>
-  <key>XCFrameworkFormatVersion</key>
-  <string>1.0</string>
-</dict>
-</plist>
-''');
-      repaired = true;
-    }
-    return repaired;
-  }
 
   @visibleForTesting
   static Future<bool> materializeCheckoutSymlinks(
@@ -2862,7 +3991,9 @@ $deviceLibrary
       <int>[],
       (bytes, chunk) => bytes..addAll(chunk),
     );
-    final error = await process.stderr.transform(utf8.decoder).join();
+    final error = await process.stderr
+        .transform(const Utf8Decoder(allowMalformed: true))
+        .join();
     final exitCode = await process.exitCode;
     if (exitCode != 0) {
       throw FlutterBuildError(
@@ -2999,6 +4130,12 @@ $deviceLibrary
       ], environment: environment);
       if (head.exitCode == 0 &&
           head.stdout.trim().toLowerCase() == ref.toLowerCase()) {
+        await ProcessRunner.runChecked(
+          git,
+          ['-C', destination, 'reset', '--hard', 'HEAD'],
+          environment: environment,
+          label: 'git reset vendored package',
+        );
         return;
       }
     }
@@ -3220,7 +4357,62 @@ $diagnosticsStart$registrations$diagnosticsEnd}
   static Future<void> _writeStable(String path, String content) async {
     final file = File(path);
     if (file.existsSync() && await file.readAsString() == content) return;
-    await file.writeAsString(content);
+    await _writeAtomic(path, utf8.encode(content));
+  }
+
+  static Future<void> _writeAtomic(String path, List<int> bytes) async {
+    final temporary = File(
+      '$path.xcross-$pid-${DateTime.now().microsecondsSinceEpoch}',
+    );
+    try {
+      await temporary.writeAsBytes(bytes, flush: true);
+      await temporary.rename(path);
+    } finally {
+      if (temporary.existsSync()) await temporary.delete();
+    }
+  }
+
+  static int _fileBytes(String path) {
+    final file = File(path);
+    return file.existsSync() ? file.lengthSync() : 0;
+  }
+
+  static int _directoryBytes(String path) {
+    final directory = Directory(_ioPath(path));
+    if (!directory.existsSync()) return 0;
+    var bytes = 0;
+    for (final entity in directory.listSync(
+      recursive: true,
+      followLinks: false,
+    )) {
+      if (entity is File) bytes += entity.lengthSync();
+    }
+    return bytes;
+  }
+
+  static String _ioPath(String path) {
+    if (!Platform.isWindows) return path;
+    final absolute = p.windows.normalize(p.windows.absolute(path));
+    if (absolute.startsWith(r'\\?\')) return absolute;
+    if (absolute.startsWith(r'\\')) {
+      return '${r'\\?\UNC\'}${absolute.substring(2)}';
+    }
+    return '${r'\\?\'}$absolute';
+  }
+
+  static void _traceBinaryOperation({
+    required String target,
+    required String operation,
+    required int elapsedMilliseconds,
+    required int attempt,
+    int archiveBytes = 0,
+    int extractedBytes = 0,
+  }) {
+    Log.logTrace(
+      'binary target=$target operation=$operation '
+      'archive_bytes=$archiveBytes extracted_bytes=$extractedBytes '
+      'elapsed_ms=$elapsedMilliseconds attempt=$attempt',
+    );
   }
 
   /// Copies [source] to [destination], applying [transform] when it elects
@@ -3257,7 +4449,54 @@ $diagnosticsStart$registrations$diagnosticsEnd}
     return true;
   }
 
+  static Future<void> _copyResolvedArtifactTree(
+    String source,
+    String destination, {
+    String? artifactRoot,
+    bool Function(String name)? includeTopLevel,
+  }) async {
+    final root = artifactRoot ?? p.normalize(p.absolute(source));
+    await Directory(destination).create(recursive: true);
+    await for (final entity in Directory(source).list(followLinks: false)) {
+      final name = p.basename(entity.path);
+      if (artifactRoot == null &&
+          includeTopLevel != null &&
+          !includeTopLevel(name)) {
+        continue;
+      }
+      final target = p.join(destination, name);
+
+      final resolved = p.normalize(
+        p.absolute(
+          entity is Link ? entity.resolveSymbolicLinksSync() : entity.path,
+        ),
+      );
+      if (!p.equals(root, resolved) && !p.isWithin(root, resolved)) {
+        throw FlutterBuildError(
+          'SwiftPM binary artifact link escapes its artifact root',
+          isSecurityFailure: true,
+        );
+      }
+      if (Directory(resolved).existsSync()) {
+        await _copyResolvedArtifactTree(
+          resolved,
+          target,
+          artifactRoot: root,
+          includeTopLevel: includeTopLevel,
+        );
+      } else if (File(resolved).existsSync()) {
+        await File(resolved).copy(target);
+      } else {
+        throw FlutterBuildError(
+          'SwiftPM binary artifact contains an unresolved link',
+          isSecurityFailure: true,
+        );
+      }
+    }
+  }
+
   /// Mirrors [source] into [destination], resolving links to their
+
   /// targets, rewriting only differing files, and pruning entries the
   /// source no longer has. [preserve] names top-level entries the caller
   /// owns; [excludedSourcePath] guards against copying a destination that
@@ -3336,8 +4575,22 @@ $diagnosticsStart$registrations$diagnosticsEnd}
     return changed;
   }
 
-  /// Deletes whatever occupies [path] unless it already is a [keep] entry,
-  /// so links can become directories and vice versa without stale state.
+  @visibleForTesting
+  static List<String> windowsCopyArguments(String source, String destination) =>
+      [
+        source,
+        destination,
+        '/E',
+        '/R:0',
+        '/W:0',
+        '/MT:8',
+        '/NFL',
+        '/NDL',
+        '/NJH',
+        '/NJS',
+        '/NP',
+      ];
+
   static Future<void> _deleteUnless(
     String path,
     FileSystemEntityType keep,

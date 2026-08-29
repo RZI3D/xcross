@@ -21,6 +21,18 @@ void main() {
       ..createSync(recursive: true);
     generatedPath = p.join(lib.path, 'version.g.dart');
     File(generatedPath).writeAsStringSync(generatedSource);
+    final builtBin = Directory(
+      p.join(sandbox.path, 'build', 'cli', 'test', 'bundle', 'bin'),
+    )..createSync(recursive: true);
+    File(
+      p.join(builtBin.path, Platform.isWindows ? 'xcross.exe' : 'xcross'),
+    ).writeAsStringSync('');
+    final xcrunBin = Directory(
+      p.join(sandbox.path, 'build', 'xcrun', 'bundle', 'bin'),
+    )..createSync(recursive: true);
+    File(
+      p.join(xcrunBin.path, Platform.isWindows ? 'xcrun.exe' : 'xcrun'),
+    ).writeAsStringSync('');
   }
 
   setUp(() => sandbox = Directory.systemTemp.createTempSync('xcross-build-'));

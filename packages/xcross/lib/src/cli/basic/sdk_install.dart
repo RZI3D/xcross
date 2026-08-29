@@ -2,8 +2,8 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:cli_kit/cli_kit.dart';
+import 'package:crypto/crypto.dart';
 import 'package:darwin_sdk_kit/darwin_sdk_kit.dart';
-import 'package:meta/meta.dart';
 import 'package:path/path.dart' as p;
 import 'package:xcross/src/cli/basic/internal/hard_link_payloads.dart';
 import 'package:xcross/src/cli/basic/internal/swift_sibling_clang.dart';
@@ -379,7 +379,103 @@ abstract final class SdkInstall {
   /// toolchain upgrades — and the version alone is not enough either, since
   /// two builds of the same version can differ in module ABI (the reported
   /// "swiftlang-…" build differs between a vendor and a swift.org build).
-  @visibleForTesting
+  static Future<Map<String, Object>> swiftPmBuildToolchainIdentity({
+    required String cCompilerPath,
+    required String cxxCompilerPath,
+    required String linkerPath,
+    required String librarianPath,
+    bool? windows,
+    Future<String> Function(String name)? locateTool,
+    Future<CapturedProcess> Function(String executable, List<String> arguments)?
+    runProcess,
+  }) async {
+    final locate = locateTool ?? ProcessRunner.locateTool;
+    final run = runProcess ?? ProcessRunner.run;
+    final toolNames = (windows ?? Platform.isWindows)
+        ? const ['swift-package', 'swift-build', 'swiftc']
+        : const ['swift', 'swiftc'];
+    return {
+      for (final name in toolNames)
+        name: await _executableBuildIdentity(name, locate, run),
+      'clang': await _fileBuildIdentity(cCompilerPath),
+      'clang++': await _fileBuildIdentity(cxxCompilerPath),
+      'ld64.lld': await _fileBuildIdentity(linkerPath),
+      'librarian': await _fileBuildIdentity(librarianPath),
+    };
+  }
+
+  static Future<Map<String, Object>> sdkBuildIdentity(String sdkRoot) async {
+    final files = <String>{
+      'info.json',
+      'swift-sdk.json',
+      'toolset.json',
+      hostToolchainStampName,
+    };
+    final sdk = DarwinSdk(sdkRoot);
+    try {
+      final iphoneOs = sdk.iPhoneOSSdk();
+      for (final name in const [
+        'SDKSettings.json',
+        'SDKSettings.plist',
+        'System/Library/CoreServices/SystemVersion.plist',
+      ]) {
+        files.add(p.relative(p.join(iphoneOs, name), from: sdkRoot));
+      }
+    } on Object catch (error) {
+      Log.logTrace('Could not resolve iPhoneOS SDK identity metadata: $error');
+    }
+    final metadata = <String, Object>{};
+    for (final relative in files.toList()..sort()) {
+      final file = File(p.join(sdkRoot, relative));
+      if (!file.existsSync()) continue;
+      final stat = file.statSync();
+      metadata[relative.replaceAll(r'\', '/')] = {
+        'size': stat.size,
+        'modified': stat.modified.microsecondsSinceEpoch,
+        'digest': sha256.convert(file.readAsBytesSync()).toString(),
+      };
+    }
+    return {'path': p.normalize(p.absolute(sdkRoot)), 'metadata': metadata};
+  }
+
+  static Future<Map<String, Object>> _executableBuildIdentity(
+    String name,
+    Future<String> Function(String name) locate,
+    Future<CapturedProcess> Function(String executable, List<String> arguments)
+    run,
+  ) async => _executablePathBuildIdentity(name, await locate(name), run);
+
+  static Future<Map<String, Object>> _executablePathBuildIdentity(
+    String name,
+    String path,
+    Future<CapturedProcess> Function(String executable, List<String> arguments)
+    run,
+  ) async {
+    final file = File(File(path).resolveSymbolicLinksSync());
+    final result = await run(path, const ['--version']);
+    if (result.exitCode != 0) {
+      throw StateError('$name --version failed: ${result.stderr.trim()}');
+    }
+    final output = result.stdout.trim().isEmpty
+        ? result.stderr.trim()
+        : result.stdout.trim();
+    return {
+      ...await _fileBuildIdentity(file.path),
+      'version': _firstLine(output),
+    };
+  }
+
+  static Future<Map<String, Object>> _fileBuildIdentity(String path) {
+    final file = File(File(path).resolveSymbolicLinksSync());
+    final stat = file.statSync();
+    return Future.value({
+      'path': file.path,
+      'size': stat.size,
+      'modified': stat.modified.microsecondsSinceEpoch,
+      'digest': sha256.convert(file.readAsBytesSync()).toString(),
+    });
+  }
+
   static Future<Map<String, String>> hostToolchainIdentity({
     Future<String> Function(String name)? locateTool,
     Future<CapturedProcess> Function(String executable, List<String> arguments)?

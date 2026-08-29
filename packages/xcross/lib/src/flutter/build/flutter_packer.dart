@@ -9,12 +9,14 @@ import 'package:xcross/src/flutter/build/flutter_debug_bundler.dart';
 import 'package:xcross/src/flutter/build/info_plist.dart';
 import 'package:xcross/src/flutter/build/internal/recursive_directory_copy.dart';
 import 'package:xcross/src/flutter/build/internal/runner_binary.dart';
+import 'package:xcross/src/flutter/build/internal/swiftpm_workspace.dart';
 import 'package:xcross/src/flutter/build/ios_app_extensions.dart';
 import 'package:xcross/src/flutter/build/ios_bundle_resources.dart';
 import 'package:xcross/src/flutter/build/ios_bundle_versions.dart';
 import 'package:xcross/src/flutter/build/ios_deployment_target.dart';
 import 'package:xcross/src/flutter/build/ios_engine_cache.dart';
 import 'package:xcross/src/flutter/build/ios_native_assets.dart';
+
 import 'package:xcross/src/flutter/build/ios_plugin_package.dart';
 import 'package:xcross/src/flutter/build/ios_plugins.dart';
 import 'package:xcross/src/flutter/build/runner_shim.dart';
@@ -41,6 +43,9 @@ final class FlutterPacker {
   final String projectRoot;
   final String bundleId;
   final FlutterBuildOptions options;
+  final bool swiftPmArtifactJunctionCapability;
+  final bool packageLocalArtifactJunctionCapability;
+  final ArtifactJunctionCapabilityResolver? artifactJunctionCapabilityResolver;
 
   /// App name read from `pubspec.yaml` `name:` key.
   final String appName;
@@ -49,6 +54,9 @@ final class FlutterPacker {
     required this.projectRoot,
     required this.bundleId,
     required this.options,
+    this.swiftPmArtifactJunctionCapability = false,
+    this.packageLocalArtifactJunctionCapability = false,
+    this.artifactJunctionCapabilityResolver,
   }) : appName = PubspecInfo.loadSync(projectRoot).name,
        _versions = IosBundleVersions.resolve(
          projectRoot,
@@ -141,8 +149,16 @@ final class FlutterPacker {
     }
 
     final flutter = await ProcessRunner.locateTool('flutter');
+    final resolved = File(flutter).resolveSymbolicLinksSync();
+    if (Platform.isWindows && p.basename(p.dirname(resolved)) == 'shims') {
+      final result = await Process.run('mise', ['where', 'flutter']);
+      if (result.exitCode == 0) {
+        final root = result.stdout.toString().trim();
+        if (Directory(p.join(root, 'bin')).existsSync()) return root;
+      }
+    }
     // The `flutter` script lives at <root>/bin/flutter.
-    return p.dirname(p.dirname(File(flutter).resolveSymbolicLinksSync()));
+    return p.dirname(p.dirname(resolved));
   }
 
   /// Run `flutter pub get`. Tolerates failures when `package_config.json`
@@ -247,14 +263,23 @@ final class FlutterPacker {
     final xcframework = IosEngineCache(
       flutterRoot: flutterRoot,
     ).flutterXcframework;
+    final capabilities =
+        await artifactJunctionCapabilityResolver?.call() ??
+        (
+          swiftPmArtifact: swiftPmArtifactJunctionCapability,
+          packageLocalArtifact: packageLocalArtifactJunctionCapability,
+        );
 
+    final workspace = SwiftPmWorkspace.forProject(projectRoot);
     return GeneratedPluginsPackage.build(
       projectRoot: projectRoot,
+      workspace: workspace,
       plugins: spmPlugins,
       flutterXcframework: xcframework,
-      outputDir: p.join(projectRoot, 'build', 'xcross-flutter-plugins'),
       deploymentTarget: deploymentTarget,
       verbose: verbose,
+      swiftPmArtifactJunctionCapability: capabilities.swiftPmArtifact,
+      packageLocalArtifactJunctionCapability: capabilities.packageLocalArtifact,
     );
   }
 
@@ -445,6 +470,7 @@ final class FlutterPacker {
       );
     }
   }
+
   /// Generate and write `Info.plist` into [bundleDir] with `$(VAR)`
   /// substitution, mandatory iOS keys, storyboard stripping, and ObjC class
   /// name normalization.

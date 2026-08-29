@@ -30,6 +30,63 @@ void main() {
     },
   );
 
+  test('dispatches native asset aliases through sidecar mappings', () async {
+    final temp = Directory.systemTemp.createTempSync('xcross_tool_alias_');
+    addTearDown(() => temp.deleteSync(recursive: true));
+    final alias = File(p.join(temp.path, 'cc.exe'))..writeAsStringSync('alias');
+    File('${alias.path}.path').writeAsStringSync(r'C:\LLVM\clang.exe');
+    File(
+      '${alias.path}.args',
+    ).writeAsStringSync(r'["-isysroot","C:\\SDK","-Wl,-arch,arm64"]');
+
+    String? executable;
+    List<String>? forwarded;
+    final code = await runPreparedToolAlias(
+      ['--target=aarch64-apple-ios', '--version'],
+      executablePath: alias.path,
+      environment: const {},
+      run: (target, arguments) async {
+        executable = target;
+        forwarded = arguments;
+        return 0;
+      },
+    );
+
+    expect(code, 0);
+    expect(executable, r'C:\LLVM\clang.exe');
+    expect(forwarded, [
+      '-isysroot',
+      r'C:\SDK',
+      '-Wl,-arch,arm64',
+      '--target=aarch64-apple-ios',
+      '--version',
+    ]);
+  });
+
+  test('plutil replaces MinimumOSVersion for Flutter assemble', () async {
+    final temp = Directory.systemTemp.createTempSync('xcross_plutil_');
+    addTearDown(() => temp.deleteSync(recursive: true));
+    final plist = File(p.join(temp.path, 'Info.plist'))
+      ..writeAsStringSync('''
+<plist><dict>
+<key>MinimumOSVersion</key>
+<string>12.0</string>
+</dict></plist>
+''');
+
+    expect(
+      await runPreparedToolAlias([
+        '-replace',
+        'MinimumOSVersion',
+        '-string',
+        '15.0',
+        plist.path,
+      ], executablePath: p.join(temp.path, 'plutil')),
+      0,
+    );
+    expect(plist.readAsStringSync(), contains('<string>15.0</string>'));
+  });
+
   test('does not intercept the normal xcross executable', () async {
     expect(
       await runPreparedToolAlias(

@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:apple_developer_kit/apple_developer_kit.dart';
@@ -39,9 +40,14 @@ Future<int?> runPreparedToolAlias(
               ? p.windows.basenameWithoutExtension(path)
               : p.basenameWithoutExtension(path))
           .toLowerCase();
+  if (name == 'plutil') return runPlutilAlias(arguments);
   final variable = _toolAliasVariables[name];
   if (variable == null) return null;
-  final target = (environment ?? Platform.environment)[variable];
+
+  final mapping = File('$path.path');
+  final target = mapping.existsSync()
+      ? mapping.readAsStringSync().trim()
+      : (environment ?? Platform.environment)[variable];
   if (target == null || target.isEmpty) {
     stderr.writeln('error: missing trusted tool mapping $variable');
     return 1;
@@ -59,7 +65,62 @@ Future<int?> runPreparedToolAlias(
   if (name == 'dsymutil' && !File(target).existsSync()) {
     return 0;
   }
-  return invoke(target, arguments);
+  final prefix = File('$path.args');
+  final forwarded = prefix.existsSync() && _isAppleCompilerInvocation(arguments)
+      ? [
+          ...(jsonDecode(prefix.readAsStringSync()) as List).cast<String>(),
+          ...arguments,
+        ]
+      : arguments;
+  return invoke(target, forwarded);
+}
+
+bool _isAppleCompilerInvocation(List<String> arguments) {
+  for (var index = 0; index < arguments.length; index++) {
+    final argument = arguments[index];
+    if (argument == '-arch' ||
+        argument.startsWith('-arch=') ||
+        argument.startsWith('-miphoneos-version-min=') ||
+        argument.startsWith('-mios-simulator-version-min=')) {
+      return true;
+    }
+    if ((argument == '-target' || argument == '--target') &&
+        index + 1 < arguments.length &&
+        arguments[index + 1].contains('-apple-')) {
+      return true;
+    }
+    if ((argument.startsWith('-target=') || argument.startsWith('--target=')) &&
+        argument.contains('-apple-')) {
+      return true;
+    }
+  }
+  return false;
+}
+
+Future<int> runPlutilAlias(List<String> arguments) async {
+  if (arguments case [
+    '-replace',
+    'MinimumOSVersion',
+    '-string',
+    final String version,
+    final String path,
+  ]) {
+    final file = File(path);
+    if (!file.existsSync()) return 1;
+    final original = await file.readAsString();
+    final pattern = RegExp(
+      r'<key>MinimumOSVersion</key>\s*<string>[^<]*</string>',
+    );
+    if (!pattern.hasMatch(original)) return 1;
+    await file.writeAsString(
+      original.replaceFirst(
+        pattern,
+        '<key>MinimumOSVersion</key>\n\t<string>$version</string>',
+      ),
+    );
+    return 0;
+  }
+  return 1;
 }
 
 Future<int> _runToolAlias(String executable, List<String> arguments) async {
@@ -67,6 +128,7 @@ Future<int> _runToolAlias(String executable, List<String> arguments) async {
     executable,
     arguments,
     mode: ProcessStartMode.inheritStdio,
+    runInShell: Platform.isWindows && executable.endsWith('.bat'),
   );
   return process.exitCode;
 }
@@ -78,6 +140,8 @@ const _toolAliasVariables = {
   'libtool': 'XCROSS_APPLE_TOOL_LIBTOOL',
   'clang': 'XCROSS_APPLE_TOOL_CLANG',
   'clang++': 'XCROSS_APPLE_TOOL_CLANGXX',
+  'cc': 'XCROSS_APPLE_TOOL_CC',
+  'ar': 'XCROSS_APPLE_TOOL_AR',
 };
 
 /// Namespace for building and running the xcross CLI.

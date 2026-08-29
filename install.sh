@@ -172,6 +172,7 @@ tar -C "$staging_dir" -xzf "$staging_dir/$archive_name" ||
 # Verify the bundle really has both halves before touching the system, so a
 # malformed release cannot leave a binary installed without its libraries.
 [ -x "$staging_dir/bin/$BINARY_NAME" ] || err "archive missing bin/$BINARY_NAME"
+[ -x "$staging_dir/bin/xcrun" ] || err "archive missing bin/xcrun"
 [ -d "$staging_dir/lib" ] || err "archive missing lib/"
 
 # ---------------------------------------------------------------------------
@@ -199,6 +200,7 @@ run_privileged mkdir -p "$INSTALL_DIR" "$NATIVE_LIB_DIR" "$LICENSE_DIR"
 
 # 0755: everyone may read and execute, only the owner may write.
 run_privileged install -m 0755 "$staging_dir/bin/$BINARY_NAME" "$installed_binary"
+run_privileged install -m 0755 "$staging_dir/bin/xcrun" "$INSTALL_DIR/xcrun"
 
 # Copy the native libraries next to the prefix, preserving permissions and
 # symlinks (`cp -a`).  Existing files with the same name are overwritten, which

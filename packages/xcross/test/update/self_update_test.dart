@@ -43,10 +43,15 @@ void main() {
   File installedLib(String name, String contents) =>
       File(p.join(prefix.path, 'lib', name))..writeAsStringSync(contents);
 
-  File bundleBin(String contents) =>
-      File(p.join(bundle.path, 'bin', _exeName()))
-        ..createSync(recursive: true)
-        ..writeAsStringSync(contents);
+  File bundleBin(String contents) {
+    final bin = File(p.join(bundle.path, 'bin', _exeName()))
+      ..createSync(recursive: true)
+      ..writeAsStringSync(contents);
+    File(
+      p.join(bundle.path, 'bin', Platform.isWindows ? 'xcrun.exe' : 'xcrun'),
+    ).writeAsStringSync('xcrun');
+    return bin;
+  }
 
   File bundleLib(String name, String contents) =>
       File(p.join(bundle.path, 'lib', name))
@@ -250,9 +255,13 @@ void main() {
           ),
     );
 
-    expect(Directory(layout.binDir).listSync().map((e) => p.basename(e.path)), [
-      _exeName(),
-    ]);
+    expect(
+      Directory(
+        layout.binDir,
+      ).listSync().map((e) => p.basename(e.path)).toSet(),
+      {_exeName(), if (Platform.isWindows) 'xcrun.exe' else 'xcrun'},
+    );
+
     expect(
       Directory(
         layout.libDir,

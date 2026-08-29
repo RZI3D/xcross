@@ -4,18 +4,37 @@ import 'dart:io';
 import 'dart:isolate';
 import 'dart:typed_data';
 
-import 'package:archive/archive.dart';
 import 'package:cli_kit/cli_kit.dart';
 import 'package:path/path.dart' as p;
+import 'package:propertylistserialization/propertylistserialization.dart';
 import 'package:test/test.dart';
 import 'package:xcross/src/cli/basic/sdk_install.dart';
+import 'package:xcross/src/flutter/build/internal/swiftpm_workspace.dart';
 import 'package:xcross/src/flutter/build/ios_deployment_target.dart';
 import 'package:xcross/src/flutter/build/ios_plugin_package.dart';
 import 'package:xcross/src/flutter/build/ios_plugins.dart';
 import 'package:xcross/src/flutter/build/preview_macro_stub_source.dart';
+import 'package:xcross/src/flutter/build/swiftpm_binary_artifact_preparer.dart';
+import 'package:xcross/src/flutter/build/swiftpm_binary_artifact_store.dart';
+import 'package:xcross/src/flutter/build/swiftpm_binary_target.dart';
 import 'package:xcross/src/flutter/errors.dart';
 
 String swiftPath(String path) => p.absolute(path).replaceAll(r'\', '/');
+
+SwiftPmBinaryArtifactProvenance binaryProvenance(
+  String identity,
+  String target,
+  String checksum,
+  String manifestPath,
+) {
+  final manifest =
+      '.binaryTarget(name: "$target", url: "https://example.invalid/archive.zip", checksum: "$checksum")';
+  return GeneratedPluginsPackage.scanBinaryArtifactProvenance(
+    packageIdentity: identity,
+    manifestPath: manifestPath,
+    manifest: manifest,
+  ).single;
+}
 
 /// Resolves a path under `lib/src/` without depending on the working
 /// directory the suite happens to be launched from.
@@ -72,6 +91,58 @@ flutter:
       sharedDarwinSource: sharedDarwinSource,
     );
   }
+
+  group('incremental build fingerprint', () {
+    test('is stable until a plugin input changes', () async {
+      final plugin = makePlugin(
+        'stable_plugin',
+        packageManifest: 'let package = Package()\n',
+      );
+      final source =
+          File(p.join(plugin.swiftPackageDir, 'Sources', 'Plugin.swift'))
+            ..createSync(recursive: true)
+            ..writeAsStringSync('let value = 1\n');
+      final framework = Directory(p.join(tmp.path, 'Flutter.xcframework'))
+        ..createSync();
+      File(p.join(framework.path, 'Info.plist')).writeAsStringSync('<plist/>');
+
+      Future<String> fingerprint() =>
+          GeneratedPluginsPackage.incrementalBuildFingerprint(
+            plugins: [plugin],
+            flutterXcframework: framework.path,
+            deploymentTarget: const IosDeploymentTarget('15.0'),
+            verbose: false,
+            toolchainIdentity: 'swift-6.3.3',
+            sdkIdentity: 'ios-sdk',
+          );
+
+      final first = await fingerprint();
+      expect(await fingerprint(), first);
+      source.writeAsStringSync('let value = 2\n');
+      expect(await fingerprint(), isNot(first));
+    });
+
+    test('changes with build configuration', () async {
+      final plugin = makePlugin('plugin');
+      final framework = Directory(p.join(tmp.path, 'Flutter.xcframework'))
+        ..createSync();
+
+      Future<String> fingerprint({required bool verbose}) =>
+          GeneratedPluginsPackage.incrementalBuildFingerprint(
+            plugins: [plugin],
+            flutterXcframework: framework.path,
+            deploymentTarget: const IosDeploymentTarget('15.0'),
+            verbose: verbose,
+            toolchainIdentity: 'swift',
+            sdkIdentity: 'sdk',
+          );
+
+      expect(
+        await fingerprint(verbose: true),
+        isNot(await fingerprint(verbose: false)),
+      );
+    });
+  });
 
   group('flutterFrameworkManifest', () {
     test('matches the exact wrapper manifest', () {
@@ -778,6 +849,84 @@ let package = Package(
       expect(evaluations, 1);
     });
 
+    test('caches equivalent vendor checkouts within a build', () async {
+      final vendorDir = p.join(tmp.path, 'checkout-cache-vendor');
+      final first = p.join(tmp.path, 'checkout-first');
+      final second = p.join(tmp.path, 'checkout-second');
+      await Directory(first).create();
+      await Directory(second).create();
+      const manifest = '''
+import PackageDescription
+let package = Package(
+    name: "plugin",
+    dependencies: [.package(url: "https://example.com/dependency", exact: "1.0.0")],
+    targets: []
+)
+''';
+      final cache = <String, Future<void>>{};
+      var clones = 0;
+
+      Future<void> clone(
+        String _,
+        String _,
+        String _,
+        String destination,
+      ) async {
+        clones++;
+        await Directory(destination).create(recursive: true);
+        await File(
+          p.join(destination, 'Package.swift'),
+        ).writeAsString('import PackageDescription\n');
+      }
+
+      for (final packageDirectory in [first, second]) {
+        await GeneratedPluginsPackage.vendorUrlPackagesAsPathDeps(
+          manifest,
+          vendorDir: vendorDir,
+          packageDirectory: packageDirectory,
+          locateTool: (_) async => 'git',
+          evaluateDependencyRefs: (_) async => const {
+            'https://example.com/dependency': 'revision',
+          },
+          clonePackage: clone,
+          checkoutCache: cache,
+        );
+      }
+
+      expect(clones, 1);
+    });
+
+    test('removes failed dependency evaluations from the cache', () async {
+      final packageDirectory = p.join(tmp.path, 'failed-cache-package');
+      await Directory(packageDirectory).create();
+      const manifest = '''
+import PackageDescription
+let package = Package(
+    name: "plugin",
+    dependencies: [.package(url: "https://example.com/dependency", exact: "1.0.0")],
+    targets: []
+)
+''';
+      final cache = <String, Future<Map<String, String>>>{};
+      var evaluations = 0;
+
+      Future<void> run() => GeneratedPluginsPackage.vendorUrlPackagesAsPathDeps(
+        manifest,
+        vendorDir: p.join(tmp.path, 'failed-cache-vendor'),
+        packageDirectory: packageDirectory,
+        evaluateDependencyRefs: (_) {
+          evaluations++;
+          throw StateError('failed evaluation');
+        },
+        evaluationCache: cache,
+      ).then((_) {});
+
+      await expectLater(run(), throwsStateError);
+      expect(cache, isEmpty);
+      await expectLater(run(), throwsStateError);
+      expect((evaluations, cache.length), (2, 0));
+    });
+
     test('invalidates dependency evaluation for manifest variants', () async {
       final vendorDir = p.join(tmp.path, 'variant-vendor');
       final packageDirectory = p.join(tmp.path, 'variant-package');
@@ -897,150 +1046,547 @@ let package = Package(
         rewritten,
         contains(
           '.package(name: "firebase-ios-sdk", '
-          'path: "${swiftPath(p.join(vendorDir, 'firebase-ios-sdk@b9bf3adac18e6e3059167194aeb632f15a5ba4b2'))}")',
+          'path: "${swiftPath(p.join(vendorDir, 'fb@b9bf3adac18e'))}")',
         ),
       );
     });
   });
 
-  group('Windows binary artifacts', () {
-    test(
-      'repairs a failed extraction from its complete iOS device slice',
-      () async {
-        final scratch = p.join(tmp.path, '.build');
-        final extracted = p.join(
-          scratch,
-          'artifacts',
-          'extract',
-          'firebase-ios-sdk',
-          'FirebaseAnalytics',
-          'UUID',
-          'FirebaseAnalytics.xcframework',
-        );
-        await File(p.join(extracted, 'Info.plist'))
-            .create(recursive: true)
-            .then(
-              (file) => file.writeAsString('''
-<plist><dict><key>AvailableLibraries</key><array><dict>
-<key>LibraryIdentifier</key><string>ios-arm64</string>
-<key>LibraryPath</key><string>FirebaseAnalytics.framework</string>
-<key>SupportedArchitectures</key><array><string>arm64</string></array>
-<key>SupportedPlatform</key><string>ios</string>
-</dict></array></dict></plist>
-'''),
-            );
-        await File(
-          p.join(
-            extracted,
-            'ios-arm64',
-            'FirebaseAnalytics.framework',
-            'FirebaseAnalytics',
+  group('bootstrap binary recovery', () {
+    test('retries resolve once and preserves failed cache semantics', () async {
+      final package = Directory(p.join(tmp.path, 'package'))..createSync();
+      final resolved = File(p.join(package.path, 'Package.resolved'));
+      var resolves = 0;
+      var recoveries = 0;
+      final state = SwiftPmBinaryAttemptState();
+
+      final refs =
+          await GeneratedPluginsPackage.evaluateDependencyRefsWithRecovery(
+            package.path,
+            resolve: (_) async {
+              resolves++;
+              if (resolves == 1) throw StateError('original');
+              resolved.writeAsStringSync(
+                jsonEncode({
+                  'pins': [
+                    {
+                      'location': 'https://example.com/dependency',
+                      'state': {'revision': 'revision'},
+                    },
+                  ],
+                }),
+              );
+            },
+            recover: (_, attemptState) async {
+              expect(identical(attemptState, state), isTrue);
+              recoveries++;
+              attemptState.bootstrapRecovered.add('package\u0000target');
+              return true;
+            },
+            attemptState: state,
+          );
+
+      expect(refs, {'https://example.com/dependency': 'revision'});
+      expect((resolves, recoveries), (2, 1));
+      expect(state.bootstrapRecovered, hasLength(1));
+    });
+
+    test('rethrows original failure when recovery has no evidence', () async {
+      final original = StateError('original');
+      await expectLater(
+        GeneratedPluginsPackage.evaluateDependencyRefsWithRecovery(
+          tmp.path,
+          resolve: (_) async => throw original,
+          recover: (_, _) async => false,
+          attemptState: SwiftPmBinaryAttemptState(),
+        ),
+        throwsA(same(original)),
+      );
+    });
+
+    test('second resolve failure is terminal', () async {
+      var resolves = 0;
+      final second = StateError('second');
+      await expectLater(
+        GeneratedPluginsPackage.evaluateDependencyRefsWithRecovery(
+          tmp.path,
+          resolve: (_) {
+            resolves++;
+            if (resolves == 1) throw StateError('first');
+            throw second;
+          },
+          recover: (_, _) async => true,
+          attemptState: SwiftPmBinaryAttemptState(),
+        ),
+        throwsA(same(second)),
+      );
+      expect(resolves, 2);
+    });
+  });
+
+  group('binary artifact provenance', () {
+    test('keeps package and target identity when matching artifacts', () {
+      final first = GeneratedPluginsPackage.matchBinaryArtifactProvenance(
+        artifactPath: p.join('scratch', 'artifacts', 'one', 'SharedBinary'),
+        artifactsRoot: p.join('scratch', 'artifacts'),
+        provenance: [
+          binaryProvenance(
+            'one',
+            'SharedBinary',
+            'a' * 64,
+            'one/Package.swift',
           ),
-        ).create(recursive: true).then((file) => file.writeAsString('binary'));
-        await File(
-          p.join(extracted, 'macos-arm64_x86_64', 'broken-link'),
-        ).create(recursive: true);
+          binaryProvenance(
+            'two',
+            'SharedBinary',
+            'b' * 64,
+            'two/Package.swift',
+          ),
+        ],
+      );
+      final second = GeneratedPluginsPackage.matchBinaryArtifactProvenance(
+        artifactPath: p.join('scratch', 'artifacts', 'two', 'SharedBinary'),
+        artifactsRoot: p.join('scratch', 'artifacts'),
+        provenance: [
+          binaryProvenance(
+            'one',
+            'SharedBinary',
+            'a' * 64,
+            'one/Package.swift',
+          ),
+          binaryProvenance(
+            'two',
+            'SharedBinary',
+            'b' * 64,
+            'two/Package.swift',
+          ),
+        ],
+      );
+
+      expect(first?.manifestPath, 'one/Package.swift');
+      expect(second?.manifestPath, 'two/Package.swift');
+    });
+
+    test('matches SwiftPM layout case-insensitively on Windows', () {
+      final match = GeneratedPluginsPackage.matchBinaryArtifactProvenance(
+        artifactPath: p.join('artifacts', 'PACKAGE', 'target'),
+        artifactsRoot: 'artifacts',
+        provenance: [
+          binaryProvenance('Package', 'Target', 'A' * 64, 'Package.swift'),
+        ],
+        windows: true,
+      );
+
+      expect(match?.packageIdentity, 'Package');
+    });
+
+    test('rejects ambiguous package identity and dynamic targets', () {
+      final duplicate = binaryProvenance(
+        'package',
+        'Target',
+        'a' * 64,
+        'Package.swift',
+      );
+      expect(
+        GeneratedPluginsPackage.matchBinaryArtifactProvenance(
+          artifactPath: p.join('artifacts', 'package', 'Target'),
+          artifactsRoot: 'artifacts',
+          provenance: [duplicate, duplicate],
+        ),
+        isNull,
+      );
+      expect(
+        GeneratedPluginsPackage.scanBinaryArtifactProvenance(
+          packageIdentity: 'package',
+          manifestPath: 'Package.swift',
+          manifest:
+              'let url = dynamicUrl\n.binaryTarget(name: "Target", url: url, checksum: checksum)',
+        ),
+        isEmpty,
+      );
+    });
+  });
+
+  group('bootstrap artifact evidence', () {
+    test('complete artifact does not recover an unrelated failure', () async {
+      final scratch = p.join(tmp.path, 'authoritative', 'scratch');
+      final store = p.join(tmp.path, 'authoritative', 'store');
+      final targetDirectory = p.join(scratch, 'artifacts', 'package', 'Target');
+      File(p.join(targetDirectory, 'Target.xcframework', 'Info.plist'))
+        ..createSync(recursive: true)
+        ..writeAsStringSync('<plist/>');
+
+      expect(
+        await GeneratedPluginsPackage.recoverBootstrapBinaryArtifacts(
+          scratchPath: scratch,
+          binaryArtifactStore: store,
+          provenance: [
+            binaryProvenance(
+              'package',
+              'Target',
+              'a' * 64,
+              p.join(tmp.path, 'Package.swift'),
+            ),
+          ],
+          attemptState: SwiftPmBinaryAttemptState(),
+          windows: true,
+        ),
+        isFalse,
+      );
+    });
+
+    test(
+      'validates final artifact plist and selected library structurally',
+      () async {
+        final artifact = Directory(p.join(tmp.path, 'Final.xcframework'))
+          ..createSync();
+        final plist = {
+          'AvailableLibraries': [
+            {
+              'LibraryIdentifier': 'ios-arm64',
+              'LibraryPath': 'Final.framework',
+              'SupportedPlatform': 'ios',
+              'SupportedArchitectures': ['arm64'],
+            },
+          ],
+        };
+        File(p.join(artifact.path, 'Info.plist')).writeAsStringSync(
+          PropertyListSerialization.stringWithPropertyList(plist),
+        );
+        File(p.join(artifact.path, '.complete')).writeAsStringSync('');
 
         expect(
-          await GeneratedPluginsPackage.repairWindowsBinaryArtifacts(scratch),
-          isTrue,
-        );
-        final repaired = p.join(
-          scratch,
-          'artifacts',
-          'firebase-ios-sdk',
-          'FirebaseAnalytics',
-          'FirebaseAnalytics.xcframework',
-        );
-        expect(
-          File(p.join(repaired, 'Info.plist')).readAsStringSync(),
-          contains('<string>ios-arm64</string>'),
-        );
-        expect(
-          File(
-            p.join(
-              repaired,
-              'ios-arm64',
-              'FirebaseAnalytics.framework',
-              'FirebaseAnalytics',
-            ),
-          ).readAsStringSync(),
-          'binary',
-        );
-        expect(
-          Directory(p.join(repaired, 'macos-arm64_x86_64')).existsSync(),
+          await GeneratedPluginsPackage.hasCompleteSwiftPmArtifact(artifact),
           isFalse,
+        );
+
+        Directory(
+          p.join(artifact.path, 'ios-arm64', 'Final.framework'),
+        ).createSync(recursive: true);
+        expect(
+          await GeneratedPluginsPackage.hasCompleteSwiftPmArtifact(artifact),
+          isTrue,
         );
       },
     );
 
-    test('extracts only the iOS device slice from a cached ZIP', () async {
-      final scratch = p.join(tmp.path, '.build');
-      final archive = Archive()
-        ..add(
-          ArchiveFile.string('Target.xcframework/Info.plist', '''
-<plist><dict><key>AvailableLibraries</key><array><dict>
-<key>LibraryIdentifier</key><string>ios-arm64</string>
-</dict></array></dict></plist>
-'''),
-        )
-        ..add(
-          ArchiveFile.string(
-            'Target.xcframework/ios-arm64/Target.framework/Target',
-            'binary',
-          ),
-        )
-        ..add(
-          ArchiveFile.string(
-            'Target.xcframework/macos-arm64/Target.framework/Target',
-            'macos',
-          ),
-        );
-      final zip = File(
-        p.join(scratch, 'artifacts', 'package', 'Target', 'Target.zip'),
+    test('attempt key includes normalized checksum', () {
+      final upper = binaryProvenance(
+        'Package',
+        'Target',
+        'A' * 64,
+        'Package.swift',
       );
-      await zip.create(recursive: true);
-      await zip.writeAsBytes(ZipEncoder().encode(archive));
-      await Directory(p.join(scratch, 'artifacts', 'extract')).create();
+      expect(
+        GeneratedPluginsPackage.binaryArtifactAttemptKey(upper, windows: true),
+        'package\u0000target\u0000${'a' * 64}',
+      );
+    });
+  });
 
-      expect(
-        await GeneratedPluginsPackage.repairWindowsBinaryArtifacts(scratch),
-        isTrue,
+  group('Windows binary artifacts', () {
+    const firstChecksum =
+        '1111111111111111111111111111111111111111111111111111111111111111';
+    const secondChecksum =
+        '2222222222222222222222222222222222222222222222222222222222222222';
+
+    String manifest() =>
+        'let targets: [Target] = [\n'
+        '  .binaryTarget(name: "First", url: "https://example.invalid/first.zip", checksum: "$firstChecksum"),\n'
+        '  .binaryTarget(name: "Second", url: "https://example.invalid/second.zip", checksum: "$secondChecksum"),\n'
+        ']\n';
+
+    Future<SwiftPmPreparedBinaryArtifact> preparedArtifact(
+      String packageRoot,
+      SwiftPmRemoteBinaryTarget target,
+    ) async {
+      final artifact = Directory(
+        p.join(
+          packageRoot,
+          'prepared',
+          target.name,
+          '${target.name}.xcframework',
+        ),
+      )..createSync(recursive: true);
+      return SwiftPmPreparedBinaryArtifact(
+        target: target,
+        entry: SwiftPmBinaryArtifactEntry(
+          archiveChecksum: target.checksum,
+          targetName: target.name,
+          artifactPath: artifact.path,
+        ),
       );
-      final target = p.join(
-        scratch,
-        'artifacts',
-        'package',
-        'Target',
-        'Target',
-        'Target.xcframework',
+    }
+
+    test('rewrites successful target and preserves unsupported call', () async {
+      final packageRoot = p.join(tmp.path, 'mixed');
+      final manifestFile = File(p.join(packageRoot, 'Package.swift'))
+        ..createSync(recursive: true)
+        ..writeAsStringSync(manifest());
+      final originalSecond = manifest().split('\n')[2];
+
+      await GeneratedPluginsPackage.prepareSupportedBinaryArtifacts(
+        packageRoot: packageRoot,
+        binaryArtifactStore: p.join(tmp.path, 'store'),
+        binaryArtifactFallback: p.join(tmp.path, 'fallback'),
+        packageLocalArtifactJunctionCapability: true,
+        windows: true,
+        prepare: (target) {
+          if (target.name == 'Second') {
+            throw FlutterBuildError('unsupported archive slice');
+          }
+          return preparedArtifact(packageRoot, target);
+        },
+        createAlias: ({required alias, required target}) async {
+          Directory(alias).createSync(recursive: true);
+        },
       );
-      expect(
-        File(
-          p.join(target, 'ios-arm64', 'Target.framework', 'Target'),
-        ).readAsStringSync(),
-        'binary',
-      );
-      expect(Directory(p.join(target, 'macos-arm64')).existsSync(), isFalse);
+
+      final rewritten = manifestFile.readAsStringSync();
+      expect(rewritten, contains('.binaryTarget(name: "First", path: '));
+      expect(rewritten.split('\n')[2], originalSecond);
     });
 
-    test('ignores incomplete extraction directories', () async {
-      final scratch = p.join(tmp.path, '.build');
-      await Directory(
-        p.join(
-          scratch,
-          'artifacts',
-          'extract',
-          'package',
-          'target',
-          'UUID',
-          'Target.xcframework',
-        ),
-      ).create(recursive: true);
+    test(
+      'materializes stable fallback once across clean staging and recovery',
+      () async {
+        final fallback = p.join(tmp.path, 'fallback');
+        final store = p.join(tmp.path, 'store');
+        var materializations = 0;
 
+        Future<SwiftPmBinaryArtifactPublication> materialize({
+          required String source,
+          required String destination,
+        }) async {
+          if (Directory(destination).existsSync()) {
+            return SwiftPmBinaryArtifactPublication.reused;
+          }
+          materializations++;
+          await Directory(destination).create(recursive: true);
+          return SwiftPmBinaryArtifactPublication.published();
+        }
+
+        for (final run in ['first-run', 'second-run']) {
+          final packageRoot = p.join(tmp.path, run);
+          final manifestFile = File(p.join(packageRoot, 'Package.swift'))
+            ..createSync(recursive: true)
+            ..writeAsStringSync(manifest().split('\n')[1]);
+          await GeneratedPluginsPackage.prepareSupportedBinaryArtifacts(
+            packageRoot: packageRoot,
+            binaryArtifactStore: store,
+            binaryArtifactFallback: fallback,
+            packageLocalArtifactJunctionCapability: false,
+            windows: true,
+            prepare: (target) => preparedArtifact(tmp.path, target),
+            materialize: materialize,
+          );
+
+          final stable = p.join(
+            packageRoot,
+            '.xa',
+            firstChecksum.substring(0, 16),
+            'First.xcframework',
+          );
+          expect(
+            manifestFile.readAsStringSync(),
+            contains(
+              p
+                  .join(
+                    '.xa',
+                    firstChecksum.substring(0, 16),
+                    'First.xcframework',
+                  )
+                  .replaceAll(r'\', r'\\'),
+            ),
+          );
+
+          expect(Directory(stable).existsSync(), isTrue);
+        }
+
+        final provenance = binaryProvenance(
+          'package',
+          'First',
+          firstChecksum,
+          'Package.swift',
+        );
+        final stable = p.join(
+          fallback,
+          firstChecksum,
+          'First',
+          'First.xcframework',
+        );
+        final recovery =
+            await GeneratedPluginsPackage.recoverFinalBinaryArtifact(
+              provenance: provenance,
+              preparedArtifactPath: p.join(
+                tmp.path,
+                'prepared',
+                'First',
+                'First.xcframework',
+              ),
+              binaryArtifactStore: store,
+              destination: p.join(
+                tmp.path,
+                'pruned',
+                'xcross-artifacts',
+                'First',
+              ),
+              materializedDestination: stable,
+              attemptState: SwiftPmBinaryAttemptState(),
+              packageLocalArtifactJunctionCapability: false,
+              materialize: materialize,
+              windows: true,
+            );
+
+        expect(recovery, SwiftPmBinaryArtifactPublication.published());
+        expect(materializations, 3);
+      },
+    );
+
+    test(
+      'falls back to stable materialization when alias creation fails',
+      () async {
+        final packageRoot = p.join(tmp.path, 'alias-failure');
+        final manifestFile = File(p.join(packageRoot, 'Package.swift'))
+          ..createSync(recursive: true)
+          ..writeAsStringSync(manifest().split('\n')[1]);
+        String? copiedTo;
+
+        await GeneratedPluginsPackage.prepareSupportedBinaryArtifacts(
+          packageRoot: packageRoot,
+          binaryArtifactStore: p.join(tmp.path, 'store'),
+          binaryArtifactFallback: p.join(tmp.path, 'fallback'),
+          packageLocalArtifactJunctionCapability: true,
+          windows: true,
+          prepare: (target) => preparedArtifact(tmp.path, target),
+          createAlias: ({required alias, required target}) async =>
+              throw FileSystemException('junction unavailable', alias),
+          materialize: ({required source, required destination}) async {
+            copiedTo = destination;
+            await Directory(destination).create(recursive: true);
+            return SwiftPmBinaryArtifactPublication.published();
+          },
+        );
+
+        expect(
+          p.windows.normalize(copiedTo!),
+          endsWith(
+            p.windows.normalize(
+              p.join(
+                packageRoot,
+                '.xa',
+                firstChecksum.substring(0, 16),
+                'First.xcframework',
+              ),
+            ),
+          ),
+        );
+
+        expect(
+          manifestFile.readAsStringSync(),
+          contains(
+            p
+                .join(
+                  '.xa',
+                  firstChecksum.substring(0, 16),
+                  'First.xcframework',
+                )
+                .replaceAll(r'\', r'\\'),
+          ),
+        );
+      },
+    );
+
+    test('leaves a download failure call byte-identical', () async {
+      final packageRoot = p.join(tmp.path, 'download');
+      final original = manifest().split('\n')[1];
+      final manifestFile = File(p.join(packageRoot, 'Package.swift'))
+        ..createSync(recursive: true)
+        ..writeAsStringSync('$original\n');
+      var writes = 0;
+
+      await GeneratedPluginsPackage.prepareSupportedBinaryArtifacts(
+        packageRoot: packageRoot,
+        binaryArtifactStore: p.join(tmp.path, 'store'),
+        binaryArtifactFallback: p.join(tmp.path, 'fallback'),
+        packageLocalArtifactJunctionCapability: true,
+        windows: true,
+        prepare: (_) => throw FlutterBuildError('download failed'),
+        writeManifest: (_, __) async => writes++,
+      );
+
+      expect(manifestFile.readAsStringSync(), '$original\n');
+      expect(writes, 0);
+    });
+
+    test(
+      'checksum failure rolls back aliases without manifest rewrite',
+      () async {
+        final packageRoot = p.join(tmp.path, 'security');
+        final original = manifest();
+        final manifestFile = File(p.join(packageRoot, 'Package.swift'))
+          ..createSync(recursive: true)
+          ..writeAsStringSync(original);
+        final aliases = <String>[];
+        var writes = 0;
+
+        await expectLater(
+          GeneratedPluginsPackage.prepareSupportedBinaryArtifacts(
+            packageRoot: packageRoot,
+            binaryArtifactStore: p.join(tmp.path, 'store'),
+            binaryArtifactFallback: p.join(tmp.path, 'fallback'),
+            packageLocalArtifactJunctionCapability: true,
+            windows: true,
+            prepare: (target) {
+              if (target.name == 'Second') {
+                throw FlutterBuildError(
+                  'checksum mismatch',
+                  isSecurityFailure: true,
+                );
+              }
+              return preparedArtifact(packageRoot, target);
+            },
+            createAlias: ({required alias, required target}) async {
+              Directory(alias).createSync(recursive: true);
+              aliases.add(alias);
+            },
+            removeAlias: (alias) async {
+              aliases.remove(alias);
+              await Directory(alias).delete(recursive: true);
+            },
+            writeManifest: (_, __) async => writes++,
+          ),
+          throwsA(
+            isA<FlutterBuildError>().having(
+              (error) => error.isSecurityFailure,
+              'isSecurityFailure',
+              isTrue,
+            ),
+          ),
+        );
+
+        expect(aliases, isEmpty);
+        expect(manifestFile.readAsStringSync(), original);
+        expect(writes, 0);
+      },
+    );
+
+    test('bounds robocopy retries', () {
       expect(
-        await GeneratedPluginsPackage.repairWindowsBinaryArtifacts(scratch),
-        isFalse,
+        GeneratedPluginsPackage.windowsCopyArguments('source', 'destination'),
+        [
+          'source',
+          'destination',
+          '/E',
+          '/R:0',
+          '/W:0',
+          '/MT:8',
+          '/NFL',
+          '/NDL',
+          '/NJH',
+          '/NJS',
+          '/NP',
+        ],
       );
     });
   });
@@ -1303,6 +1849,72 @@ let package = Package(targets: [
   });
 
   group('writeGeneratedPackages', () {
+    test(
+      'passes build-scoped recovery inputs to dependency evaluation',
+      () async {
+        const url = 'https://example.com/owner/repository.git';
+        final plugin = makePlugin(
+          'plugin_scope',
+          packageManifest:
+              '''
+import PackageDescription
+let package = Package(
+  name: "plugin_scope",
+  dependencies: [.package(name: "DeclaredIdentity", url: "$url", exact: "1.0.0")],
+  targets: []
+)
+''',
+        );
+        final flutter = Directory(p.join(tmp.path, 'Flutter.xcframework'))
+          ..createSync();
+        final scratch = p.join(tmp.path, 'authoritative-scratch');
+        final store = p.join(tmp.path, 'authoritative-store');
+        var evaluated = false;
+
+        await GeneratedPluginsPackage.writeGeneratedPackages(
+          outputDir: p.join(tmp.path, 'scoped-output'),
+          plugins: [plugin],
+          flutterXcframework: flutter.path,
+          deploymentTarget: IosDeploymentTarget.fallback,
+          copyFlutterXcframework: true,
+          vendorRemotePackages: true,
+          scratchPath: scratch,
+          binaryArtifactStore: store,
+          swiftPmArtifactJunctionCapability: true,
+          evaluateDependencyRefs:
+              (
+                directory, {
+                required scratchPath,
+                required binaryArtifactStore,
+                required binaryArtifactFallback,
+                required swiftPmArtifactJunctionCapability,
+                required packageLocalArtifactJunctionCapability,
+                required dependencies,
+              }) async {
+                evaluated = true;
+                expect(directory, contains('plugin_scope'));
+                expect(scratchPath, scratch);
+                expect(binaryArtifactStore, store);
+                expect(swiftPmArtifactJunctionCapability, isTrue);
+                expect(dependencies, hasLength(1));
+                expect(dependencies.single.identity, 'DeclaredIdentity');
+                expect(dependencies.single.url, url);
+                return const {
+                  'https://example.com/owner/repository': 'revision',
+                };
+              },
+          clonePackage: (_, _, _, destination) async {
+            await Directory(destination).create(recursive: true);
+            await File(
+              p.join(destination, 'Package.swift'),
+            ).writeAsString('import PackageDescription\n');
+          },
+        );
+
+        expect(evaluated, isTrue);
+      },
+    );
+
     test(
       'stages normalized plugin manifest without modifying source',
       () async {
@@ -2449,35 +3061,36 @@ module FirebaseFirestore {
     });
 
     test(
-      'does not retry an unrelated failure that exposes a missing header',
+      'prebuilds a newly exposed missing header despite truncated diagnostics',
       () async {
         final buildDir = p.join(tmp.path, 'arm64-apple-ios', 'debug');
         final include = p.join(buildDir, 'FirebaseFirestore.build', 'include');
         var attempts = 0;
 
-        await expectLater(
-          GeneratedPluginsPackage.buildWithInteropRecovery(
-            targetBuildDir: buildDir,
-            interopTargetCandidates: const {'FirebaseFirestore'},
-            windows: false,
-            build: () {
-              attempts++;
-              Directory(include).createSync(recursive: true);
-              File(p.join(include, 'module.modulemap')).writeAsStringSync('''
+        await GeneratedPluginsPackage.buildWithInteropRecovery(
+          targetBuildDir: buildDir,
+          interopTargetCandidates: const {'FirebaseFirestore'},
+          windows: false,
+          build: () async {
+            attempts++;
+            if (attempts != 1) return;
+            Directory(include).createSync(recursive: true);
+            File(p.join(include, 'module.modulemap')).writeAsStringSync('''
 module FirebaseFirestore {
   header "FirebaseFirestore-Swift.h"
 }
 ''');
-              return Future<void>.error(
-                StateError('unrelated compile failure'),
-              );
-            },
-            buildTarget: (_) async => fail('no target should be prebuilt'),
-          ),
-          throwsStateError,
+            throw StateError('command failed without compiler output');
+          },
+          buildTarget: (target) async {
+            expect(target, 'FirebaseFirestore');
+            File(
+              p.join(include, 'FirebaseFirestore-Swift.h'),
+            ).writeAsStringSync('// generated');
+          },
         );
 
-        expect(attempts, 1);
+        expect(attempts, 2);
       },
     );
 
@@ -2818,21 +3431,82 @@ module FirebaseFirestore {
   });
 
   group('build', () {
+    test('passes workspace recovery inputs through the build path', () async {
+      const url = 'https://example.com/dependency.git';
+      final plugin = makePlugin(
+        'build_scope',
+        packageManifest:
+            '''
+import PackageDescription
+let package = Package(
+  name: "build_scope",
+  dependencies: [.package(url: "$url", exact: "1.0.0")],
+  targets: []
+)
+''',
+      );
+      final workspace = SwiftPmWorkspace.forProject(
+        tmp.path,
+        environment: {'XCROSS_CACHE_DIR': p.join(tmp.path, 'cache')},
+      );
+      final flutter = Directory(p.join(tmp.path, 'Flutter.xcframework'))
+        ..createSync();
+
+      await expectLater(
+        GeneratedPluginsPackage.build(
+          projectRoot: tmp.path,
+          workspace: workspace,
+          plugins: [plugin],
+          flutterXcframework: flutter.path,
+          deploymentTarget: IosDeploymentTarget.fallback,
+          swiftPmArtifactJunctionCapability: true,
+          evaluateDependencyRefs:
+              (
+                _, {
+                required scratchPath,
+                required binaryArtifactStore,
+                required binaryArtifactFallback,
+                required swiftPmArtifactJunctionCapability,
+                required packageLocalArtifactJunctionCapability,
+                required dependencies,
+              }) {
+                expect(scratchPath, workspace.scratch);
+                expect(binaryArtifactStore, workspace.binaryArtifactStore);
+                expect(swiftPmArtifactJunctionCapability, isTrue);
+                expect(dependencies.single.identity, 'dependency');
+                throw StateError('evaluation reached');
+              },
+        ),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'message',
+            'evaluation reached',
+          ),
+        ),
+      );
+    });
+
     test(
       'returns null and writes nothing when there are no SPM plugins',
       () async {
-        final outputDir = p.join(tmp.path, 'out');
+        final workspace = SwiftPmWorkspace.forProject(
+          tmp.path,
+          environment: {'XCROSS_CACHE_DIR': tmp.path},
+        );
 
         final result = await GeneratedPluginsPackage.build(
           projectRoot: tmp.path,
+          workspace: workspace,
           plugins: const [],
           flutterXcframework: p.join(tmp.path, 'Flutter.xcframework'),
-          outputDir: outputDir,
           deploymentTarget: IosDeploymentTarget.fallback,
+          artifactJunctionCapabilityResolver: () async =>
+              fail('must not resolve capabilities without SPM plugins'),
         );
 
         expect(result, isNull);
-        expect(Directory(outputDir).existsSync(), isFalse);
+        expect(Directory(workspace.packages).existsSync(), isFalse);
       },
     );
 
@@ -2845,20 +3519,51 @@ module FirebaseFirestore {
           p.join(podspecOnly, 'ios', 'plugin_pod.podspec'),
         ).writeAsStringSync('');
         final plugin = IosPlugin(name: 'plugin_pod', packageRoot: podspecOnly);
-        final outputDir = p.join(tmp.path, 'out');
+        final workspace = SwiftPmWorkspace.forProject(
+          tmp.path,
+          environment: {'XCROSS_CACHE_DIR': tmp.path},
+        );
 
         final result = await GeneratedPluginsPackage.build(
           projectRoot: tmp.path,
+          workspace: workspace,
           plugins: [plugin],
           flutterXcframework: p.join(tmp.path, 'Flutter.xcframework'),
-          outputDir: outputDir,
           deploymentTarget: IosDeploymentTarget.fallback,
+          artifactJunctionCapabilityResolver: () async =>
+              fail('must not resolve capabilities for ObjC-only plugins'),
         );
 
         expect(result, isNull);
-        expect(Directory(outputDir).existsSync(), isFalse);
+        expect(Directory(workspace.packages).existsSync(), isFalse);
       },
     );
+
+    test('invokes the capability resolver once for SPM plugins', () async {
+      final plugin = makePlugin('resolver_plugin');
+      final workspace = SwiftPmWorkspace.forProject(
+        tmp.path,
+        environment: {'XCROSS_CACHE_DIR': tmp.path},
+      );
+      var resolverCalls = 0;
+
+      await expectLater(
+        GeneratedPluginsPackage.build(
+          projectRoot: tmp.path,
+          workspace: workspace,
+          plugins: [plugin],
+          flutterXcframework: p.join(tmp.path, 'Flutter.xcframework'),
+          deploymentTarget: IosDeploymentTarget.fallback,
+          artifactJunctionCapabilityResolver: () {
+            resolverCalls++;
+            throw StateError('resolver reached');
+          },
+        ),
+        throwsStateError,
+      );
+
+      expect(resolverCalls, 1);
+    });
   });
 
   group('Swift SDK / toolchain mismatch', () {

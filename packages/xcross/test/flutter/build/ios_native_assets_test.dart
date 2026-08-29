@@ -72,21 +72,6 @@ void main() {
     }
   });
 
-  test('PowerShell xcrun forwards an empty argument tail safely', () {
-    final script = renderPowerShellXcrunShim(
-      iosSdk: r'C:\SDK',
-      tools: const {'lipo': r'C:\LLVM\lipo.exe'},
-    );
-
-    expect(script, contains(r'$tail = if ($i + 1 -lt $Arguments.Count)'));
-    expect(script, contains('else { @() }'));
-    expect(script, contains(r'& $tool @tail'));
-    expect(
-      script,
-      isNot(contains(r'@($Arguments[($i + 1)..($Arguments.Count - 1)])')),
-    );
-  });
-
   test('falls back from llvm-otool to llvm-objdump', () async {
     final requested = <String>[];
     final result = await resolveOtool(
@@ -124,6 +109,26 @@ void main() {
     }
   });
 
+  test('Windows compiler shim strips carriage returns from arguments', () {
+    final shim = renderPowerShellCompilerShim(
+      iosSdk: r'C:\SDK',
+      clang: r'C:\LLVM\clang.exe',
+      hostCompiler: r'C:\LLVM\clang.exe',
+      linker: r'C:\LLVM\ld64.lld.exe',
+      deploymentTarget: '13.0',
+    );
+
+    expect(
+      shim,
+      contains(r'$Arguments = @($args | ForEach-Object { $_.TrimEnd('),
+    );
+    expect(
+      shim,
+      contains("'-Wl,-arch,arm64', '-Wl,-platform_version,ios,13.0,26.5'"),
+    );
+    expect(shim, contains(r'& $compiler @compilerArguments'));
+  });
+
   test('Windows uses the resolved clang as its host C compiler', () async {
     expect(
       await resolveHostCompiler(
@@ -134,7 +139,34 @@ void main() {
     );
   });
 
-  test('Apple tool shims expose the Darwin SDK and configured tools', () async {
+  test('Windows resolves xcross as the tool forwarder', () async {
+    expect(
+      await resolveNativeAssetToolForwarder(
+        r'C:\bundle\xcross.exe',
+        windows: true,
+        findInstalled: () async => fail('must not search'),
+      ),
+      r'C:\bundle\xcross.exe',
+    );
+    expect(
+      await resolveNativeAssetToolForwarder(
+        r'C:\flutter\bin\cache\dart-sdk\bin\dart.exe',
+        windows: true,
+        findInstalled: () async => r'C:\installed\xcross.exe',
+      ),
+      r'C:\installed\xcross.exe',
+    );
+    expect(
+      await resolveNativeAssetToolForwarder(
+        r'C:\flutter\bin\cache\dart-sdk\bin\dartaotruntime',
+        windows: true,
+        findInstalled: () async => null,
+      ),
+      isNull,
+    );
+  });
+
+  test('Apple tool shims expose configured tools including xcrun', () async {
     if (Platform.isWindows) return;
     final tmp = await Directory.systemTemp.createTemp('apple_shims_test-');
     try {
@@ -150,54 +182,21 @@ void main() {
           lipo: '/bin/echo',
           otool: OtoolConfig('/bin/echo', usesObjdump: false),
           installNameTool: '/bin/echo',
+          xcrun: '/bin/echo',
         ),
+        toolForwarderExecutable: Platform.resolvedExecutable,
       );
-      final xcrun = p.join(tmp.path, 'xcrun');
-      final xcrunContents = File(xcrun).readAsStringSync();
-      expect(xcrunContents, contains("'/sdk/iPhoneOS.sdk'"));
-      expect(xcrunContents, contains("'${p.join(tmp.path, 'clang')}'"));
-      expect(xcrunContents, isNot(contains('XCROSS_')));
-
-      expect(
-        (await Process.run(
-          xcrun,
-          ['--sdk', 'iphoneos', '--show-sdk-path'],
-          environment: const {},
-          includeParentEnvironment: false,
-        )).stdout.toString().trim(),
-        '/sdk/iPhoneOS.sdk',
-      );
-      expect(
-        (await Process.run(
-          xcrun,
-          ['--show-sdk-path', '--sdk', 'iphoneos'],
-          environment: const {},
-          includeParentEnvironment: false,
-        )).stdout.toString().trim(),
-        '/sdk/iPhoneOS.sdk',
-      );
-      expect(
-        (await Process.run(
-          xcrun,
-          ['--find', 'clang'],
-          environment: const {},
-          includeParentEnvironment: false,
-        )).stdout.toString().trim(),
-        p.join(tmp.path, 'clang'),
-      );
-      final xcrunClang = await Process.run(
-        xcrun,
-        ['--sdk', 'iphoneos', 'clang', '-arch', 'arm64', 'asset.c'],
-        environment: const {},
+      expect(File(p.join(tmp.path, 'xcrun')).existsSync(), isTrue);
+      expect(File(p.join(tmp.path, 'plutil')).existsSync(), isTrue);
+      final xcrun = await Process.run(
+        'xcrun',
+        const ['--show-sdk-path'],
+        environment: {'PATH': tmp.path},
         includeParentEnvironment: false,
       );
-      expect(xcrunClang.exitCode, 0);
-      expect(
-        xcrunClang.stdout.toString().trim(),
-        '--target=arm64-apple-ios15.6 -isysroot /sdk/iPhoneOS.sdk '
-        '-miphoneos-version-min=15.6 -fuse-ld=lld '
-        '--ld-path=/toolchain/ld64.lld -arch arm64 asset.c',
-      );
+      expect(xcrun.exitCode, 0);
+      expect(xcrun.stdout.toString().trim(), '--show-sdk-path');
+
       final hostCc = await Process.run(
         'cc',
         const ['-m64', '-Wl,--as-needed', 'host.c'],
@@ -230,15 +229,7 @@ void main() {
         'arm64-apple-ios15.6 -isysroot /custom.sdk '
         '--ld-path=/custom/ld asset.c',
       );
-      expect(
-        (await Process.run(
-          xcrun,
-          ['--sdk', 'iphoneos', 'lipo', '-info', 'asset.dylib'],
-          environment: const {},
-          includeParentEnvironment: false,
-        )).stdout.toString().trim(),
-        '-info asset.dylib',
-      );
+
       expect(
         (await Process.run(
           p.join(tmp.path, 'otool'),

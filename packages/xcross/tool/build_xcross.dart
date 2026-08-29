@@ -39,15 +39,59 @@ Future<int> buildXcross({
   final original = await generated.readAsBytes();
   try {
     await generated.writeAsString(_identitySource(version, released));
-    return await (runBuild ?? _runBuild)(Platform.resolvedExecutable, const [
-      'build',
-      'cli',
-      '-t',
-      'bin/xcross.dart',
-    ], workingDirectory: packageRoot.path);
+    final run = runBuild ?? _runBuild;
+    final xcrossResult = await _buildCliExecutable(
+      run,
+      packageRoot,
+      target: 'bin/xcross.dart',
+    );
+    if (xcrossResult != 0) return xcrossResult;
+
+    final xcrunBuild = p.join(packageRoot.path, 'build', 'xcrun');
+    final xcrunResult = await _buildCliExecutable(
+      run,
+      packageRoot,
+      target: 'bin/xcrun.dart',
+      output: xcrunBuild,
+    );
+    if (xcrunResult != 0) return xcrunResult;
+
+    final executable = Platform.isWindows ? 'xcrun.exe' : 'xcrun';
+    final source = p.join(xcrunBuild, 'bundle', 'bin', executable);
+    final destination = p.join(
+      _builtBinDirectory(packageRoot).path,
+      executable,
+    );
+    await File(source).copy(destination);
+    return 0;
   } finally {
     await generated.writeAsBytes(original, flush: true);
   }
+}
+
+Future<int> _buildCliExecutable(
+  BuildCliRun run,
+  Directory packageRoot, {
+  required String target,
+  String? output,
+}) => run(Platform.resolvedExecutable, [
+  'build',
+  'cli',
+  '-t',
+  target,
+  if (output != null) ...['-o', output],
+], workingDirectory: packageRoot.path);
+
+Directory _builtBinDirectory(Directory packageRoot) {
+  final build = Directory(p.join(packageRoot.path, 'build', 'cli'));
+  final executable = Platform.isWindows ? 'xcross.exe' : 'xcross';
+  for (final entity in build.listSync(recursive: true).whereType<File>()) {
+    if (p.basename(entity.path) == executable &&
+        p.basename(p.dirname(entity.path)) == 'bin') {
+      return entity.parent;
+    }
+  }
+  throw StateError('dart build cli did not produce bin/$executable');
 }
 
 void _validateIdentity(

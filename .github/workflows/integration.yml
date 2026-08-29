@@ -13,6 +13,9 @@ env:
   SWIFT_VERSION: 6.3.3
   SWIFT_WINDOWS_SHA256: >-
     235626548F249CD516D3D4D90EEE980DCCAD46F3822DAC1F8E3119B0FEDE94B7
+  LLVM_VERSION: 22.1.8
+  LLVM_WINDOWS_SHA256: >-
+    16E5709785FEF73C854646241C4A92C5CD574318D1B33C63330DD7721903E55C
 
 concurrency:
   group: integration-${{ github.ref }}
@@ -24,7 +27,7 @@ jobs:
     if: >-
       github.event_name != 'pull_request' ||
       github.event.pull_request.head.repo.full_name == github.repository
-    name: Flutter and Compose SwiftPM build (${{ matrix.os }})
+    name: Flutter SwiftPM build (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
@@ -39,7 +42,7 @@ jobs:
 
       - name: Update example submodule
         shell: bash
-        run: git submodule update --init --remote
+        run: git submodule update --init --checkout examples
 
       - name: Use JDK 21 on Linux
         if: runner.os == 'Linux'
@@ -98,9 +101,10 @@ jobs:
           flutter config --no-analytics
           flutter precache --ios
           dart pub get
-          (cd packages/xcross && dart build cli -t bin/xcross.dart)
+          (cd packages/xcross && dart run tool/build_xcross.dart)
           cp -r packages/xcross/build/cli/*/bundle "$RUNNER_TEMP/xcross-bundle"
           chmod +x "$RUNNER_TEMP/xcross-bundle/bin/xcross"
+          chmod +x "$RUNNER_TEMP/xcross-bundle/bin/xcrun"
           "$RUNNER_TEMP/xcross-bundle/bin/xcross" setup
           sudo apt-get install -y llvm
           tools=(
@@ -134,9 +138,26 @@ jobs:
             throw "Swift installer failed: $($process.ExitCode)"
           }
 
-          $llvmBin = "${env:ProgramFiles}\LLVM\bin"
+          $llvmInstaller = "$env:RUNNER_TEMP\llvm-installer.exe"
+          $llvmRoot = "$env:RUNNER_TEMP\llvm-$env:LLVM_VERSION"
+          $llvmUrl = "https://github.com/llvm/llvm-project/releases/download/" +
+            "llvmorg-$env:LLVM_VERSION/LLVM-$env:LLVM_VERSION-win64.exe"
+          Invoke-WebRequest $llvmUrl -OutFile $llvmInstaller
+          $llvmHash = (Get-FileHash $llvmInstaller -Algorithm SHA256).Hash
+          if ($llvmHash -ne $env:LLVM_WINDOWS_SHA256) {
+            throw "LLVM installer checksum mismatch: $llvmHash"
+          }
+          $llvmProcess = Start-Process `
+            $llvmInstaller `
+            -ArgumentList '/S', "/D=$llvmRoot" `
+            -PassThru `
+            -Wait
+          if ($llvmProcess.ExitCode -ne 0) {
+            throw "LLVM installer failed: $($llvmProcess.ExitCode)"
+          }
+          $llvmBin = "$llvmRoot\bin"
           if (-not (Test-Path "$llvmBin\ld64.lld.exe")) {
-            throw "Hosted-runner LLVM missing ld64.lld.exe at $llvmBin"
+            throw "Pinned LLVM missing ld64.lld.exe at $llvmBin"
           }
           $swiftRoot = "$env:LOCALAPPDATA\Programs\Swift"
           # The installer registers its Runtimes, Toolchains, and Tools
@@ -238,7 +259,7 @@ jobs:
           flutter precache --ios
           dart pub get
           Push-Location packages/xcross
-          dart build cli -t bin/xcross.dart
+          dart run tool/build_xcross.dart
           Pop-Location
           Copy-Item -Recurse `
             packages/xcross/build/cli/windows_x64/bundle `
@@ -248,163 +269,166 @@ jobs:
       - name: Restore cached Darwin SDK
         uses: ./.github/actions/setup-darwin-sdk
 
-      - name: Build examples on Linux
-        if: runner.os == 'Linux'
-        shell: bash
-        run: |
-          set -euo pipefail
-          xcross="$RUNNER_TEMP/xcross-bundle/bin/xcross"
-          "$xcross" compose setup
-          declare -a names=()
-          declare -a pids=()
-          for example in "$GITHUB_WORKSPACE"/examples/*; do
-            if [[ -f "$example/pubspec.yaml" ]]; then
-              (cd "$example" && "$xcross" flutter build) &
-            elif [[ -f "$example/settings.gradle.kts" ]]; then
-              (cd "$example" && "$xcross" compose build) &
-            else
-              continue
-            fi
-            names+=("$(basename "$example")")
-            pids+=("$!")
-          done
-          failed=0
-          for i in "${!pids[@]}"; do
-            if ! wait "${pids[$i]}"; then
-              echo "Build failed: ${names[$i]}" >&2
-              failed=1
-            fi
-          done
-          ((failed == 0))
-          test -f examples/compose_app/build/xcross-ios/ComposeApp.app/Runner
-          test -f examples/kmp_swift_app/build/xcross-ios/KmpSwiftApp.app/Runner
-
-      - name: Inspect Compose smoke examples on Linux
-        if: runner.os == 'Linux'
-        shell: bash
-        run: |
-          set -euo pipefail
-          # The build pipeline itself gates on Mach-O validity
-          # (MachOValidator.validate64BitExecutable) and Info.plist/framework
-          # presence (ComposeAppAssembler._validateStagedApp) before ever
-          # writing an .app, and both are unit-tested. This step is the
-          # independent, external half of that acceptance criterion: verify
-          # the actual bundles CI just produced, the same way the Flutter
-          # plugin sample below is inspected, rather than trusting the
-          # internal gate alone.
-          declare -A apps=(
-            [examples/compose_app/build/xcross-ios/ComposeApp.app]=ComposeApp
-            [examples/kmp_swift_app/build/xcross-ios/KmpSwiftApp.app]=Shared
-          )
-          for app in "${!apps[@]}"; do
-            base=${apps[$app]}
-            runner="$app/Runner"
-            plist="$app/Info.plist"
-            framework="$app/Frameworks/$base.framework/$base"
-            test -f "$runner"
-            test -f "$plist"
-            test -f "$framework"
-            llvm-readobj --file-headers "$runner" | tee "$(basename "$app")-runner-headers.txt"
-            grep -Eq 'Format: Mach-O arm64|Arch: aarch64' "$(basename "$app")-runner-headers.txt"
-            flatplist=$(tr '\n\t' '  ' < "$plist")
-            echo "$flatplist" | grep -Eq '<key>CFBundleExecutable</key>[[:space:]]*<string>Runner</string>' || {
-              echo "Info.plist missing CFBundleExecutable=Runner: $plist" >&2
-              exit 1
-            }
-            echo "$flatplist" | grep -Eq '<key>CFBundleIdentifier</key>' || {
-              echo "Info.plist missing CFBundleIdentifier: $plist" >&2
-              exit 1
-            }
-          done
-
-      - name: Build examples on Windows
+      - name: Preflight Windows SwiftPM junction gates
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $xcross = "$env:RUNNER_TEMP\xcross-bundle\bin\xcross.exe"
-          & $xcross compose setup
-          if ($LASTEXITCODE -ne 0) { throw 'xcross compose setup failed' }
-          $jobs = Get-ChildItem "$env:GITHUB_WORKSPACE\examples" -Directory |
-            ForEach-Object {
-              $command = if (Test-Path (Join-Path $_ 'pubspec.yaml')) {
-                'flutter'
-              } elseif (Test-Path (Join-Path $_ 'settings.gradle.kts')) {
-                'compose'
-              } else {
-                return
-              }
-              Start-Job -Name $_.Name -ArgumentList $_.FullName, $xcross, $command -ScriptBlock {
-                param($path, $xcross, $command)
-                Set-Location $path
-                & $xcross $command build
-                if ($LASTEXITCODE -ne 0) {
-                  throw "xcross $command build failed"
-                }
-              }
-            }
-          $failed = @()
-          foreach ($job in $jobs) {
-            Receive-Job $job -Wait
-            if ($job.State -ne 'Completed') { $failed += $job.Name }
+          $env:XCROSS_CACHE_DIR = "$env:RUNNER_TEMP\xcross-cache"
+          "XCROSS_CACHE_DIR=$env:XCROSS_CACHE_DIR" |
+            Out-File $env:GITHUB_ENV -Encoding utf8 -Append
+          if ([string]::IsNullOrWhiteSpace($env:XCROSS_SWIFT_SDKS_PATH) -or
+              -not (Test-Path $env:XCROSS_SWIFT_SDKS_PATH -PathType Container)) {
+            throw 'XCROSS_SWIFT_SDKS_PATH is missing or is not a directory'
           }
-          Remove-Job $jobs
-          if ($failed.Count -ne 0) {
-            throw "Example builds failed: $($failed -join ', ')"
-          }
-          Set-Location $env:GITHUB_WORKSPACE
-          $outputs = @(
-            'examples/compose_app/build/xcross-ios/ComposeApp.app/Runner',
-            'examples/kmp_swift_app/build/xcross-ios/KmpSwiftApp.app/Runner'
-          )
-          foreach ($output in $outputs) {
-            if (-not (Test-Path $output -PathType Leaf)) {
-              throw "Missing $output"
+          foreach ($tool in @(
+            'swift',
+            'swift-package',
+            'swift-build',
+            'swiftc',
+            'clang',
+            'clang++',
+            'ld64.lld'
+          )) {
+            if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) {
+              throw "Required junction gate tool is unavailable: $tool"
             }
+          }
+          $sdks = (& swift sdk list --swift-sdks-path $env:XCROSS_SWIFT_SDKS_PATH |
+            Out-String)
+          if ($LASTEXITCODE -ne 0 -or $sdks -notmatch 'xcross-darwin') {
+            throw "Required xcross-darwin Swift SDK is unavailable:`n$sdks"
           }
 
-      - name: Inspect Compose smoke examples on Windows
+      - name: Gate package-local SwiftPM junctions on Windows
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          # See the matching Linux step's comment: the build pipeline
-          # already gates Mach-O validity and Info.plist/framework presence
-          # internally (and both are unit-tested); this is the independent,
-          # external verification of the bundles this job just produced.
-          $apps = @{
-            'examples/compose_app/build/xcross-ios/ComposeApp.app' = 'ComposeApp'
-            'examples/kmp_swift_app/build/xcross-ios/KmpSwiftApp.app' = 'Shared'
+          $name = 'package-local junction survives repeated resolve and cross-build'
+          $output = (dart test `
+            packages/xcross/test/flutter/build/swiftpm_binary_artifact_preparer_test.dart `
+            --name $name --reporter expanded 2>&1 | Tee-Object -Variable lines |
+            Out-String)
+          if ($LASTEXITCODE -ne 0) {
+            throw "package-local junction gate failed:`n$output"
           }
-          foreach ($app in $apps.Keys) {
-            $base = $apps[$app]
-            $runner = Join-Path $app 'Runner'
-            $plist = Join-Path $app 'Info.plist'
-            $framework = Join-Path $app "Frameworks/$base.framework/$base"
-            if (-not (Test-Path $runner -PathType Leaf)) {
-              throw "Missing $runner"
-            }
-            if (-not (Test-Path $plist -PathType Leaf)) {
-              throw "Missing $plist"
-            }
-            if (-not (Test-Path $framework -PathType Leaf)) {
-              throw "Missing $framework"
-            }
-            $headers = (& llvm-readobj --file-headers $runner | Out-String)
-            if ($LASTEXITCODE -ne 0) { throw 'llvm-readobj failed' }
-            $isMachO = $headers -match 'Format:\s+Mach-O arm64'
-            $isArm64 = $headers -match 'Arch:\s+aarch64'
-            if (-not $isMachO -and -not $isArm64) {
-              throw "Runner is not ARM64 Mach-O:`n$headers"
-            }
-            $plistText = Get-Content $plist -Raw
-            if ($plistText -notmatch '<key>CFBundleExecutable</key>\s*<string>Runner</string>') {
-              throw "Info.plist missing CFBundleExecutable=Runner:`n$plistText"
-            }
-            if ($plistText -notmatch '<key>CFBundleIdentifier</key>') {
-              throw "Info.plist missing CFBundleIdentifier:`n$plistText"
-            }
+          if ($output -match '(?im)\bskip(?:ped)?\b' -or $output -notmatch [regex]::Escape($name)) {
+            throw "package-local junction gate did not execute:`n$output"
           }
+
+      - name: Gate SwiftPM artifact junctions on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $name = 'SwiftPM artifact junction survives repeated resolve and cross-build'
+          $output = (dart test `
+            packages/xcross/test/flutter/build/swiftpm_binary_artifact_preparer_test.dart `
+            --name $name --reporter expanded 2>&1 | Tee-Object -Variable lines |
+            Out-String)
+          if ($LASTEXITCODE -ne 0) {
+            throw "SwiftPM artifact junction gate failed:`n$output"
+          }
+          if ($output -match '(?im)\bskip(?:ped)?\b' -or $output -notmatch [regex]::Escape($name)) {
+            throw "SwiftPM artifact junction gate did not execute:`n$output"
+          }
+
+      - name: Build Flutter example on Linux
+        if: runner.os == 'Linux'
+        shell: bash
+        working-directory: examples/flutter_example
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/xcross-bundle/bin/xcross" flutter build
+
+      - name: Prove deterministic SwiftPM binary warm reuse on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $fixtureRoot = "$env:RUNNER_TEMP\swiftpm-binary-fixture"
+          $sample = "$env:RUNNER_TEMP\swiftpm-binary-sample"
+          dart run packages/xcross/tool/swiftpm_binary_fixture.dart `
+            $fixtureRoot http://127.0.0.1:8123/BinaryFixture.zip
+          $serve = Start-Process python -ArgumentList @(
+            '-m', 'http.server', '8123', '--bind', '127.0.0.1',
+            '--directory', $fixtureRoot
+          ) -PassThru -WindowStyle Hidden
+          try {
+            flutter create --platforms=ios --org com.example.xcrossci `
+              --project-name swiftpm_binary_sample $sample
+            Set-Location $sample
+            $plugin = (Resolve-Path `
+              "$fixtureRoot\binary_fixture_plugin").Path.Replace('\', '/')
+            flutter pub add -- ('binary_fixture_plugin@{path: ' + $plugin + '}')
+            $xcross = "$env:RUNNER_TEMP\xcross-bundle\bin\xcross.exe"
+
+            $firstWatch = [Diagnostics.Stopwatch]::StartNew()
+            & $xcross flutter build --verbose *>&1 |
+              Tee-Object "$env:RUNNER_TEMP\first-build.log"
+            $firstWatch.Stop()
+            if ($LASTEXITCODE -ne 0) { throw 'cold binary fixture build failed' }
+
+            $fingerprints = @(Get-ChildItem `
+              "$env:XCROSS_CACHE_DIR\swiftpm" -Recurse -File `
+              -Filter '.xcross-build-fingerprint')
+            if ($fingerprints.Count -ne 1) {
+              throw "Expected one generated SwiftPM aggregate fingerprint, found $($fingerprints.Count)"
+            }
+            Remove-Item $fingerprints[0].FullName -Force
+
+            $secondWatch = [Diagnostics.Stopwatch]::StartNew()
+            & $xcross flutter build --verbose *>&1 |
+              Tee-Object "$env:RUNNER_TEMP\second-build.log"
+            $secondWatch.Stop()
+            if ($LASTEXITCODE -ne 0) { throw 'warm binary fixture build failed' }
+
+            $first = Get-Content "$env:RUNNER_TEMP\first-build.log" -Raw
+            if ($first -notmatch 'binary target=BinaryFixture operation=download ') {
+              throw 'cold build did not download the deterministic binary artifact'
+            }
+            if ($first -match 'binary target=BinaryFixture operation=(reuse|copy) ') {
+              throw 'cold build reused or copied the deterministic binary artifact'
+            }
+            $second = Get-Content "$env:RUNNER_TEMP\second-build.log" -Raw
+            if ($second -notmatch 'binary target=BinaryFixture operation=reuse ') {
+              throw 'missing binary artifact reuse trace after forced preparation'
+            }
+            if ($second -match 'binary target=BinaryFixture operation=(download|extract|copy) ') {
+              throw 'warm build repeated binary artifact work'
+            }
+            $store = Join-Path $env:XCROSS_CACHE_DIR `
+              'swiftpm\binary-artifacts-v1'
+            $storeBytes = (Get-ChildItem $store -File -Recurse |
+              Measure-Object Length -Sum).Sum
+            function BinaryPhaseMilliseconds([string] $log) {
+              $sum = 0
+              [regex]::Matches($log, 'binary target=BinaryFixture .*?elapsed_ms=(\d+)') |
+                ForEach-Object { $sum += [int64]$_.Groups[1].Value }
+              return $sum
+            }
+            Write-Host "binary fixture cold_phase_ms=$(BinaryPhaseMilliseconds $first)"
+            Write-Host "binary fixture warm_phase_ms=$(BinaryPhaseMilliseconds $second)"
+            Write-Host "binary fixture cold_build_ms=$($firstWatch.ElapsedMilliseconds)"
+            Write-Host "binary fixture warm_build_ms=$($secondWatch.ElapsedMilliseconds)"
+            Write-Host "binary fixture store_bytes=$storeBytes"
+          } finally {
+            if ($serve -and -not $serve.HasExited) {
+              Stop-Process -Id $serve.Id -Force
+              Wait-Process -Id $serve.Id -ErrorAction SilentlyContinue
+            }
+            Set-Location $env:GITHUB_WORKSPACE
+          }
+
+      - name: Build Flutter example on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        working-directory: examples/flutter_example
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & "$env:RUNNER_TEMP\xcross-bundle\bin\xcross.exe" flutter build
+          if ($LASTEXITCODE -ne 0) { throw 'flutter_example build failed' }
 
       - name: Create and build plugin sample on Linux
         if: runner.os == 'Linux'

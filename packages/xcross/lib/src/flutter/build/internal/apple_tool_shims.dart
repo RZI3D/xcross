@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:cli_kit/cli_kit.dart';
@@ -26,6 +27,7 @@ final class AppleToolShimConfig {
     required this.lipo,
     required this.otool,
     required this.installNameTool,
+    required this.xcrun,
     required this.deploymentTarget,
   });
 
@@ -37,6 +39,7 @@ final class AppleToolShimConfig {
   final String lipo;
   final OtoolConfig? otool;
   final String? installNameTool;
+  final String xcrun;
   final String deploymentTarget;
 
   static Future<AppleToolShimConfig> resolve(String deploymentTarget) async {
@@ -57,13 +60,33 @@ final class AppleToolShimConfig {
       lipo: await locateLlvmTool('llvm-lipo'),
       otool: await resolveOtool(),
       installNameTool: await findLlvmTool('llvm-install-name-tool'),
+      xcrun: await resolveXcrun(),
       deploymentTarget: deploymentTarget,
     );
   }
 }
 
+Future<String> resolveXcrun() async {
+  final sibling = p.join(
+    p.dirname(Platform.resolvedExecutable),
+    ProcessRunner.hostExecutableName('xcrun'),
+  );
+  if (File(sibling).existsSync()) return sibling;
+  return ProcessRunner.locateTool('xcrun');
+}
+
 Future<String> resolveHostCompiler(String clang, {bool? windows}) async =>
     (windows ?? Platform.isWindows) ? clang : ProcessRunner.locateTool('cc');
+
+Future<String?> resolveNativeAssetToolForwarder(
+  String executable, {
+  bool? windows,
+  Future<String?> Function()? findInstalled,
+}) async {
+  if (!(windows ?? Platform.isWindows)) return executable;
+  if (p.basename(executable).toLowerCase() == 'xcross.exe') return executable;
+  return (findInstalled ?? () => ProcessRunner.which('xcross.exe'))();
+}
 
 Future<String> _locateArchiver(String clang) async {
   final besideClang = p.join(
@@ -95,8 +118,9 @@ Future<String> locateLlvmTool(String name) async {
 /// Installs the Apple command-line surface needed by Flutter build hooks.
 Future<void> installAppleToolShims(
   String directory,
-  AppleToolShimConfig config,
-) async {
+  AppleToolShimConfig config, {
+  String? toolForwarderExecutable,
+}) async {
   await Directory(directory).create(recursive: true);
   final compilerShim = p.join(
     directory,
@@ -106,69 +130,144 @@ Future<void> installAppleToolShims(
     directory,
     Platform.isWindows ? 'otool.bat' : 'otool',
   );
-  final tools = <String, String>{
-    'clang': compilerShim,
-    'ar': config.archiver,
-    'ld': config.linker,
+  final auxiliaryTools = <String, String>{
     'lipo': config.lipo,
     if (config.otool != null) 'otool': otoolShim,
     if (config.installNameTool case final tool?) 'install_name_tool': tool,
   };
 
   if (Platform.isWindows) {
-    if (config.otool case final otool?) {
-      await File(p.join(directory, 'otool.ps1')).writeAsString(
-        renderPowerShellOtoolShim(
-          tool: otool.executable,
-          usesObjdump: otool.usesObjdump,
-        ),
-      );
-      await _writeWindowsShim(
-        directory,
-        'otool',
-        renderBatchPowerShellShim('otool.ps1'),
-      );
+    await _installWindowsToolShims(
+      directory,
+      config,
+      compilerShim: compilerShim,
+      auxiliaryTools: auxiliaryTools,
+      toolForwarderExecutable: toolForwarderExecutable,
+    );
+    return;
+  }
+
+  await _installUnixToolShims(
+    directory,
+    config,
+    auxiliaryTools: auxiliaryTools,
+    toolForwarderExecutable: toolForwarderExecutable,
+  );
+}
+
+Future<void> _installWindowsToolShims(
+  String directory,
+  AppleToolShimConfig config, {
+  required String compilerShim,
+  required Map<String, String> auxiliaryTools,
+  required String? toolForwarderExecutable,
+}) async {
+  if (toolForwarderExecutable != null) {
+    for (final entry in {
+      'cc': config.clang,
+      'ar': config.archiver,
+      'ld': config.linker,
+    }.entries) {
+      final executable = p.join(directory, '${entry.key}.exe');
+      await File(toolForwarderExecutable).copy(executable);
+      await File('$executable.path').writeAsString(entry.value);
+      if (entry.key == 'cc') {
+        await File('$executable.args').writeAsString(
+          jsonEncode([
+            '-isysroot',
+            config.iosSdk,
+            '-miphoneos-version-min=${config.deploymentTarget}',
+            '-fuse-ld=lld',
+            '--ld-path=${config.linker}',
+            '-Wl,-arch,arm64',
+            '-Wl,-platform_version,ios,${config.deploymentTarget},26.5',
+          ]),
+        );
+      }
     }
-    await File(p.join(directory, 'clang.ps1')).writeAsString(
-      renderPowerShellCompilerShim(
-        iosSdk: config.iosSdk,
-        clang: config.clang,
-        hostCompiler: config.hostCompiler,
-        linker: config.linker,
-        deploymentTarget: config.deploymentTarget,
+    await File(config.xcrun).copy(p.join(directory, 'xcrun.exe'));
+    await File(toolForwarderExecutable).copy(p.join(directory, 'plutil.exe'));
+  }
+
+  if (config.otool case final otool?) {
+    await File(p.join(directory, 'otool.ps1')).writeAsString(
+      renderPowerShellOtoolShim(
+        tool: otool.executable,
+        usesObjdump: otool.usesObjdump,
       ),
     );
     await _writeWindowsShim(
       directory,
-      'clang',
-      renderBatchPowerShellShim('clang.ps1'),
+      'otool',
+      renderBatchPowerShellShim('otool.ps1'),
     );
+  }
+  await File(p.join(directory, 'clang.ps1')).writeAsString(
+    renderPowerShellCompilerShim(
+      iosSdk: config.iosSdk,
+      clang: config.clang,
+      hostCompiler: config.hostCompiler,
+      linker: config.linker,
+      deploymentTarget: config.deploymentTarget,
+    ),
+  );
+  await _writeWindowsShim(
+    directory,
+    'clang',
+    renderBatchPowerShellShim('clang.ps1'),
+  );
+  if (toolForwarderExecutable == null) {
     await _writeWindowsShim(
       directory,
       'cc',
       renderBatchPowerShellShim('clang.ps1'),
     );
-    await File(p.join(directory, 'xcrun.ps1')).writeAsString(
-      renderPowerShellXcrunShim(iosSdk: config.iosSdk, tools: tools),
+    await _writeWindowsShim(
+      directory,
+      'ar',
+      renderBatchToolShim(config.archiver),
     );
     await _writeWindowsShim(
       directory,
-      'xcrun',
-      renderBatchPowerShellShim('xcrun.ps1'),
+      'ld',
+      renderBatchToolShim(config.linker),
     );
-    for (final tool in tools.entries.skip(3)) {
-      if (tool.key != 'otool') {
-        await _writeWindowsShim(
-          directory,
-          tool.key,
-          renderBatchToolShim(tool.value),
-        );
-      }
-    }
-    await _writeWindowsShim(directory, 'codesign', batchCodesignShim);
-    return;
   }
 
+  for (final tool in auxiliaryTools.entries) {
+    if (tool.key != 'otool') {
+      await _writeWindowsShim(
+        directory,
+        tool.key,
+        renderBatchToolShim(tool.value),
+      );
+    }
+  }
+  if (config.installNameTool == null) {
+    await _writeWindowsShim(directory, 'install_name_tool', batchCodesignShim);
+  }
+  await _writeWindowsShim(directory, 'codesign', batchCodesignShim);
+  await File(p.join(directory, 'rsync.ps1')).writeAsString(r'''
+$items = @($args | Where-Object { -not $_.StartsWith('-') -and $_ -ne '.DS_Store/' })
+if ($items.Count -lt 2) { exit 1 }
+$source = $items[$items.Count - 2]
+$destination = $items[$items.Count - 1]
+Copy-Item -LiteralPath $source -Destination $destination -Recurse -Force
+exit 0
+''');
+  await _writeWindowsShim(
+    directory,
+    'rsync',
+    renderBatchPowerShellShim('rsync.ps1'),
+  );
+}
+
+Future<void> _installUnixToolShims(
+  String directory,
+  AppleToolShimConfig config, {
+  required Map<String, String> auxiliaryTools,
+  required String? toolForwarderExecutable,
+}) async {
   if (config.otool case final otool?) {
     await _writeUnixShim(
       directory,
@@ -188,12 +287,16 @@ Future<void> installAppleToolShims(
   );
   await _writeUnixShim(directory, 'clang', compilerScript);
   await _writeUnixShim(directory, 'cc', compilerScript);
-  await _writeUnixShim(
-    directory,
-    'xcrun',
-    renderUnixXcrunShim(iosSdk: config.iosSdk, tools: tools),
-  );
-  for (final tool in tools.entries.skip(3)) {
+  await _writeUnixShim(directory, 'xcrun', renderUnixToolShim(config.xcrun));
+  if (toolForwarderExecutable != null) {
+    await _writeUnixShim(
+      directory,
+      'plutil',
+      renderUnixToolShim(toolForwarderExecutable),
+    );
+  }
+
+  for (final tool in auxiliaryTools.entries) {
     if (tool.key != 'otool') {
       await _writeUnixShim(directory, tool.key, renderUnixToolShim(tool.value));
     }
