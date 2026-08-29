@@ -69,6 +69,9 @@
               runHook postInstall
             '';
           };
+          swiftCompiler = pkgs.writeShellScript "xcross-swiftc" ''
+            exec ${swiftToolchain}/bin/swiftc -use-ld=lld "$@"
+          '';
           runtimeDeps = with pkgs; [
             flutter
             swiftToolchain
@@ -100,7 +103,9 @@
 
               for executable in xcross xcrun; do
                 makeWrapper "$out/lib/xcross/bin/$executable" "$out/bin/$executable" \
-                  --prefix PATH : ${pkgs.lib.makeBinPath runtimeDeps}
+                  --prefix PATH : ${pkgs.lib.makeBinPath runtimeDeps} \
+                  --set SWIFT_EXEC ${swiftCompiler} \
+                  --set SWIFT_EXEC_MANIFEST ${swiftCompiler}
                 cmp "$src/bin/$executable" "$out/lib/xcross/bin/$executable"
               done
               runHook postInstall
@@ -124,6 +129,8 @@
             xz
           ]);
           flutterShellHook = ''
+            export SWIFT_EXEC=${swiftCompiler}
+            export SWIFT_EXEC_MANIFEST=${swiftCompiler}
             export FLUTTER_ROOT="''${XDG_CACHE_HOME:-$HOME/.cache}/xcross/flutter-${pkgs.flutter.version}"
             if [ ! -x "$FLUTTER_ROOT/bin/flutter" ]; then
               rm -rf "$FLUTTER_ROOT"
