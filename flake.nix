@@ -47,6 +47,7 @@
           runtimeDeps = with pkgs; [
             flutter
             swiftPackages.swift-unwrapped
+            swiftPackages.swiftpm
             llvmPackages.clang-unwrapped
             llvmPackages.llvm
             llvmPackages.lld
