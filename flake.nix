@@ -101,6 +101,14 @@
             unzip
             xz
           ]);
+          flutterShellHook = ''
+            export FLUTTER_ROOT="''${XDG_CACHE_HOME:-$HOME/.cache}/xcross/flutter-${pkgs.flutter.version}"
+            if [ ! -x "$FLUTTER_ROOT/bin/flutter" ]; then
+              rm -rf "$FLUTTER_ROOT"
+              mkdir -p "$FLUTTER_ROOT"
+              cp -rs ${pkgs.flutter.sdk or pkgs.flutter}/. "$FLUTTER_ROOT/"
+            fi
+          '';
           smokeCheck = pkgs.runCommand "xcross-smoke-check" {
             nativeBuildInputs = [ xcross ];
           } ''
@@ -112,7 +120,7 @@
             touch "$out"
           '';
         in {
-          inherit pkgs xcross userPackages contributorPackages smokeCheck;
+          inherit pkgs xcross userPackages contributorPackages flutterShellHook smokeCheck;
         };
     in {
       packages = forAllSystems (system:
@@ -140,11 +148,11 @@
         in {
           default = output.pkgs.mkShell {
             packages = output.userPackages;
-            FLUTTER_ROOT = "${output.pkgs.flutter}";
+            shellHook = output.flutterShellHook;
           };
           contributor = output.pkgs.mkShell {
             packages = output.contributorPackages;
-            FLUTTER_ROOT = "${output.pkgs.flutter}";
+            shellHook = output.flutterShellHook;
           };
         });
 
