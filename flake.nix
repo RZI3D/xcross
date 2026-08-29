@@ -15,53 +15,73 @@
     };
   };
 
-  outputs = inputs@{ nixpkgs, ... }:
+  outputs =
+    inputs@{ nixpkgs, ... }:
     let
-      version = "1.3.2";
+      xcrossVersion = "1.3.2";
       swiftVersion = "6.3.3";
-      systems = [ "x86_64-linux" "aarch64-linux" ];
-      forAllSystems = nixpkgs.lib.genAttrs systems;
-      releaseFor = system:
-        if system == "x86_64-linux"
-        then inputs.xcross-linux-x64
-        else inputs.xcross-linux-arm64;
-      pkgsFor = system: import nixpkgs {
-        inherit system;
-        overlays = [
-          (final: prev: {
-            python313 = prev.python313.override {
-              packageOverrides = pyFinal: pyPrev: {
-                pyimg4 = pyPrev.pyimg4.overridePythonAttrs (old: {
-                  pythonRelaxDeps = (old.pythonRelaxDeps or [ ]) ++ [ "asn1" ];
-                  doCheck = false;
-                  meta = old.meta // { broken = false; };
-                });
-              };
-            };
-            python313Packages = final.python313.pkgs;
-          })
-        ];
+
+      systems = [
+        "x86_64-linux"
+        "aarch64-linux"
+      ];
+
+      eachSystem = nixpkgs.lib.genAttrs systems;
+
+      xcrossReleases = {
+        x86_64-linux = inputs.xcross-linux-x64;
+        aarch64-linux = inputs.xcross-linux-arm64;
       };
-      outputsFor = system:
+
+      swiftToolchainSources = {
+        x86_64-linux = {
+          url = "https://download.swift.org/swift-${swiftVersion}-release/ubuntu2404/swift-${swiftVersion}-RELEASE/swift-${swiftVersion}-RELEASE-ubuntu24.04.tar.gz";
+          hash = "sha256-2oJypf3czWWxUp7Q5S4EUm4urdQjfVjWIg7+uXPGzRk=";
+        };
+        aarch64-linux = {
+          url = "https://download.swift.org/swift-${swiftVersion}-release/ubuntu2404-aarch64/swift-${swiftVersion}-RELEASE/swift-${swiftVersion}-RELEASE-ubuntu24.04-aarch64.tar.gz";
+          hash = "sha256-RxJjlUKWU/p2jTcGVYduwbaPapXHiE9eTxeXABQcm38=";
+        };
+      };
+
+      pymobiledeviceOverlay = final: previous: {
+        python313 = previous.python313.override {
+          packageOverrides = pythonFinal: pythonPrevious: {
+            pyimg4 = pythonPrevious.pyimg4.overridePythonAttrs (old: {
+              pythonRelaxDeps = (old.pythonRelaxDeps or [ ]) ++ [ "asn1" ];
+              doCheck = false;
+              meta = old.meta // {
+                broken = false;
+              };
+            });
+          };
+        };
+        python313Packages = final.python313.pkgs;
+      };
+
+      packagesFor = system:
+        import nixpkgs {
+          inherit system;
+          overlays = [ pymobiledeviceOverlay ];
+        };
+
+      environmentFor = system:
         let
-          pkgs = pkgsFor system;
-          swiftToolchainSource = {
-            x86_64-linux = {
-              url = "https://download.swift.org/swift-${swiftVersion}-release/ubuntu2404/swift-${swiftVersion}-RELEASE/swift-${swiftVersion}-RELEASE-ubuntu24.04.tar.gz";
-              hash = "sha256-2oJypf3czWWxUp7Q5S4EUm4urdQjfVjWIg7+uXPGzRk=";
-            };
-            aarch64-linux = {
-              url = "https://download.swift.org/swift-${swiftVersion}-release/ubuntu2404-aarch64/swift-${swiftVersion}-RELEASE/swift-${swiftVersion}-RELEASE-ubuntu24.04-aarch64.tar.gz";
-              hash = "sha256-RxJjlUKWU/p2jTcGVYduwbaPapXHiE9eTxeXABQcm38=";
-            };
-          }.${system};
+          pkgs = packagesFor system;
+          xcrossRelease = xcrossReleases.${system};
+          swiftToolchainSource = swiftToolchainSources.${system};
+
           swiftToolchain = pkgs.stdenv.mkDerivation {
             pname = "swift-toolchain";
             version = swiftVersion;
-            src = pkgs.fetchurl { inherit (swiftToolchainSource) url hash; };
+            src = pkgs.fetchurl {
+              inherit (swiftToolchainSource) url hash;
+            };
+
             dontConfigure = true;
             dontBuild = true;
             dontFixup = true;
+
             installPhase = ''
               runHook preInstall
               mkdir -p "$out"
@@ -69,24 +89,27 @@
               runHook postInstall
             '';
           };
+
           swiftCompiler = pkgs.writeShellScript "xcross-swiftc" ''
             exec ${swiftToolchain}/bin/swiftc -use-ld=lld "$@"
           '';
-          runtimeDeps = with pkgs; [
-            flutter
+
+          runtimePackages = [
+            pkgs.flutter
             swiftToolchain
-            python313
-            python313Packages.pymobiledevice3
-            usbmuxd
-            libimobiledevice
-            usbutils
-            pkg-config
-            gnupg
+            pkgs.python313
+            pkgs.python313Packages.pymobiledevice3
+            pkgs.usbmuxd
+            pkgs.libimobiledevice
+            pkgs.usbutils
+            pkgs.pkg-config
+            pkgs.gnupg
           ];
+
           xcross = pkgs.stdenvNoCC.mkDerivation {
             pname = "xcross";
-            inherit version;
-            src = releaseFor system;
+            version = xcrossVersion;
+            src = xcrossRelease;
 
             nativeBuildInputs = [ pkgs.makeWrapper ];
 
@@ -103,7 +126,7 @@
 
               for executable in xcross xcrun; do
                 makeWrapper "$out/lib/xcross/bin/$executable" "$out/bin/$executable" \
-                  --prefix PATH : ${pkgs.lib.makeBinPath runtimeDeps} \
+                  --prefix PATH : ${pkgs.lib.makeBinPath runtimePackages} \
                   --set SWIFT_EXEC ${swiftCompiler} \
                   --set SWIFT_EXEC_MANIFEST ${swiftCompiler} \
                   --set CC ${swiftToolchain}/bin/clang \
@@ -121,21 +144,25 @@
               platforms = systems;
             };
           };
-          userPackages = [ xcross ] ++ runtimeDeps;
-          contributorPackages = userPackages ++ (with pkgs; [
-            dart
-            cmake
-            ninja
-            git
-            unzip
-            xz
-          ]);
-          flutterShellHook = ''
+
+          userPackages = [ xcross ] ++ runtimePackages;
+
+          contributorPackages = userPackages ++ [
+            pkgs.dart
+            pkgs.cmake
+            pkgs.ninja
+            pkgs.git
+            pkgs.unzip
+            pkgs.xz
+          ];
+
+          shellHook = ''
             export SWIFT_EXEC=${swiftCompiler}
             export SWIFT_EXEC_MANIFEST=${swiftCompiler}
             export CC=${swiftToolchain}/bin/clang
             export CXX=${swiftToolchain}/bin/clang++
             export FLUTTER_ROOT="''${XDG_CACHE_HOME:-$HOME/.cache}/xcross/flutter-${pkgs.flutter.version}"
+
             if [ ! -x "$FLUTTER_ROOT/bin/flutter" ]; then
               rm -rf "$FLUTTER_ROOT"
               mkdir -p "$FLUTTER_ROOT"
@@ -143,55 +170,76 @@
               chmod -R u+w "$FLUTTER_ROOT"
             fi
           '';
+
           smokeCheck = pkgs.runCommand "xcross-smoke-check" {
             nativeBuildInputs = [ xcross ];
           } ''
             test -x ${xcross}/bin/xcross
             test -x ${xcross}/bin/xcrun
             test -d ${xcross}/lib/xcross/lib
-            cmp ${releaseFor system}/bin/xcross ${xcross}/lib/xcross/bin/xcross
-            cmp ${releaseFor system}/bin/xcrun ${xcross}/lib/xcross/bin/xcrun
+            cmp ${xcrossRelease}/bin/xcross ${xcross}/lib/xcross/bin/xcross
+            cmp ${xcrossRelease}/bin/xcrun ${xcross}/lib/xcross/bin/xcrun
             touch "$out"
           '';
-        in {
-          inherit pkgs xcross userPackages contributorPackages flutterShellHook smokeCheck;
+        in
+        {
+          inherit
+            pkgs
+            xcross
+            userPackages
+            contributorPackages
+            shellHook
+            smokeCheck
+            ;
         };
-    in {
-      packages = forAllSystems (system:
-        let output = outputsFor system;
-        in {
-          inherit (output) xcross;
-          default = output.xcross;
-        });
+    in
+    {
+      packages = eachSystem (
+        system:
+        let
+          environment = environmentFor system;
+        in
+        {
+          inherit (environment) xcross;
+          default = environment.xcross;
+        }
+      );
 
-      apps = forAllSystems (system:
-        let output = outputsFor system;
-        in {
-          xcross = {
+      apps = eachSystem (
+        system:
+        let
+          environment = environmentFor system;
+          app = {
             type = "app";
-            program = "${output.xcross}/bin/xcross";
+            program = "${environment.xcross}/bin/xcross";
           };
-          default = {
-            type = "app";
-            program = "${output.xcross}/bin/xcross";
-          };
-        });
+        in
+        {
+          xcross = app;
+          default = app;
+        }
+      );
 
-      devShells = forAllSystems (system:
-        let output = outputsFor system;
-        in {
-          default = output.pkgs.mkShell {
-            packages = output.userPackages;
-            shellHook = output.flutterShellHook;
+      devShells = eachSystem (
+        system:
+        let
+          environment = environmentFor system;
+        in
+        {
+          default = environment.pkgs.mkShell {
+            packages = environment.userPackages;
+            inherit (environment) shellHook;
           };
-          contributor = output.pkgs.mkShell {
-            packages = output.contributorPackages;
-            shellHook = output.flutterShellHook;
-          };
-        });
 
-      checks = forAllSystems (system: {
-        smoke = (outputsFor system).smokeCheck;
+          contributor = environment.pkgs.mkShell {
+            packages = environment.contributorPackages;
+            inherit (environment) shellHook;
+          };
+        }
+      );
+
+      checks = eachSystem (system: {
+        smoke = (environmentFor system).smokeCheck;
       });
     };
 }
