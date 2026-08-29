@@ -65,7 +65,8 @@ jobs:
             done
             xcross --help | grep -F "Usage: xcross"
             xcross --version | grep -F "xcross 1.3.2"
-            xcrun 2>&1 | grep -F "xcrun: no Darwin SDK installed"
+            xcrun_output=$(xcrun 2>&1 || true)
+            grep -F "xcrun: no Darwin SDK installed" <<<"$xcrun_output"
           '
 
       - name: Verify Dart workspace
