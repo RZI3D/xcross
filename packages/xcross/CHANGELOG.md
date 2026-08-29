@@ -1,3 +1,9 @@
+## 1.3.2
+
+- Stabilize Flutter iOS builds on Windows with native-asset tool shims, `xcrun` compatibility, shorter SwiftPM workspaces, reusable staged builds, and resilient transitive binary-artifact recovery.
+- Simplify SwiftPM artifact handling and improve release installation, tool-output parsing, linker argument forwarding, and cross-platform integration coverage.
+- Move examples to the dedicated examples repository and update package dependencies.
+
 ## 1.3.1
 
 - Fix Flutter iOS native-asset builds on Windows by using the resolved LLVM Clang as the `cc` host compiler and falling back from unavailable `llvm-otool` to `llvm-objdump` with compatible Mach-O inspection arguments.
