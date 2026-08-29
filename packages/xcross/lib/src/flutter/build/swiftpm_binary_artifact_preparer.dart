@@ -318,123 +318,220 @@ final class SwiftPmBinaryArtifactPreparer {
     required String destination,
     Duration timeout = const Duration(minutes: 2),
     StartBinaryCopy? startProcess,
-  }) => _withDestinationLock(destination, () async {
-    if (!await _completeEntryContaining(source)) {
-      throw FileSystemException(
-        'SwiftPM binary artifact source is not a complete store entry',
-        source,
-      );
-    }
-    if (FileSystemEntity.typeSync(destination, followLinks: false) !=
-        FileSystemEntityType.notFound) {
-      if (await validatesMaterializedBinaryArtifact(
-        source: source,
-        destination: destination,
-      )) {
-        return SwiftPmBinaryArtifactPublication.reused;
-      }
-      throw FileSystemException(
-        'SwiftPM binary artifact destination already exists but is not the expected artifact',
-        destination,
-      );
-    }
+  }) => _withDestinationLock(
+    destination,
+    () => _materializeBinaryArtifact(
+      source: source,
+      destination: destination,
+      timeout: timeout,
+      startProcess: startProcess ?? _startRobocopy,
+    ),
+  );
+
+  Future<SwiftPmBinaryArtifactPublication> _materializeBinaryArtifact({
+    required String source,
+    required String destination,
+    required Duration timeout,
+    required StartBinaryCopy startProcess,
+  }) async {
+    await _validateMaterializationSource(source);
+    final existing = await _existingMaterialization(source, destination);
+    if (existing != null) return existing;
+
     final parent = Directory(p.dirname(destination));
     await parent.create(recursive: true);
     final temporary = await parent.createTemp('.x-');
-
     var cleanupTemporary = true;
     try {
-      final start =
-          startProcess ??
-          (executable, arguments) async =>
-              _IoBinaryCopyProcess(await Process.start(executable, arguments));
-      final process = await start('robocopy', [
-        _processPath(source),
-        _processPath(temporary.path),
-
-        '/E',
-        '/R:0',
-        '/W:0',
-        '/MT:8',
-        '/NFL',
-        '/NDL',
-        '/NJH',
-        '/NJS',
-        '/NP',
-      ]);
-      final output = _DiagnosticCollector(process.stdout);
-      final error = _DiagnosticCollector(process.stderr);
-      int exitCode;
-      try {
-        exitCode = await process.exitCode.timeout(timeout);
-      } on TimeoutException {
-        var killed = false;
-        const grace = Duration(milliseconds: 100);
-        var exitedDuringGrace = false;
-        for (var attempt = 0; attempt < 3 && !exitedDuringGrace; attempt++) {
-          killed = process.kill() || killed;
-          try {
-            await process.exitCode.timeout(grace);
-            exitedDuringGrace = true;
-          } on TimeoutException {
-            continue;
-          }
-        }
-        await output.stop();
-        await error.stop();
-        if (!exitedDuringGrace) {
-          cleanupTemporary = false;
-          await File(
-            p.join(temporary.path, '.xcross-live-copy-quarantine'),
-          ).writeAsString('retained: process ownership cannot be revalidated');
-        }
-        throw FileSystemException(
-          'SwiftPM binary artifact copy timed out after $timeout; '
-          'kill returned $killed; process '
-          '${exitedDuringGrace ? 'exited' : 'did not exit'} during $grace grace period: '
-          '${_boundedDiagnostic(error.text, output.text)}',
-          source,
-        );
-      }
-      await output.done;
-      await error.done;
-      if (exitCode > 7) {
-        throw FileSystemException(
-          'SwiftPM binary artifact copy failed with exit code $exitCode: '
-          '${_boundedDiagnostic(error.text, output.text)}',
-          source,
-        );
-      }
-      if (!await _sameArtifactTree(source, temporary.path)) {
-        throw FileSystemException(
-          'SwiftPM binary artifact copy completed with incomplete content',
-          temporary.path,
-        );
-      }
-      try {
-        final publication = SwiftPmBinaryArtifactPublication.published();
-        await temporary.rename(destination);
-        await _writeMaterializationMarker(
-          destination,
-          source,
-          publication.nonce!,
-        );
-        return publication;
-      } on FileSystemException {
-        if (!await validatesMaterializedBinaryArtifact(
-          source: source,
-          destination: destination,
-        )) {
-          rethrow;
-        }
-        return SwiftPmBinaryArtifactPublication.reused;
-      }
+      await _copyBinaryArtifact(
+        source: source,
+        temporary: temporary,
+        timeout: timeout,
+        startProcess: startProcess,
+        retainTemporary: () => cleanupTemporary = false,
+      );
+      return await _publishMaterialization(
+        source: source,
+        destination: destination,
+        temporary: temporary,
+      );
     } finally {
       if (cleanupTemporary && temporary.existsSync()) {
         await temporary.delete(recursive: true);
       }
     }
-  });
+  }
+
+  Future<void> _validateMaterializationSource(String source) async {
+    if (await _completeEntryContaining(source)) return;
+    throw FileSystemException(
+      'SwiftPM binary artifact source is not a complete store entry',
+      source,
+    );
+  }
+
+  Future<SwiftPmBinaryArtifactPublication?> _existingMaterialization(
+    String source,
+    String destination,
+  ) async {
+    if (FileSystemEntity.typeSync(destination, followLinks: false) ==
+        FileSystemEntityType.notFound) {
+      return null;
+    }
+    if (await validatesMaterializedBinaryArtifact(
+      source: source,
+      destination: destination,
+    )) {
+      return SwiftPmBinaryArtifactPublication.reused;
+    }
+    throw FileSystemException(
+      'SwiftPM binary artifact destination already exists but is not the expected artifact',
+      destination,
+    );
+  }
+
+  static Future<BinaryCopyProcess> _startRobocopy(
+    String executable,
+    List<String> arguments,
+  ) async => _IoBinaryCopyProcess(await Process.start(executable, arguments));
+
+  Future<void> _copyBinaryArtifact({
+    required String source,
+    required Directory temporary,
+    required Duration timeout,
+    required StartBinaryCopy startProcess,
+    required void Function() retainTemporary,
+  }) async {
+    final process = await startProcess('robocopy', [
+      _processPath(source),
+      _processPath(temporary.path),
+      '/E',
+      '/R:0',
+      '/W:0',
+      '/MT:8',
+      '/NFL',
+      '/NDL',
+      '/NJH',
+      '/NJS',
+      '/NP',
+    ]);
+    final output = _DiagnosticCollector(process.stdout);
+    final error = _DiagnosticCollector(process.stderr);
+    final exitCode = await _awaitCopyProcess(
+      process: process,
+      output: output,
+      error: error,
+      source: source,
+      temporary: temporary,
+      timeout: timeout,
+      retainTemporary: retainTemporary,
+    );
+    if (exitCode > 7) {
+      throw FileSystemException(
+        'SwiftPM binary artifact copy failed with exit code $exitCode: '
+        '${_boundedDiagnostic(error.text, output.text)}',
+        source,
+      );
+    }
+    if (!await _sameArtifactTree(source, temporary.path)) {
+      throw FileSystemException(
+        'SwiftPM binary artifact copy completed with incomplete content',
+        temporary.path,
+      );
+    }
+  }
+
+  Future<int> _awaitCopyProcess({
+    required BinaryCopyProcess process,
+    required _DiagnosticCollector output,
+    required _DiagnosticCollector error,
+    required String source,
+    required Directory temporary,
+    required Duration timeout,
+    required void Function() retainTemporary,
+  }) async {
+    final int exitCode;
+    try {
+      exitCode = await process.exitCode.timeout(timeout);
+    } on TimeoutException {
+      await _handleCopyTimeout(
+        process: process,
+        output: output,
+        error: error,
+        source: source,
+        temporary: temporary,
+        timeout: timeout,
+        retainTemporary: retainTemporary,
+      );
+      rethrow;
+    }
+    await output.done;
+    await error.done;
+    return exitCode;
+  }
+
+  Future<void> _handleCopyTimeout({
+    required BinaryCopyProcess process,
+    required _DiagnosticCollector output,
+    required _DiagnosticCollector error,
+    required String source,
+    required Directory temporary,
+    required Duration timeout,
+    required void Function() retainTemporary,
+  }) async {
+    var killed = false;
+    const grace = Duration(milliseconds: 100);
+    var exitedDuringGrace = false;
+    for (var attempt = 0; attempt < 3 && !exitedDuringGrace; attempt++) {
+      killed = process.kill() || killed;
+      try {
+        await process.exitCode.timeout(grace);
+        exitedDuringGrace = true;
+      } on TimeoutException {
+        continue;
+      }
+    }
+    await output.stop();
+    await error.stop();
+    if (!exitedDuringGrace) {
+      retainTemporary();
+      await File(
+        p.join(temporary.path, '.xcross-live-copy-quarantine'),
+      ).writeAsString('retained: process ownership cannot be revalidated');
+    }
+    throw FileSystemException(
+      'SwiftPM binary artifact copy timed out after $timeout; '
+      'kill returned $killed; process '
+      '${exitedDuringGrace ? 'exited' : 'did not exit'} during $grace grace period: '
+      '${_boundedDiagnostic(error.text, output.text)}',
+      source,
+    );
+  }
+
+  Future<SwiftPmBinaryArtifactPublication> _publishMaterialization({
+    required String source,
+    required String destination,
+    required Directory temporary,
+  }) async {
+    try {
+      final publication = SwiftPmBinaryArtifactPublication.published();
+      await temporary.rename(destination);
+      await _writeMaterializationMarker(
+        destination,
+        source,
+        publication.nonce!,
+      );
+      return publication;
+    } on FileSystemException {
+      if (!await validatesMaterializedBinaryArtifact(
+        source: source,
+        destination: destination,
+      )) {
+        rethrow;
+      }
+      return SwiftPmBinaryArtifactPublication.reused;
+    }
+  }
 
   Future<bool> validatesBinaryArtifactDestination({
     required String source,
@@ -846,7 +943,7 @@ final class SwiftPmBinaryArtifactPreparer {
   static int _uint32(List<int> bytes, int offset) =>
       _uint16(bytes, offset) | (_uint16(bytes, offset + 2) << 16);
 
-  _InspectedArchive _inspect(
+  _InspectedXcFrameworkArchive _inspect(
     Archive archive,
     SwiftPmRemoteBinaryTarget target,
   ) {
@@ -859,7 +956,7 @@ final class SwiftPmBinaryArtifactPreparer {
     var expandedBytes = 0;
     final names = <String>{};
     final foldedNames = <String, String>{};
-    final entries = <_SafeEntry>[];
+    final entries = <_ValidatedArchiveEntry>[];
     for (final entry in archive.files) {
       expandedBytes += entry.size;
       if (expandedBytes > _maxExpandedBytes) {
@@ -882,7 +979,7 @@ final class SwiftPmBinaryArtifactPreparer {
         );
       }
       foldedNames[folded] = name;
-      entries.add(_SafeEntry(entry, name));
+      entries.add(_ValidatedArchiveEntry(entry, name));
     }
 
     final plistName = '${target.name}.xcframework/Info.plist';
@@ -907,7 +1004,7 @@ final class SwiftPmBinaryArtifactPreparer {
         'SwiftPM XCFramework AvailableLibraries must be an array',
       );
     }
-    final libraries = <_Library>[];
+    final libraries = <_XcFrameworkLibrary>[];
     for (final value in librariesValue) {
       libraries.add(_parseLibrary(value));
     }
@@ -936,7 +1033,7 @@ final class SwiftPmBinaryArtifactPreparer {
         'symlinks',
       );
     }
-    return _InspectedArchive(
+    return _InspectedXcFrameworkArchive(
       entries: entries,
       plist: plist,
       library: library,
@@ -947,7 +1044,7 @@ final class SwiftPmBinaryArtifactPreparer {
   }
 
   Future<void> _extractSelected(
-    _InspectedArchive inspected,
+    _InspectedXcFrameworkArchive inspected,
     Directory artifact,
   ) async {
     final reducedPlist = <Object?, Object?>{
@@ -979,7 +1076,7 @@ final class SwiftPmBinaryArtifactPreparer {
     }
   }
 
-  void _validateDeclaredPaths(_Library library, Directory artifact) {
+  void _validateDeclaredPaths(_XcFrameworkLibrary library, Directory artifact) {
     for (final declared in {
       'LibraryPath': library.libraryPath,
       if (library.headersPath != null) 'HeadersPath': library.headersPath!,
@@ -1036,7 +1133,7 @@ final class SwiftPmBinaryArtifactPreparer {
     return Map<Object?, Object?>.from(value);
   }
 
-  static _Library _parseLibrary(Object? value) {
+  static _XcFrameworkLibrary _parseLibrary(Object? value) {
     if (value is! Map) {
       throw FlutterBuildError(
         'SwiftPM XCFramework library metadata must be a dictionary',
@@ -1059,7 +1156,7 @@ final class SwiftPmBinaryArtifactPreparer {
         'SwiftPM XCFramework SupportedArchitectures must be a string array',
       );
     }
-    return _Library(
+    return _XcFrameworkLibrary(
       raw: raw,
       identifier: _safeRelativePath(identifier, 'LibraryIdentifier'),
       libraryPath: libraryPath,
@@ -1240,15 +1337,15 @@ final class _DiagnosticCollector {
   }
 }
 
-final class _SafeEntry {
-  const _SafeEntry(this.file, this.name);
+final class _ValidatedArchiveEntry {
+  const _ValidatedArchiveEntry(this.file, this.name);
 
   final ArchiveFile file;
   final String name;
 }
 
-final class _Library {
-  const _Library({
+final class _XcFrameworkLibrary {
+  const _XcFrameworkLibrary({
     required this.raw,
     required this.identifier,
     required this.libraryPath,
@@ -1269,8 +1366,8 @@ final class _Library {
   final List<String> architectures;
 }
 
-final class _InspectedArchive {
-  const _InspectedArchive({
+final class _InspectedXcFrameworkArchive {
+  const _InspectedXcFrameworkArchive({
     required this.entries,
     required this.plist,
     required this.library,
@@ -1279,9 +1376,9 @@ final class _InspectedArchive {
     required this.materializedBytes,
   });
 
-  final List<_SafeEntry> entries;
+  final List<_ValidatedArchiveEntry> entries;
   final Map<Object?, Object?> plist;
-  final _Library library;
+  final _XcFrameworkLibrary library;
   final String artifactDirectoryName;
   final String selectedPrefix;
   final int materializedBytes;

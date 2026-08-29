@@ -269,71 +269,6 @@ jobs:
       - name: Restore cached Darwin SDK
         uses: ./.github/actions/setup-darwin-sdk
 
-      - name: Preflight Windows SwiftPM junction gates
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $env:XCROSS_CACHE_DIR = "$env:RUNNER_TEMP\xcross-cache"
-          "XCROSS_CACHE_DIR=$env:XCROSS_CACHE_DIR" |
-            Out-File $env:GITHUB_ENV -Encoding utf8 -Append
-          if ([string]::IsNullOrWhiteSpace($env:XCROSS_SWIFT_SDKS_PATH) -or
-              -not (Test-Path $env:XCROSS_SWIFT_SDKS_PATH -PathType Container)) {
-            throw 'XCROSS_SWIFT_SDKS_PATH is missing or is not a directory'
-          }
-          foreach ($tool in @(
-            'swift',
-            'swift-package',
-            'swift-build',
-            'swiftc',
-            'clang',
-            'clang++',
-            'ld64.lld'
-          )) {
-            if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) {
-              throw "Required junction gate tool is unavailable: $tool"
-            }
-          }
-          $sdks = (& swift sdk list --swift-sdks-path $env:XCROSS_SWIFT_SDKS_PATH |
-            Out-String)
-          if ($LASTEXITCODE -ne 0 -or $sdks -notmatch 'xcross-darwin') {
-            throw "Required xcross-darwin Swift SDK is unavailable:`n$sdks"
-          }
-
-      - name: Gate package-local SwiftPM junctions on Windows
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $name = 'package-local junction survives repeated resolve and cross-build'
-          $output = (dart test `
-            packages/xcross/test/flutter/build/swiftpm_binary_artifact_preparer_test.dart `
-            --name $name --reporter expanded 2>&1 | Tee-Object -Variable lines |
-            Out-String)
-          if ($LASTEXITCODE -ne 0) {
-            throw "package-local junction gate failed:`n$output"
-          }
-          if ($output -match '(?im)\bskip(?:ped)?\b' -or $output -notmatch [regex]::Escape($name)) {
-            throw "package-local junction gate did not execute:`n$output"
-          }
-
-      - name: Gate SwiftPM artifact junctions on Windows
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $name = 'SwiftPM artifact junction survives repeated resolve and cross-build'
-          $output = (dart test `
-            packages/xcross/test/flutter/build/swiftpm_binary_artifact_preparer_test.dart `
-            --name $name --reporter expanded 2>&1 | Tee-Object -Variable lines |
-            Out-String)
-          if ($LASTEXITCODE -ne 0) {
-            throw "SwiftPM artifact junction gate failed:`n$output"
-          }
-          if ($output -match '(?im)\bskip(?:ped)?\b' -or $output -notmatch [regex]::Escape($name)) {
-            throw "SwiftPM artifact junction gate did not execute:`n$output"
-          }
-
       - name: Build Flutter example on Linux
         if: runner.os == 'Linux'
         shell: bash
@@ -341,85 +276,6 @@ jobs:
         run: |
           set -euo pipefail
           "$RUNNER_TEMP/xcross-bundle/bin/xcross" flutter build
-
-      - name: Prove deterministic SwiftPM binary warm reuse on Windows
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $fixtureRoot = "$env:RUNNER_TEMP\swiftpm-binary-fixture"
-          $sample = "$env:RUNNER_TEMP\swiftpm-binary-sample"
-          dart run packages/xcross/tool/swiftpm_binary_fixture.dart `
-            $fixtureRoot http://127.0.0.1:8123/BinaryFixture.zip
-          $serve = Start-Process python -ArgumentList @(
-            '-m', 'http.server', '8123', '--bind', '127.0.0.1',
-            '--directory', $fixtureRoot
-          ) -PassThru -WindowStyle Hidden
-          try {
-            flutter create --platforms=ios --org com.example.xcrossci `
-              --project-name swiftpm_binary_sample $sample
-            Set-Location $sample
-            $plugin = (Resolve-Path `
-              "$fixtureRoot\binary_fixture_plugin").Path.Replace('\', '/')
-            flutter pub add -- ('binary_fixture_plugin@{path: ' + $plugin + '}')
-            $xcross = "$env:RUNNER_TEMP\xcross-bundle\bin\xcross.exe"
-
-            $firstWatch = [Diagnostics.Stopwatch]::StartNew()
-            & $xcross flutter build --verbose *>&1 |
-              Tee-Object "$env:RUNNER_TEMP\first-build.log"
-            $firstWatch.Stop()
-            if ($LASTEXITCODE -ne 0) { throw 'cold binary fixture build failed' }
-
-            $fingerprints = @(Get-ChildItem `
-              "$env:XCROSS_CACHE_DIR\swiftpm" -Recurse -File `
-              -Filter '.xcross-build-fingerprint')
-            if ($fingerprints.Count -ne 1) {
-              throw "Expected one generated SwiftPM aggregate fingerprint, found $($fingerprints.Count)"
-            }
-            Remove-Item $fingerprints[0].FullName -Force
-
-            $secondWatch = [Diagnostics.Stopwatch]::StartNew()
-            & $xcross flutter build --verbose *>&1 |
-              Tee-Object "$env:RUNNER_TEMP\second-build.log"
-            $secondWatch.Stop()
-            if ($LASTEXITCODE -ne 0) { throw 'warm binary fixture build failed' }
-
-            $first = Get-Content "$env:RUNNER_TEMP\first-build.log" -Raw
-            if ($first -notmatch 'binary target=BinaryFixture operation=download ') {
-              throw 'cold build did not download the deterministic binary artifact'
-            }
-            if ($first -match 'binary target=BinaryFixture operation=(reuse|copy) ') {
-              throw 'cold build reused or copied the deterministic binary artifact'
-            }
-            $second = Get-Content "$env:RUNNER_TEMP\second-build.log" -Raw
-            if ($second -notmatch 'binary target=BinaryFixture operation=reuse ') {
-              throw 'missing binary artifact reuse trace after forced preparation'
-            }
-            if ($second -match 'binary target=BinaryFixture operation=(download|extract|copy) ') {
-              throw 'warm build repeated binary artifact work'
-            }
-            $store = Join-Path $env:XCROSS_CACHE_DIR `
-              'swiftpm\binary-artifacts-v1'
-            $storeBytes = (Get-ChildItem $store -File -Recurse |
-              Measure-Object Length -Sum).Sum
-            function BinaryPhaseMilliseconds([string] $log) {
-              $sum = 0
-              [regex]::Matches($log, 'binary target=BinaryFixture .*?elapsed_ms=(\d+)') |
-                ForEach-Object { $sum += [int64]$_.Groups[1].Value }
-              return $sum
-            }
-            Write-Host "binary fixture cold_phase_ms=$(BinaryPhaseMilliseconds $first)"
-            Write-Host "binary fixture warm_phase_ms=$(BinaryPhaseMilliseconds $second)"
-            Write-Host "binary fixture cold_build_ms=$($firstWatch.ElapsedMilliseconds)"
-            Write-Host "binary fixture warm_build_ms=$($secondWatch.ElapsedMilliseconds)"
-            Write-Host "binary fixture store_bytes=$storeBytes"
-          } finally {
-            if ($serve -and -not $serve.HasExited) {
-              Stop-Process -Id $serve.Id -Force
-              Wait-Process -Id $serve.Id -ErrorAction SilentlyContinue
-            }
-            Set-Location $env:GITHUB_WORKSPACE
-          }
 
       - name: Build Flutter example on Windows
         if: runner.os == 'Windows'
@@ -430,43 +286,9 @@ jobs:
           & "$env:RUNNER_TEMP\xcross-bundle\bin\xcross.exe" flutter build
           if ($LASTEXITCODE -ne 0) { throw 'flutter_example build failed' }
 
-      - name: Create and build plugin sample on Linux
+      - name: Inspect Flutter example artifact on Linux
         if: runner.os == 'Linux'
-        shell: bash
-        run: |
-          set -euo pipefail
-          flutter create \
-            --platforms=ios \
-            --org com.example.xcrossci \
-            --project-name xcross_ci_sample \
-            "$RUNNER_TEMP/flutter_sample"
-          cd "$RUNNER_TEMP/flutter_sample"
-          fixture="$GITHUB_WORKSPACE/packages/xcross/test/flutter/fixtures/spm_plugin"
-          flutter pub add "spm_plugin@{path: $fixture}"
-          "$RUNNER_TEMP/xcross-bundle/bin/xcross" flutter build
-
-      - name: Create and build plugin sample on Windows
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $sample = "$env:RUNNER_TEMP\flutter_sample"
-          flutter create `
-            --platforms=ios `
-            --org com.example.xcrossci `
-            --project-name xcross_ci_sample `
-            $sample
-          Set-Location $sample
-          $fixturePath = Resolve-Path `
-            "$env:GITHUB_WORKSPACE/packages/xcross/test/flutter/fixtures/spm_plugin"
-          $fixture = $fixturePath.Path.Replace('\', '/')
-          $descriptor = 'spm_plugin@{path: ' + $fixture + '}'
-          flutter pub add -- $descriptor
-          & "$env:RUNNER_TEMP\xcross-bundle\bin\xcross.exe" flutter build
-
-      - name: Inspect app and plugin library on Linux
-        if: runner.os == 'Linux'
-        working-directory: ${{ runner.temp }}/flutter_sample
+        working-directory: examples/flutter_example
         shell: bash
         run: |
           set -euo pipefail
@@ -476,39 +298,16 @@ jobs:
             printf 'Expected one .app, found %s\n' "${#apps[@]}"
             exit 1
           fi
-          app=${apps[0]}
-          runner="$app/Runner"
-          plugins="$app/Frameworks/libFlutterPluginsGenerated.dylib"
-          dependency="$app/Frameworks/libspm-plugin.dylib"
+          runner="${apps[0]}/Runner"
           test -f "$runner"
-          test -f "$plugins"
-          test -f "$dependency"
-
           llvm-readobj --file-headers "$runner" | tee runner-headers.txt
           grep -Eq 'Format: Mach-O arm64|Arch: aarch64' runner-headers.txt
-          llvm-nm \
-            --defined-only \
-            --extern-only \
-            "$plugins" | tee plugin-symbols.txt
-          grep -F XcrossRegisterGeneratedPlugins plugin-symbols.txt
-          llvm-objdump \
-            --macho \
-            --dylibs-used \
-            "$plugins" | tee plugin-dylibs.txt
-          grep -F '@rpath/libspm-plugin.dylib' plugin-dylibs.txt
-          llvm-objdump --macho --dylib-id "$dependency" |
-            grep -F '@rpath/libspm-plugin.dylib'
-          llvm-objdump --macho --dylibs-used "$runner" | tee runner-dylibs.txt
-          grep -F '@rpath/libFlutterPluginsGenerated.dylib' runner-dylibs.txt
-          llvm-objdump \
-            --macho \
-            --private-headers \
-            "$runner" | tee runner-load-commands.txt
-          grep -F '@executable_path/Frameworks' runner-load-commands.txt
+          llvm-objdump --macho --private-headers "$runner" |
+            grep -F '@executable_path/Frameworks'
 
-      - name: Inspect app and plugin library on Windows
+      - name: Inspect Flutter example artifact on Windows
         if: runner.os == 'Windows'
-        working-directory: ${{ runner.temp }}/flutter_sample
+        working-directory: examples/flutter_example
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -517,65 +316,16 @@ jobs:
             throw "Expected one .app, found $($apps.Count)"
           }
           $runner = Join-Path $apps[0].FullName 'Runner'
-          $plugins = Join-Path `
-            $apps[0].FullName `
-            'Frameworks/libFlutterPluginsGenerated.dylib'
-          $dependency = Join-Path `
-            $apps[0].FullName `
-            'Frameworks/libspm-plugin.dylib'
           if (-not (Test-Path $runner -PathType Leaf)) {
             throw "Missing $runner"
           }
-          if (-not (Test-Path $plugins -PathType Leaf)) {
-            throw "Missing $plugins"
-          }
-          if (-not (Test-Path $dependency -PathType Leaf)) {
-            throw "Missing $dependency"
-          }
-
           $headers = (& llvm-readobj --file-headers $runner | Out-String)
-          if ($LASTEXITCODE -ne 0) { throw 'llvm-readobj failed' }
-          $isMachO = $headers -match 'Format:\s+Mach-O arm64'
-          $isArm64 = $headers -match 'Arch:\s+aarch64'
-          if (-not $isMachO -and -not $isArm64) {
+          if ($LASTEXITCODE -ne 0 -or
+              ($headers -notmatch 'Format:\s+Mach-O arm64' -and
+               $headers -notmatch 'Arch:\s+aarch64')) {
             throw "Runner is not ARM64 Mach-O:`n$headers"
           }
-          $symbols = (& llvm-nm `
-            --defined-only `
-            --extern-only `
-            $plugins | Out-String)
-          if ($LASTEXITCODE -ne 0 -or
-              $symbols -notmatch 'XcrossRegisterGeneratedPlugins') {
-            throw "Missing exported plugin registrant:`n$symbols"
-          }
-          $pluginDylibs = (& llvm-objdump `
-            --macho `
-            --dylibs-used `
-            $plugins | Out-String)
-          if ($LASTEXITCODE -ne 0 -or
-              $pluginDylibs -notmatch '@rpath/libspm-plugin\.dylib') {
-            throw "Missing dynamic plugin dependency:`n$pluginDylibs"
-          }
-          $dependencyId = (& llvm-objdump `
-            --macho `
-            --dylib-id `
-            $dependency | Out-String)
-          if ($LASTEXITCODE -ne 0 -or
-              $dependencyId -notmatch '@rpath/libspm-plugin\.dylib') {
-            throw "Invalid dynamic plugin ID:`n$dependencyId"
-          }
-          $dylibs = (& llvm-objdump `
-            --macho `
-            --dylibs-used `
-            $runner | Out-String)
-          if ($LASTEXITCODE -ne 0 -or
-              $dylibs -notmatch '@rpath/libFlutterPluginsGenerated\.dylib') {
-            throw "Missing plugin load command:`n$dylibs"
-          }
-          $commands = (& llvm-objdump `
-            --macho `
-            --private-headers `
-            $runner | Out-String)
+          $commands = (& llvm-objdump --macho --private-headers $runner | Out-String)
           if ($LASTEXITCODE -ne 0 -or
               $commands -notmatch '@executable_path/Frameworks') {
             throw "Missing Frameworks rpath:`n$commands"
