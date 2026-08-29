@@ -51,15 +51,17 @@ jobs:
         run: nix flake check --print-build-logs
 
       - name: Create consumer flake
-        working-directory: examples/flutter_example
         env:
           SYSTEM: ${{ matrix.system }}
         run: |
+          mkdir -p "$RUNNER_TEMP/xcross-consumer"
+          cp -R examples/flutter_example/. "$RUNNER_TEMP/xcross-consumer/"
+          cd "$RUNNER_TEMP/xcross-consumer"
           cat > flake.nix <<'EOF'
           {
             inputs = {
               nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-              xcross.url = "path:../..";
+              xcross.url = "path:__XCROSS_SOURCE__";
             };
 
             outputs = { nixpkgs, xcross, ... }:
@@ -73,12 +75,14 @@ jobs:
               };
           }
           EOF
-          sed -i "s/__SYSTEM__/$SYSTEM/" flake.nix
-          git add --intent-to-add flake.nix
+          sed -i \
+            -e "s/__SYSTEM__/$SYSTEM/" \
+            -e "s|__XCROSS_SOURCE__|$GITHUB_WORKSPACE|" \
+            flake.nix
           nix flake lock
 
       - name: Export consumer environment
-        working-directory: examples/flutter_example
+        working-directory: ${{ runner.temp }}/xcross-consumer
         run: |
           nix develop --command bash -euo pipefail -c '
             printf "XCROSS_NIX_PATH=%s\n" "$PATH" >> "$GITHUB_ENV"
@@ -91,7 +95,7 @@ jobs:
           PATH: ${{ env.XCROSS_NIX_PATH }}
 
       - name: Build Flutter example
-        working-directory: examples/flutter_example
+        working-directory: ${{ runner.temp }}/xcross-consumer
         run: |
           nix develop --command bash -euo pipefail -c '
             xcross flutter build
