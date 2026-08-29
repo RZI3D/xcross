@@ -89,11 +89,13 @@ jobs:
           '
 
       - name: Restore cached Darwin SDK
+        if: matrix.system == 'x86_64-linux'
         uses: ./.github/actions/setup-darwin-sdk
         env:
           PATH: ${{ env.XCROSS_NIX_PATH }}
 
       - name: Build Flutter example
+        if: matrix.system == 'x86_64-linux'
         working-directory: ${{ runner.temp }}/xcross-consumer
         run: |
           nix develop --command bash -euo pipefail -c '
