@@ -106,7 +106,8 @@
             if [ ! -x "$FLUTTER_ROOT/bin/flutter" ]; then
               rm -rf "$FLUTTER_ROOT"
               mkdir -p "$FLUTTER_ROOT"
-              cp -rs ${pkgs.flutter.sdk or pkgs.flutter}/. "$FLUTTER_ROOT/"
+              cp -rL ${pkgs.flutter.sdk or pkgs.flutter}/. "$FLUTTER_ROOT/"
+              chmod -R u+w "$FLUTTER_ROOT"
             fi
           '';
           smokeCheck = pkgs.runCommand "xcross-smoke-check" {
