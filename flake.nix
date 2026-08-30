@@ -59,13 +59,15 @@
         python313Packages = final.python313.pkgs;
       };
 
-      packagesFor = system:
+      packagesFor =
+        system:
         import nixpkgs {
           inherit system;
           overlays = [ pymobiledeviceOverlay ];
         };
 
-      environmentFor = system:
+      environmentFor =
+        system:
         let
           pkgs = packagesFor system;
           xcrossRelease = xcrossReleases.${system};
@@ -77,16 +79,32 @@
             src = pkgs.fetchurl {
               inherit (swiftToolchainSource) url hash;
             };
+            nativeBuildInputs = [ pkgs.autoPatchelfHook ];
+            buildInputs = [
+              pkgs.stdenv.cc.cc.lib
+              pkgs.zlib
+              pkgs.ncurses
+              pkgs.libxml2_13
+              pkgs.libedit
+              pkgs.curl
+              pkgs.libuuid
+              pkgs.python312 # note: needs to be 3.12 specifically, matching libpython3.12.so.1.0
+              pkgs.sqlite
+            ];
 
             dontConfigure = true;
             dontBuild = true;
-            dontFixup = true;
+            autoPatchelfIgnoreMissingDeps = [ "libedit.so.2" ]; # TODO: find actual packages
 
             installPhase = ''
               runHook preInstall
-              mkdir -p "$out"
-              cp -r usr/* "$out/"
+              mkdir -p $out
+              cp -r usr/* $out/
               runHook postInstall
+            '';
+            postFixup = ''
+              find $out -type f -executable -exec \
+                patchelf --replace-needed libedit.so.2 libedit.so.0 {} \; 2>/dev/null || true
             '';
           };
 
@@ -161,16 +179,19 @@
             export CXX=${swiftToolchain}/bin/clang++
           '';
 
-          smokeCheck = pkgs.runCommand "xcross-smoke-check" {
-            nativeBuildInputs = [ xcross ];
-          } ''
-            test -x ${xcross}/bin/xcross
-            test -x ${xcross}/bin/xcrun
-            test -d ${xcross}/lib/xcross/lib
-            cmp ${xcrossRelease}/bin/xcross ${xcross}/lib/xcross/bin/xcross
-            cmp ${xcrossRelease}/bin/xcrun ${xcross}/lib/xcross/bin/xcrun
-            touch "$out"
-          '';
+          smokeCheck =
+            pkgs.runCommand "xcross-smoke-check"
+              {
+                nativeBuildInputs = [ xcross ];
+              }
+              ''
+                test -x ${xcross}/bin/xcross
+                test -x ${xcross}/bin/xcrun
+                test -d ${xcross}/lib/xcross/lib
+                cmp ${xcrossRelease}/bin/xcross ${xcross}/lib/xcross/bin/xcross
+                cmp ${xcrossRelease}/bin/xcrun ${xcross}/lib/xcross/bin/xcrun
+                touch "$out"
+              '';
         in
         {
           inherit
