@@ -113,7 +113,8 @@ jobs:
         working-directory: ${{ runner.temp }}/xcross-consumer
         run: |
           nix develop --command bash -euo pipefail -c '
-            cd "$GITHUB_WORKSPACE"
+            cp -R "$GITHUB_WORKSPACE" "$RUNNER_TEMP/xcross-source"
+            cd "$RUNNER_TEMP/xcross-source"
             dart pub get
             cd packages/xcross
             dart run tool/build_xcross.dart
@@ -124,6 +125,6 @@ jobs:
         working-directory: ${{ runner.temp }}/xcross-consumer
         run: |
           nix develop --command bash -euo pipefail -c '
-            "$GITHUB_WORKSPACE/packages/xcross/build/cli/linux_x64/bundle/bin/xcross" flutter build
+            "$RUNNER_TEMP/xcross-source/packages/xcross/build/cli/linux_x64/bundle/bin/xcross" flutter build
             test "$(find build/xcross-ios -maxdepth 1 -type d -name "*.app" | wc -l)" -eq 1
           '
