@@ -116,8 +116,8 @@ Both installers download the latest release, install it, **add xcross to your `P
 
 ### Nix
 
-Use the xcross development shell from your project's flake without cloning this
-repository:
+Add xcross to your project's development shell alongside your chosen Flutter
+package. Flutter needs a writable SDK cache because its tools update files at runtime:
 
 ```nix
 {
@@ -133,13 +133,26 @@ repository:
     in {
       devShells.${system}.default = pkgs.mkShell {
         inputsFrom = [ xcross.devShells.${system}.default ];
+        packages = [ pkgs.flutter ];
+
+        shellHook = xcross.devShells.${system}.default.shellHook + ''
+          export FLUTTER_ROOT="''${XDG_CACHE_HOME:-$HOME/.cache}/xcross/flutter-${pkgs.flutter.version}"
+
+          if [ ! -x "$FLUTTER_ROOT/bin/flutter" ]; then
+            rm -rf "$FLUTTER_ROOT"
+            mkdir -p "$FLUTTER_ROOT"
+            cp -rL ${pkgs.flutter.sdk or pkgs.flutter}/. "$FLUTTER_ROOT/"
+            chmod -R u+w "$FLUTTER_ROOT"
+          fi
+        '';
       };
     };
 }
 ```
 
-Run `nix develop`, then use `xcross` normally. `aarch64-linux` is also
-supported.
+Run `nix develop`, then use `xcross` normally. Pin a separate Nixpkgs input and
+replace `pkgs.flutter` if your project needs a different Flutter version. xcross
+does not provide Flutter or Dart. `aarch64-linux` is also supported.
 
 ### Verifying a release
 

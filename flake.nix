@@ -95,7 +95,6 @@
           '';
 
           runtimePackages = [
-            pkgs.flutter
             swiftToolchain
             pkgs.python313
             pkgs.python313Packages.pymobiledevice3
@@ -148,7 +147,6 @@
           userPackages = [ xcross ] ++ runtimePackages;
 
           contributorPackages = userPackages ++ [
-            pkgs.dart
             pkgs.cmake
             pkgs.ninja
             pkgs.git
@@ -161,14 +159,6 @@
             export SWIFT_EXEC_MANIFEST=${swiftCompiler}
             export CC=${swiftToolchain}/bin/clang
             export CXX=${swiftToolchain}/bin/clang++
-            export FLUTTER_ROOT="''${XDG_CACHE_HOME:-$HOME/.cache}/xcross/flutter-${pkgs.flutter.version}"
-
-            if [ ! -x "$FLUTTER_ROOT/bin/flutter" ]; then
-              rm -rf "$FLUTTER_ROOT"
-              mkdir -p "$FLUTTER_ROOT"
-              cp -rL ${pkgs.flutter.sdk or pkgs.flutter}/. "$FLUTTER_ROOT/"
-              chmod -R u+w "$FLUTTER_ROOT"
-            fi
           '';
 
           smokeCheck = pkgs.runCommand "xcross-smoke-check" {
