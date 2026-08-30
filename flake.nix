@@ -94,7 +94,7 @@
 
             dontConfigure = true;
             dontBuild = true;
-            autoPatchelfIgnoreMissingDeps = [ "libedit.so.2" ]; # TODO: find actual packages
+            autoPatchelfIgnoreMissingDeps = [ "libedit.so.2" ];
 
             installPhase = ''
               runHook preInstall
@@ -165,6 +165,8 @@
           userPackages = [ xcross ] ++ runtimePackages;
 
           contributorPackages = userPackages ++ [
+            pkgs.dart
+            pkgs.clang
             pkgs.cmake
             pkgs.ninja
             pkgs.git
