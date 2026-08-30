@@ -122,27 +122,21 @@ Future<void> installAppleToolShims(
   String directory,
   AppleToolShimConfig config, {
   String? toolForwarderExecutable,
+  bool? windows,
 }) async {
+  final isWindows = windows ?? Platform.isWindows;
   await Directory(directory).create(recursive: true);
-  final compilerShim = p.join(
-    directory,
-    Platform.isWindows ? 'clang.bat' : 'clang',
-  );
-  final otoolShim = p.join(
-    directory,
-    Platform.isWindows ? 'otool.bat' : 'otool',
-  );
+  final otoolShim = p.join(directory, isWindows ? 'otool.bat' : 'otool');
   final auxiliaryTools = <String, String>{
     'lipo': config.lipo,
     if (config.otool != null) 'otool': otoolShim,
     if (config.installNameTool case final tool?) 'install_name_tool': tool,
   };
 
-  if (Platform.isWindows) {
+  if (isWindows) {
     await _installWindowsToolShims(
       directory,
       config,
-      compilerShim: compilerShim,
       auxiliaryTools: auxiliaryTools,
       toolForwarderExecutable: toolForwarderExecutable,
     );
@@ -160,12 +154,12 @@ Future<void> installAppleToolShims(
 Future<void> _installWindowsToolShims(
   String directory,
   AppleToolShimConfig config, {
-  required String compilerShim,
   required Map<String, String> auxiliaryTools,
   required String? toolForwarderExecutable,
 }) async {
   if (toolForwarderExecutable != null) {
     for (final entry in {
+      'clang': config.clang,
       'cc': config.clang,
       'ar': config.archiver,
       'ld': config.linker,
@@ -173,7 +167,7 @@ Future<void> _installWindowsToolShims(
       final executable = p.join(directory, '${entry.key}.exe');
       await File(toolForwarderExecutable).copy(executable);
       await File('$executable.path').writeAsString(entry.value);
-      if (entry.key == 'cc') {
+      if (entry.key == 'clang' || entry.key == 'cc') {
         await File('$executable.args').writeAsString(
           jsonEncode([
             '-isysroot',

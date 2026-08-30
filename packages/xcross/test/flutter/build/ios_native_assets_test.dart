@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:path/path.dart' as p;
@@ -164,6 +165,48 @@ void main() {
       ),
       isNull,
     );
+  });
+
+  test('Windows exposes a recognizable clang executable forwarder', () async {
+    final tmp = await Directory.systemTemp.createTemp('apple_shims_test-');
+    try {
+      final forwarder = File(p.join(tmp.path, 'xcross.exe'))
+        ..writeAsStringSync('forwarder');
+      final xcrun = File(p.join(tmp.path, 'source-xcrun.exe'))
+        ..writeAsStringSync('xcrun');
+      final shims = Directory(p.join(tmp.path, 'shims'));
+
+      await installAppleToolShims(
+        shims.path,
+        AppleToolShimConfig(
+          iosSdk: r'C:\SDK\iPhoneOS.sdk',
+          clang: r'C:\LLVM\clang.exe',
+          hostCompiler: r'C:\LLVM\clang.exe',
+          archiver: r'C:\LLVM\llvm-ar.exe',
+          linker: r'C:\LLVM\ld64.lld.exe',
+          deploymentTarget: '13.0',
+          lipo: r'C:\LLVM\llvm-lipo.exe',
+          otool: null,
+          installNameTool: null,
+          xcrun: xcrun.path,
+        ),
+        toolForwarderExecutable: forwarder.path,
+        windows: true,
+      );
+
+      final clang = File(p.join(shims.path, 'clang.exe'));
+      expect(clang.existsSync(), isTrue);
+      expect(
+        File('${clang.path}.path').readAsStringSync(),
+        r'C:\LLVM\clang.exe',
+      );
+      expect(
+        jsonDecode(File('${clang.path}.args').readAsStringSync()),
+        contains(r'--ld-path=C:\LLVM\ld64.lld.exe'),
+      );
+    } finally {
+      await tmp.delete(recursive: true);
+    }
   });
 
   test('Apple tool shims expose configured tools including xcrun', () async {

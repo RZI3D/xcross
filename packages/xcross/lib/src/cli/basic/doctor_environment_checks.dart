@@ -15,20 +15,17 @@ typedef DoctorLocateTool =
       Iterable<String> extraDirectories,
     });
 typedef DoctorSingleCheck = Future<DoctorCheck> Function();
+typedef DoctorResolveTool = Future<String> Function();
 
 abstract final class DoctorEnvironmentChecks {
-  static const _requiredTools = [
-    'swift',
-    'clang',
-    'clang++',
-    'llvm-ar',
-    'ld64.lld',
-  ];
+  static const _requiredTools = ['swift', 'clang++', 'llvm-ar'];
 
   static Future<List<DoctorCheck>> host() => hostWithSeams(
     operatingSystem: Platform.operatingSystem,
     windows: Platform.isWindows,
     locateTool: ProcessRunner.which,
+    iosClang: _resolveIosClang,
+    iosLinker: _resolveIosLinker,
     darwinSdk: _darwinSdk,
   );
 
@@ -36,12 +33,16 @@ abstract final class DoctorEnvironmentChecks {
     required String operatingSystem,
     required bool windows,
     required DoctorLocateTool locateTool,
+    required DoctorResolveTool iosClang,
+    required DoctorResolveTool iosLinker,
     required DoctorSingleCheck darwinSdk,
   }) async {
     final checks = <DoctorCheck>[_hostPlatform(operatingSystem)];
     for (final tool in _requiredTools) {
       checks.add(await _tool(tool, windows: windows, locateTool: locateTool));
     }
+    checks.add(await _buildTool('iOS clang', iosClang));
+    checks.add(await _buildTool('iOS linker', iosLinker));
     checks.add(await darwinSdk());
     return checks;
   }
@@ -67,7 +68,6 @@ abstract final class DoctorEnvironmentChecks {
     final path = await locateTool(
       name,
       windows: windows,
-      accept: name == 'ld64.lld' ? DarwinSdk.usableLd64Lld : null,
       extraDirectories: DarwinSdk.llvmToolDirs(),
     );
     return path == null
@@ -76,6 +76,29 @@ abstract final class DoctorEnvironmentChecks {
             'Not found. Run `xcross setup` after installing Swift.',
           )
         : DoctorCheck.success(name, 'Found', path: path);
+  }
+
+  static Future<DoctorCheck> _buildTool(
+    String name,
+    DoctorResolveTool resolve,
+  ) async {
+    try {
+      return DoctorCheck.success(name, 'Ready', path: await resolve());
+    } on Object catch (error) {
+      return DoctorCheck.failure(name, error.toString());
+    }
+  }
+
+  static Future<String> _resolveIosClang() {
+    final sdk = DarwinSdk.current();
+    if (sdk == null) throw StateError('Darwin SDK is not installed.');
+    return DarwinSdk.resolveDarwinClang(sdk);
+  }
+
+  static Future<String> _resolveIosLinker() {
+    final sdk = DarwinSdk.current();
+    if (sdk == null) throw StateError('Darwin SDK is not installed.');
+    return DarwinSdk.resolveLd64Lld(sdk);
   }
 
   static Future<DoctorCheck> flutterTool() =>

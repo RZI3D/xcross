@@ -169,6 +169,8 @@ void main() {
         requested.add(name);
         return 'C:\\Tools\\$name.exe';
       },
+      iosClang: () async => r'C:\Program Files\LLVM\bin\clang.exe',
+      iosLinker: () async => r'C:\Program Files\LLVM\bin\ld64.lld.exe',
       darwinSdk: () async => const DoctorCheck.success(
         'Darwin SDK',
         'Installed',
@@ -176,9 +178,42 @@ void main() {
       ),
     );
 
-    expect(requested, ['swift', 'clang', 'clang++', 'llvm-ar', 'ld64.lld']);
+    expect(requested, ['swift', 'clang++', 'llvm-ar']);
     expect(checks.first.status, DoctorStatus.success);
+    expect(
+      checks.firstWhere((check) => check.name == 'iOS clang').path,
+      r'C:\Program Files\LLVM\bin\clang.exe',
+    );
+    expect(
+      checks.firstWhere((check) => check.name == 'iOS linker').path,
+      r'C:\Program Files\LLVM\bin\ld64.lld.exe',
+    );
     expect(checks.where((check) => check.path != null), hasLength(6));
+  });
+
+  test('host checks report an unusable iOS compiler clearly', () async {
+    final checks = await DoctorEnvironmentChecks.hostWithSeams(
+      operatingSystem: 'windows',
+      windows: true,
+      locateTool:
+          (name, {windows, accept, extraDirectories = const []}) async =>
+              'C:\\Tools\\$name.exe',
+      iosClang: () async => throw StateError('No clang that can target iOS.'),
+      iosLinker: () async => r'C:\LLVM\bin\ld64.lld.exe',
+      darwinSdk: () async =>
+          const DoctorCheck.success('Darwin SDK', 'Installed'),
+    );
+
+    expect(
+      checks.firstWhere((check) => check.name == 'iOS clang'),
+      isA<DoctorCheck>()
+          .having((check) => check.status, 'status', DoctorStatus.failure)
+          .having(
+            (check) => check.message,
+            'message',
+            contains('No clang that can target iOS.'),
+          ),
+    );
   });
 
   test('Windows Flutter checks require the Flutter launcher', () async {
