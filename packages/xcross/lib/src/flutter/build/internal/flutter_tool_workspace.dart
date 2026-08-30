@@ -28,6 +28,10 @@ final class FlutterToolWorkspace {
     final cache = p.join(root, 'bin', 'cache');
     await Directory(cache).create(recursive: true);
     await _link(p.join(root, 'packages'), p.join(flutterRoot, 'packages'));
+    final sdkInternal = p.join(flutterRoot, 'bin', 'internal');
+    if (Directory(sdkInternal).existsSync()) {
+      await _overlay(sdkInternal, p.join(root, 'bin', 'internal'));
+    }
 
     final sdkCache = p.join(flutterRoot, 'bin', 'cache');
     if (Directory(sdkCache).existsSync()) {
@@ -89,6 +93,7 @@ final class FlutterToolWorkspace {
       final name = p.basename(entity.path);
       if (skip.contains(name)) continue;
       final target = p.join(destination, name);
+      await Directory(destination).create(recursive: true);
       if (entity is File) {
         await entity.copy(target);
       } else {

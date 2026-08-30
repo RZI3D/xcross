@@ -57,6 +57,12 @@ void main() {
           ).resolveSymbolicLinks(),
         );
         expect(
+          File(
+            p.join(workspace.flutterRoot, 'bin', 'internal', 'engine.version'),
+          ).readAsStringSync(),
+          'engine-hash\n',
+        );
+        expect(
           Directory(
             p.join(
               workspace.flutterRoot,
