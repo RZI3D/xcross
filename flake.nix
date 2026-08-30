@@ -225,7 +225,6 @@
           };
 
           userPackages = [ xcross ] ++ runtimePackages;
-          userPackagesGit = [ xcross-git ] ++ runtimePackages;
 
           contributorPackages = userPackages ++ [
             pkgs.dart
@@ -262,9 +261,7 @@
           inherit
             pkgs
             xcross
-            xcross-git
             userPackages
-            userPackagesGit
             contributorPackages
             shellHook
             smokeCheck
@@ -278,7 +275,7 @@
           environment = environmentFor system;
         in
         {
-          inherit (environment) xcross xcross-git;
+          inherit (environment) xcross;
           default = environment.xcross;
         }
       );
@@ -291,14 +288,9 @@
             type = "app";
             program = "${environment.xcross}/bin/xcross";
           };
-          app-git = {
-            type = "app";
-            program = "${environment.xcross-git}/bin/xcross";
-          };
         in
         {
           xcross = app;
-          xcross-git = app-git;
           default = app;
         }
       );
@@ -311,10 +303,6 @@
         {
           default = environment.pkgs.mkShell {
             packages = environment.userPackages;
-            inherit (environment) shellHook;
-          };
-          git = environment.pkgs.mkShell {
-            packages = environment.userPackagesGit;
             inherit (environment) shellHook;
           };
           contributor = environment.pkgs.mkShell {
