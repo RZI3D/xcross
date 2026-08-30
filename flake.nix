@@ -2,7 +2,7 @@
   description = "xcross Linux development environment";
 
   inputs = {
-    nixpkgs.url = "github:r-ryantm/nixpkgs/376b94add7951eb8c87c6670e72ac4f35a1368d3";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
     xcross-linux-x64 = {
       url = "https://github.com/arxdeus/xcross/releases/download/v1.3.2/xcross-linux-x64.tar.gz";
