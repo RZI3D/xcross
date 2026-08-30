@@ -109,13 +109,20 @@
           };
 
           swiftCompiler = pkgs.writeShellScript "xcross-swiftc" ''
-            exec ${swiftToolchain}/bin/swiftc -use-ld=lld "$@"
+            export LIBRARY_PATH="${pkgs.stdenv.cc.libc}/lib:${pkgs.stdenv.cc.cc.lib}/lib''${LIBRARY_PATH:+:$LIBRARY_PATH}"
+            export C_INCLUDE_PATH="${pkgs.stdenv.cc.libc.dev}/include''${C_INCLUDE_PATH:+:$C_INCLUDE_PATH}"
+            exec ${swiftToolchain}/bin/swiftc -use-ld=lld \
+              -Xclang-linker --gcc-toolchain=${pkgs.gcc.cc} \
+              -Xclang-linker -B${pkgs.stdenv.cc.libc}/lib \
+              "$@"
           '';
 
           runtimePackages = [
             swiftToolchain
             pkgs.python313
             pkgs.python313Packages.pymobiledevice3
+            pkgs.llvmPackages_21.lld
+            pkgs.llvmPackages_21.llvm
             pkgs.usbmuxd
             pkgs.libimobiledevice
             pkgs.usbutils
