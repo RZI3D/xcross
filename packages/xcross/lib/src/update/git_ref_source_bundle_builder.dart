@@ -6,17 +6,22 @@ import 'package:xcross/src/update/git_update_ref_resolver.dart';
 import 'package:xcross/src/update/internal/update_process.dart';
 import 'package:xcross/src/update/update_progress.dart';
 
+typedef TempDirectoryModifiedAt = DateTime Function(Directory directory);
+
 final class GitRefSourceBundleBuilder {
   GitRefSourceBundleBuilder({
     RunGitProcess? run,
     CreateTempDirectory? createTempDirectory,
     DeleteDirectory? deleteDirectory,
     Directory? systemTempDirectory,
+    TempDirectoryModifiedAt? tempDirectoryModifiedAt,
   }) : _run = run ?? runUpdateProcess,
        _createTempDirectory =
            createTempDirectory ?? _defaultCreateTempDirectory,
        _deleteDirectory = deleteDirectory ?? _defaultDeleteDirectory,
-       _systemTempDirectory = systemTempDirectory ?? Directory.systemTemp;
+       _systemTempDirectory = systemTempDirectory ?? Directory.systemTemp,
+       _tempDirectoryModifiedAt =
+           tempDirectoryModifiedAt ?? _defaultTempDirectoryModifiedAt;
 
   static const repoUrl = GitUpdateRefResolver.repoUrl;
 
@@ -24,6 +29,10 @@ final class GitRefSourceBundleBuilder {
   final CreateTempDirectory _createTempDirectory;
   final DeleteDirectory _deleteDirectory;
   final Directory _systemTempDirectory;
+  final TempDirectoryModifiedAt _tempDirectoryModifiedAt;
+
+  static const _tempDirectoryPrefix = 'xcross-update-source-';
+  static const _minimumStaleAge = Duration(minutes: 10);
 
   Future<T> build<T>({
     required GitUpdateRef ref,
@@ -37,7 +46,7 @@ final class GitRefSourceBundleBuilder {
     }
 
     await _deleteStaleTempDirectories();
-    final tempDirectory = await _createTempDirectory('xcross-update-source-');
+    final tempDirectory = await _createTempDirectory(_tempDirectoryPrefix);
     final progress = UpdateProgress('Source', UpdatePhases.source.length);
     try {
       final repoDirectory = Directory(p.join(tempDirectory.path, 'xcross'));
@@ -146,13 +155,16 @@ final class GitRefSourceBundleBuilder {
   }
 
   Future<void> _deleteStaleTempDirectories() async {
+    final now = DateTime.now();
     try {
       await for (final entry in _systemTempDirectory.list(followLinks: false)) {
         if (entry is! Directory ||
-            !p.basename(entry.path).startsWith('xcross-')) {
+            !p.basename(entry.path).startsWith(_tempDirectoryPrefix)) {
           continue;
         }
         try {
+          final modifiedAt = _tempDirectoryModifiedAt(entry);
+          if (now.difference(modifiedAt) < _minimumStaleAge) continue;
           await entry.delete(recursive: true);
         } on Object {
           continue;
@@ -162,6 +174,9 @@ final class GitRefSourceBundleBuilder {
       return;
     }
   }
+
+  static DateTime _defaultTempDirectoryModifiedAt(Directory directory) =>
+      directory.statSync().modified;
 
   static Future<Directory> _defaultCreateTempDirectory(String prefix) =>
       Directory.systemTemp.createTemp(prefix);

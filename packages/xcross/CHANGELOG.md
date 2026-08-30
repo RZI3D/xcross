@@ -1,3 +1,10 @@
+## 1.3.4
+
+- Add `xcross clean` to clear project-local native asset and SwiftPM build caches while preserving shared caches and unrelated build output.
+- Expand `xcross doctor` with Windows iOS tool checks and remediation guidance.
+- Prevent source-update cleanup from deleting active temporary directories owned by concurrent xcross operations.
+- Update the examples repository reference.
+
 ## 1.3.3
 
 - Add `xcross doctor` with cross-platform checks and remediation guidance for required and optional tooling.

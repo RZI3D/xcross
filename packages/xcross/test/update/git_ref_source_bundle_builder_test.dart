@@ -20,13 +20,17 @@ Future<List<String>> _captureAsync(Future<void> Function() body) async {
 
 void main() {
   group('GitRefSourceBundleBuilder.build', () {
-    test('deletes xcross temp directories before cloning', () async {
+    test('deletes only stale source-update temp directories', () async {
       final scratch = _createScratchDirectory();
       final systemTemp = Directory(p.join(scratch.path, 'tmp'))
         ..createSync(recursive: true);
-      final stale = Directory(p.join(systemTemp.path, 'xcross-abandoned'))
-        ..createSync();
-      final unrelated = Directory(p.join(systemTemp.path, 'other-abandoned'))
+      final stale = Directory(
+        p.join(systemTemp.path, 'xcross-update-source-abandoned'),
+      )..createSync();
+      final active = Directory(
+        p.join(systemTemp.path, 'xcross-update-source-active'),
+      )..createSync();
+      final unrelated = Directory(p.join(systemTemp.path, 'xcross-self-update'))
         ..createSync();
       final staging = Directory(p.join(scratch.path, 'staging'));
       final repo = Directory(p.join(staging.path, 'xcross'));
@@ -59,6 +63,9 @@ void main() {
             Future.value(staging..createSync(recursive: true)),
         deleteDirectory: _deleteDirectorySync,
         systemTempDirectory: systemTemp,
+        tempDirectoryModifiedAt: (directory) => directory.path == stale.path
+            ? DateTime.now().subtract(const Duration(hours: 1))
+            : DateTime.now(),
       );
 
       await builder.build<void>(
@@ -72,6 +79,7 @@ void main() {
       );
 
       expect(staleWasDeletedBeforeClone, isTrue);
+      expect(active.existsSync(), isTrue);
       expect(unrelated.existsSync(), isTrue);
     });
 
