@@ -117,6 +117,7 @@
 
           runtimePackages = [
             swiftToolchain
+            pkgs.llvmPackages_21.clang
             pkgs.llvmPackages_21.llvm
             pkgs.llvmPackages_21.lld
             pkgs.git
