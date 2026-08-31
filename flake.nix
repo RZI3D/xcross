@@ -121,8 +121,12 @@
             swiftToolchain
             pkgs.python313
             pkgs.python313Packages.pymobiledevice3
+
+            pkgs.llvmPackages_21.clang
             pkgs.llvmPackages_21.lld
             pkgs.llvmPackages_21.llvm
+            pkgs.git
+
             pkgs.usbmuxd
             pkgs.libimobiledevice
             pkgs.usbutils
