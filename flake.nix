@@ -173,68 +173,6 @@
             };
           };
 
-          xcross-git = pkgs.buildDartApplication {
-            pname = "xcross";
-            version = "git";
-            src = inputs.self;
-
-            packageRoot = "packages/xcross";
-            autoPubspecLock = ./pubspec.lock;
-
-            dontDartInstallCache = true;
-
-            buildPhase = ''
-              cd "$NIX_BUILD_TOP/source/packages/xcross"
-              runHook preBuild
-              dart run \
-                "-DXCROSS_VERSION=git" \
-                "-DXCROSS_RELEASED=false" \
-                tool/build_xcross.dart
-              runHook postBuild
-            '';
-
-            installPhase = ''
-              cd "$NIX_BUILD_TOP/source/packages/xcross"
-              runHook preInstall
-
-              arch=${if pkgs.stdenv.hostPlatform.isAarch64 then "linux_arm64" else "linux_x64"}
-              bundle=build/cli/$arch/bundle
-              test -d "$bundle"
-
-              # Manually create pubcache so nix doesnt crash out
-              mkdir -p $pubcache
-
-              mkdir -p "$out/bin" "$out/lib/xcross"
-              cp -a "$bundle/bin" "$bundle/lib" "$out/lib/xcross/"
-
-              if [ ! -e "$out/lib/xcross/bin/xcrun" ]; then
-                cp -a build/xcrun/bundle/bin/xcrun "$out/lib/xcross/bin/"
-              fi
-
-              for executable in xcross xcrun; do
-                makeWrapper "$out/lib/xcross/bin/$executable" "$out/bin/$executable" \
-                  --prefix PATH : ${pkgs.lib.makeBinPath runtimePackages} \
-                  --set SWIFT_EXEC ${swiftCompiler} \
-                  --set SWIFT_EXEC_MANIFEST ${swiftCompiler} \
-                  --set CC ${swiftToolchain}/bin/clang \
-                  --set CXX ${swiftToolchain}/bin/clang++
-              done
-
-              runHook postInstall
-            '';
-
-            nativeBuildInputs = [ pkgs.makeWrapper ];
-            # runtimePackages / swift via the wrappers above
-
-            meta = {
-              description = "Build, run, and hot-reload Flutter iOS apps from Linux (built from source)";
-              homepage = "https://github.com/arxdeus/xcross";
-              license = pkgs.lib.licenses.mit;
-              mainProgram = "xcross";
-              platforms = systems;
-            };
-          };
-
           userPackages = [ xcross ] ++ runtimePackages;
 
           contributorPackages = userPackages ++ [
