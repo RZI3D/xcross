@@ -51,12 +51,14 @@
           xcrossRelease = xcrossReleases.${system};
           swiftToolchainSource = swiftToolchainSources.${system};
 
-          # pymobiledevice3 is vendored under nix/pymobiledevice3/ cuz nixpkgs is mad old (7.7.0)
+          # pymobiledevice3 is vendored under setup/nix/pymobiledevice3/ cuz nixpkgs is mad old (7.7.0)
           pymobiledevice3Python = pkgs.python313.override {
-            packageOverrides = import ./nix/pymobiledevice3/overrides.nix { inherit (pkgs) lib; };
+            packageOverrides = import ./setup/nix/pymobiledevice3/overrides.nix { inherit (pkgs) lib; };
           };
 
-          pymobiledevice3 = pymobiledevice3Python.pkgs.callPackage ./nix/pymobiledevice3/package.nix { };
+          pymobiledevice3 =
+            pymobiledevice3Python.pkgs.callPackage ./setup/nix/pymobiledevice3/package.nix
+              { };
           pymobiledevice3Env = pymobiledevice3Python.withPackages (_: [ pymobiledevice3 ]);
 
           swiftToolchain = pkgs.stdenv.mkDerivation {
