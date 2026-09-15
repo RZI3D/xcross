@@ -44,32 +44,20 @@
         };
       };
 
-      pymobiledeviceOverlay = final: previous: {
-        python313 = previous.python313.override {
-          packageOverrides = pythonFinal: pythonPrevious: {
-            pyimg4 = pythonPrevious.pyimg4.overridePythonAttrs (old: {
-              pythonRelaxDeps = (old.pythonRelaxDeps or [ ]) ++ [ "asn1" ];
-              doCheck = false;
-              meta = old.meta // {
-                broken = false;
-              };
-            });
-          };
-        };
-        python313Packages = final.python313.pkgs;
-      };
-
-      packagesFor = system:
-        import nixpkgs {
-          inherit system;
-          overlays = [ pymobiledeviceOverlay ];
-        };
-
-      environmentFor = system:
+      environmentFor =
+        system:
         let
-          pkgs = packagesFor system;
+          pkgs = import nixpkgs { inherit system; };
           xcrossRelease = xcrossReleases.${system};
           swiftToolchainSource = swiftToolchainSources.${system};
+
+          # pymobiledevice3 is vendored under nix/pymobiledevice3/ cuz nixpkgs is mad old (7.7.0)
+          pymobiledevice3Python = pkgs.python313.override {
+            packageOverrides = import ./nix/pymobiledevice3/overrides.nix { inherit (pkgs) lib; };
+          };
+
+          pymobiledevice3 = pymobiledevice3Python.pkgs.callPackage ./nix/pymobiledevice3/package.nix { };
+          pymobiledevice3Env = pymobiledevice3Python.withPackages (_: [ pymobiledevice3 ]);
 
           swiftToolchain = pkgs.stdenv.mkDerivation {
             pname = "swift-toolchain";
@@ -121,8 +109,7 @@
             pkgs.llvmPackages_21.llvm
             pkgs.llvmPackages_21.lld
             pkgs.git
-            pkgs.python313
-            pkgs.python313Packages.pymobiledevice3
+            pymobiledevice3Env
             pkgs.usbmuxd
             pkgs.libimobiledevice
             pkgs.usbutils
@@ -194,16 +181,19 @@
             export CXX=${swiftToolchain}/bin/clang++
           '';
 
-          smokeCheck = pkgs.runCommand "xcross-smoke-check" {
-            nativeBuildInputs = [ xcross ];
-          } ''
-            test -x ${xcross}/bin/xcross
-            test -x ${xcross}/bin/xcrun
-            test -d ${xcross}/lib/xcross/lib
-            cmp ${xcrossRelease}/bin/xcross ${xcross}/lib/xcross/bin/xcross
-            cmp ${xcrossRelease}/bin/xcrun ${xcross}/lib/xcross/bin/xcrun
-            touch "$out"
-          '';
+          smokeCheck =
+            pkgs.runCommand "xcross-smoke-check"
+              {
+                nativeBuildInputs = [ xcross ];
+              }
+              ''
+                test -x ${xcross}/bin/xcross
+                test -x ${xcross}/bin/xcrun
+                test -d ${xcross}/lib/xcross/lib
+                cmp ${xcrossRelease}/bin/xcross ${xcross}/lib/xcross/bin/xcross
+                cmp ${xcrossRelease}/bin/xcrun ${xcross}/lib/xcross/bin/xcrun
+                touch "$out"
+              '';
         in
         {
           inherit
